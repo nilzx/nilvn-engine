@@ -1,0 +1,23 @@
+{
+  // Type-checks the test suites only (vitest transpiles with esbuild and does
+  // NOT type-check). `paths` maps the workspace packages to their sources,
+  // exactly like every package tsconfig.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "strict": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": ["node"],
+    "paths": {
+      "@nilvn/core": ["./packages/core/src/index.ts"],
+      "@nilvn/engine": ["./packages/engine/src/index.ts"],
+      "@nilvn/plugin-sdk": ["./packages/plugin-sdk/src/index.ts"]
+    }
+  },
+  "include": ["packages/*/test/**/*.ts"]
+}

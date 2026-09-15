@@ -1,0 +1,17 @@
+// @nilvn/core — shared document model (IR) and command schema for the creator studio.
+// Consumed by the engine, editor, AI generation and the in-browser bundler.
+export * from './ir.js'
+export * from './schema.js'
+export * from './commands.js'
+export * from './plugin-manifest.js'
+export * from './semver.js'
+export * from './plugins.js'
+export * from './serialize.js'
+export * from './catalog.js'
+export * from './i18n.js'
+export * from './chunk.js'
+export * from './chunk-build.js'
+export * from './package.js'
+export * from './versions.js'
+export * from './screenplay.js'
+export * from './screenplay-format.js'

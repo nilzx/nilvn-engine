@@ -1,0 +1,58 @@
+{
+  "name": "@nilvn/engine",
+  "version": "0.14.0",
+  "type": "module",
+  "description": "NilVN — a tiny DOM-based ADV / visual-novel engine with story-like script syntax and a capability-sandboxed plugin host",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nilzx/nilvn-engine.git",
+    "directory": "packages/engine"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./iife": "./dist/nilvn-engine.iife.js"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "pnpm build:lib && pnpm build:iife",
+    "build:lib": "tsc -p tsconfig.lib.json",
+    "build:iife": "node --experimental-strip-types scripts/build-iife.ts dist/nilvn-engine.iife.js",
+    "typecheck": "tsc --noEmit",
+    "prepack": "pnpm build"
+  },
+  "peerDependencies": {
+    "@nilvn/core": "workspace:^"
+  },
+  "peerDependenciesMeta": {
+    "@nilvn/core": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "esbuild": "^0.28.1",
+    "typescript": "^5.9.0",
+    "@nilvn/core": "workspace:^"
+  },
+  "dependencies": {
+    "smol-toml": "^1.6.1"
+  },
+  "keywords": [
+    "nilvn",
+    "visual-novel",
+    "adv",
+    "galgame",
+    "engine"
+  ]
+}

@@ -1,0 +1,1037 @@
+{
+  "specVersion": 2,
+  "pluginApiVersion": 2,
+  "irSchemaVersion": 11,
+  "generatedBy": "@nilvn/plugin-sdk spec:gen (packages/plugin-sdk/src/spec.ts)",
+  "references": {
+    "guide": "packages/plugin-sdk/README.md",
+    "commands": "packages/engine/docs/commands.md",
+    "engineApi": "packages/engine/docs/api.md",
+    "engineTypes": "packages/engine/src/types.ts",
+    "coreManifest": "packages/core/src/plugin-manifest.ts",
+    "sdk": "packages/plugin-sdk/src/index.ts",
+    "template": "packages/plugin-sdk/template/",
+    "firstPartyPlugins": "https://github.com/nilzx/nilvn-plugins"
+  },
+  "manifest": {
+    "file": "plugin.json",
+    "idPattern": "^[a-z][a-z0-9-]*(?:\\.[a-z][a-z0-9-]*)+$",
+    "fields": [
+      {
+        "name": "id",
+        "type": "string",
+        "desc": "Stable reverse-DNS id (app.nilvn.textfx). The enabled-set / [use] / i18n-namespace key.",
+        "required": true
+      },
+      {
+        "name": "name",
+        "type": "string",
+        "desc": "Display name as an i18n id resolved through `messages` (plugin.<slug>.name).",
+        "required": true
+      },
+      {
+        "name": "description",
+        "type": "string",
+        "desc": "An i18n id (plugin.<slug>.desc).",
+        "required": false
+      },
+      {
+        "name": "version",
+        "type": "string",
+        "desc": "The plugin's own SemVer (x.y.z).",
+        "required": true
+      },
+      {
+        "name": "engine",
+        "type": "string",
+        "desc": "Engine compatibility range — subset: `*`, `1.2.3`, `^1.2`, `~1.2.3`, `>=0.14 <1`, `a || b`. Absent = any.",
+        "required": false
+      },
+      {
+        "name": "editor",
+        "type": "string",
+        "desc": "Editor compatibility range (same subset).",
+        "required": false
+      },
+      {
+        "name": "dependencies",
+        "type": "Record<id, range>",
+        "desc": "Other plugins this one needs; activated first. Missing / incompatible / cyclic → the plugin is blocked with a diagnostic.",
+        "required": false
+      },
+      {
+        "name": "contributes",
+        "type": "PluginContributions",
+        "desc": "Contributions per extension point (see `extensionPoints`). Unknown keys are ignored with a warning.",
+        "required": false
+      },
+      {
+        "name": "permissions",
+        "type": "Permission[]",
+        "desc": "Capabilities requested from the `permissions` catalog. Only these (as granted by the host) become context objects.",
+        "required": false
+      },
+      {
+        "name": "activation",
+        "type": "{ engine?: eager|onCommand|manual; editor?: eager|onPanelOpen }",
+        "desc": "When the runtime half activates: on enable (default), at its first command, or only through enablePlugin / setPlugins.",
+        "required": false
+      },
+      {
+        "name": "reload",
+        "type": "hot | restart",
+        "desc": "Hot-plug policy (default hot). `restart` = the host must reload the editor after a toggle.",
+        "required": false
+      },
+      {
+        "name": "entries",
+        "type": "{ engine?: string; editor?: string }",
+        "desc": "Module entries relative to plugin.json. No engine entry = a pure editor plugin; no editor entry = runtime only.",
+        "required": false
+      },
+      {
+        "name": "styles",
+        "type": "string[]",
+        "desc": "Stylesheets relative to plugin.json, injected while active and removed on deactivate.",
+        "required": false
+      },
+      {
+        "name": "messages",
+        "type": "{ [lang]: { [id]: text } }",
+        "desc": "The plugin’s own UI-chrome strings; `ctx.t(id)` resolves them in the work language.",
+        "required": false
+      },
+      {
+        "name": "authorUsage",
+        "type": "string[]",
+        "desc": "Author-facing usage lines (how to trigger the plugin in an AuthoringDoc); tools prefer these over deriving from contributes.",
+        "required": false
+      },
+      {
+        "name": "apiVersion",
+        "type": "number",
+        "desc": "Plugin contract version this manifest targets (current: 2); a newer one is rejected.",
+        "required": false
+      }
+    ],
+    "contributes": [
+      {
+        "name": "commands",
+        "type": "CommandSchema[]",
+        "desc": "Script commands `[name …]` with typed params (drives the editor insert form and the authoring lint).",
+        "required": false
+      },
+      {
+        "name": "textEffects",
+        "type": "{ name, label? }[]",
+        "desc": "Inline text effects `{name:text}`.",
+        "required": false
+      },
+      {
+        "name": "objectKinds",
+        "type": "ObjectKindSchema[]",
+        "desc": "Addressable stage-object kinds the plugin adds.",
+        "required": false
+      },
+      {
+        "name": "effects",
+        "type": "EffectSchema[]",
+        "desc": "Retargetable effects bound to kinds via appliesToKinds.",
+        "required": false
+      },
+      {
+        "name": "hooks",
+        "type": "string[]",
+        "desc": "Engine hook names the runtime half listens to (introspection).",
+        "required": false
+      },
+      {
+        "name": "saveSlice",
+        "type": "boolean",
+        "desc": "The plugin owns a SaveState.ext[id] slice (needs the save.slice permission).",
+        "required": false
+      },
+      {
+        "name": "panels",
+        "type": "{ id, label, kind? }[]",
+        "desc": "Editor manager panels the host renders a tab + container for.",
+        "required": false
+      },
+      {
+        "name": "nodeKinds",
+        "type": "string[]",
+        "desc": "IR node kinds the editor half owns (forms + inert flag while disabled).",
+        "required": false
+      },
+      {
+        "name": "stageTools",
+        "type": "string[]",
+        "desc": "Stage overlay tool ids.",
+        "required": false
+      },
+      {
+        "name": "lineActions",
+        "type": "string[]",
+        "desc": "Dialogue-line action bar button ids.",
+        "required": false
+      },
+      {
+        "name": "objectMenu",
+        "type": "string[]",
+        "desc": "On-stage object context-menu section ids.",
+        "required": false
+      }
+    ]
+  },
+  "extensionPoints": [
+    {
+      "key": "commands",
+      "side": "engine",
+      "status": "active",
+      "version": 1,
+      "description": "Script commands `[name …]` (CommandSchema drives the insert form)."
+    },
+    {
+      "key": "textEffects",
+      "side": "engine",
+      "status": "active",
+      "version": 1,
+      "description": "Inline text effects `{name:text}`."
+    },
+    {
+      "key": "objectKinds",
+      "side": "engine",
+      "status": "active",
+      "version": 1,
+      "description": "Addressable stage-object kinds."
+    },
+    {
+      "key": "effects",
+      "side": "engine",
+      "status": "active",
+      "version": 1,
+      "description": "Retargetable effects bound to kinds via appliesToKinds."
+    },
+    {
+      "key": "hooks",
+      "side": "engine",
+      "status": "active",
+      "version": 1,
+      "description": "Engine hook names the runtime half listens to (introspection; the module is authoritative)."
+    },
+    {
+      "key": "saveSlice",
+      "side": "engine",
+      "status": "active",
+      "version": 1,
+      "description": "Declares a SaveState.ext slice owned by this plugin."
+    },
+    {
+      "key": "rendererLayers",
+      "side": "engine",
+      "status": "reserved",
+      "version": 1,
+      "description": "Named renderer layers."
+    },
+    {
+      "key": "panels",
+      "side": "editor",
+      "status": "active",
+      "version": 1,
+      "description": "Manager panels (the editor renders the host; the plugin fills it)."
+    },
+    {
+      "key": "nodeKinds",
+      "side": "editor",
+      "status": "active",
+      "version": 1,
+      "description": "IR node kinds this plugin owns (forms + inert flag while disabled)."
+    },
+    {
+      "key": "stageTools",
+      "side": "editor",
+      "status": "active",
+      "version": 1,
+      "description": "Stage overlay tools (modal takeovers of the stage)."
+    },
+    {
+      "key": "lineActions",
+      "side": "editor",
+      "status": "active",
+      "version": 1,
+      "description": "Buttons on a dialogue line’s action bar."
+    },
+    {
+      "key": "objectMenu",
+      "side": "editor",
+      "status": "active",
+      "version": 1,
+      "description": "Sections in an on-stage object’s context menu."
+    },
+    {
+      "key": "windows",
+      "side": "editor",
+      "status": "reserved",
+      "version": 1,
+      "description": "Draggable editor windows."
+    },
+    {
+      "key": "insertPalette",
+      "side": "editor",
+      "status": "reserved",
+      "version": 1,
+      "description": "Insert-palette categories and entries."
+    },
+    {
+      "key": "timelineLanes",
+      "side": "editor",
+      "status": "reserved",
+      "version": 1,
+      "description": "Extra timeline lanes."
+    },
+    {
+      "key": "exportSteps",
+      "side": "editor",
+      "status": "reserved",
+      "version": 1,
+      "description": "Steps in the export pipeline."
+    },
+    {
+      "key": "projectMenuItems",
+      "side": "editor",
+      "status": "reserved",
+      "version": 1,
+      "description": "Project menu entries."
+    },
+    {
+      "key": "inspectors",
+      "side": "editor",
+      "status": "reserved",
+      "version": 1,
+      "description": "Selected-object inspector sections."
+    },
+    {
+      "key": "aiSlots",
+      "side": "editor",
+      "status": "reserved",
+      "version": 1,
+      "description": "AI slots (roadmap §6)."
+    },
+    {
+      "key": "aiProviders",
+      "side": "editor",
+      "status": "reserved",
+      "version": 1,
+      "description": "AI providers (roadmap §6)."
+    }
+  ],
+  "permissions": [
+    {
+      "id": "stage.read",
+      "group": "stage",
+      "side": "engine",
+      "status": "active",
+      "description": "Read stage objects: hasObject / getProp / getBand / getFace / hasChar / charFace / snapshot."
+    },
+    {
+      "id": "stage.write",
+      "group": "stage",
+      "side": "engine",
+      "status": "active",
+      "description": "Stage read + every Renderer write verb, applyEffect, and keyframe choreography (playFrames / startLoop / stopLoop)."
+    },
+    {
+      "id": "stage.layer:",
+      "group": "stage",
+      "side": "engine",
+      "status": "reserved",
+      "pattern": true,
+      "description": "A named renderer layer (weather / masks)."
+    },
+    {
+      "id": "audio.play",
+      "group": "audio",
+      "side": "engine",
+      "status": "active",
+      "description": "playTrack / stopTrack / stopAllTracks / playSe, channel volumes and voicePlaying."
+    },
+    {
+      "id": "audio.bus:",
+      "group": "audio",
+      "side": "engine",
+      "status": "reserved",
+      "pattern": true,
+      "description": "A specific audio bus."
+    },
+    {
+      "id": "audio.capture",
+      "group": "audio",
+      "side": "host",
+      "status": "reserved",
+      "description": "Microphone capture (host-mediated)."
+    },
+    {
+      "id": "vars.read",
+      "group": "data",
+      "side": "engine",
+      "status": "active",
+      "description": "Read script variables."
+    },
+    {
+      "id": "vars.write",
+      "group": "data",
+      "side": "engine",
+      "status": "active",
+      "description": "Read + write script variables."
+    },
+    {
+      "id": "save.slice",
+      "group": "data",
+      "side": "engine",
+      "status": "active",
+      "description": "Own a SaveState.ext slice (saveState / restoreState are called)."
+    },
+    {
+      "id": "session.save",
+      "group": "session",
+      "side": "engine",
+      "status": "active",
+      "description": "saveState / restoreState / restart, the work save key and build info."
+    },
+    {
+      "id": "session.settings",
+      "group": "session",
+      "side": "engine",
+      "status": "active",
+      "description": "Text speed, channel volumes, language switching, resolveText."
+    },
+    {
+      "id": "session.backlog",
+      "group": "session",
+      "side": "engine",
+      "status": "active",
+      "description": "The dialogue backlog and voice replay by ref."
+    },
+    {
+      "id": "session.replay",
+      "group": "session",
+      "side": "engine",
+      "status": "active",
+      "description": "A–B replay segments: list / play / end / seen signals."
+    },
+    {
+      "id": "ui.layer",
+      "group": "ui",
+      "side": "engine",
+      "status": "active",
+      "description": "A host container inside the stage root (removed on dispose)."
+    },
+    {
+      "id": "ui.panel",
+      "group": "ui",
+      "side": "editor",
+      "status": "active",
+      "description": "A manager panel host in the editor."
+    },
+    {
+      "id": "ui.window",
+      "group": "ui",
+      "side": "editor",
+      "status": "active",
+      "description": "A draggable editor window."
+    },
+    {
+      "id": "ui.toast",
+      "group": "ui",
+      "side": "editor",
+      "status": "active",
+      "description": "Editor toasts."
+    },
+    {
+      "id": "ui.inspector",
+      "group": "ui",
+      "side": "editor",
+      "status": "reserved",
+      "description": "The selected-object inspector panel."
+    },
+    {
+      "id": "project.read",
+      "group": "project",
+      "side": "editor",
+      "status": "active",
+      "description": "Read the open project (IR) and editor state."
+    },
+    {
+      "id": "project.commit",
+      "group": "project",
+      "side": "editor",
+      "status": "active",
+      "description": "Mutate the project through the editor (undoable)."
+    },
+    {
+      "id": "assets.read",
+      "group": "project",
+      "side": "editor",
+      "status": "active",
+      "description": "Resolve project assets."
+    },
+    {
+      "id": "assets.write",
+      "group": "project",
+      "side": "editor",
+      "status": "active",
+      "description": "Import / replace project assets."
+    },
+    {
+      "id": "fs.pick",
+      "group": "system",
+      "side": "host",
+      "status": "reserved",
+      "description": "Native file picker (host-mediated)."
+    },
+    {
+      "id": "fs.project",
+      "group": "system",
+      "side": "host",
+      "status": "reserved",
+      "description": "Files under the project directory (host-mediated)."
+    },
+    {
+      "id": "net:",
+      "group": "system",
+      "side": "host",
+      "status": "reserved",
+      "pattern": true,
+      "description": "Network access to one origin (host-mediated; third-party default-deny)."
+    },
+    {
+      "id": "clipboard",
+      "group": "system",
+      "side": "host",
+      "status": "reserved",
+      "description": "Clipboard read / write."
+    },
+    {
+      "id": "timer",
+      "group": "system",
+      "side": "engine",
+      "status": "active",
+      "description": "setTimeout / setInterval / requestAnimationFrame, cleared on dispose."
+    },
+    {
+      "id": "ai.text",
+      "group": "ai",
+      "side": "host",
+      "status": "reserved",
+      "description": "Text generation through the configured provider."
+    },
+    {
+      "id": "ai.image",
+      "group": "ai",
+      "side": "host",
+      "status": "reserved",
+      "description": "Image generation."
+    },
+    {
+      "id": "ai.audio",
+      "group": "ai",
+      "side": "host",
+      "status": "reserved",
+      "description": "Audio / voice generation."
+    },
+    {
+      "id": "ai.code",
+      "group": "ai",
+      "side": "host",
+      "status": "reserved",
+      "description": "Code generation (plugins from natural language)."
+    },
+    {
+      "id": "ai.context",
+      "group": "ai",
+      "side": "host",
+      "status": "reserved",
+      "description": "Read the authoring context handed to AI slots."
+    }
+  ],
+  "runtime": {
+    "module": [
+      {
+        "name": "id",
+        "type": "string",
+        "desc": "Must equal the manifest id.",
+        "required": true
+      },
+      {
+        "name": "permissions",
+        "type": "Permission[]",
+        "desc": "Authoritative only without a manifest; must match the manifest’s engine-side permissions when one exists.",
+        "required": false
+      },
+      {
+        "name": "version / dependencies / activation / reload",
+        "type": "…",
+        "desc": "Inline fallbacks for module-only plugins ([use ./x.js]); a manifest wins.",
+        "required": false
+      },
+      {
+        "name": "styles",
+        "type": "string",
+        "desc": "CSS injected while active.",
+        "required": false
+      },
+      {
+        "name": "commands",
+        "type": "Record<name, (ctx: CommandContext) => void | Promise<void>>",
+        "desc": "Script commands.",
+        "required": false
+      },
+      {
+        "name": "textEffects",
+        "type": "Record<name, (span: TextSpan, index, ctx: PluginContext) => void>",
+        "desc": "Inline text effects; `span.addClass` is the only verb.",
+        "required": false
+      },
+      {
+        "name": "objectKinds",
+        "type": "ObjectKindDecl[]",
+        "desc": "Runtime kind contracts: `transformable` + `recordable` channels — standard channel NAMES (x / y / scale / rotation / opacity / visible / face / band) or custom RecordableProp descriptors.",
+        "required": false
+      },
+      {
+        "name": "effects",
+        "type": "Record<name, { appliesToKinds, apply(handle, params, ctx) }>",
+        "desc": "Effects run with the OWNER plugin’s context.",
+        "required": false
+      },
+      {
+        "name": "hooks",
+        "type": "EngineHooks",
+        "desc": "onDialogue / onDialogueDone / onReveal / onChoices / onChoose / onCommand / onEnd / onError — each receives the plugin context last.",
+        "required": false
+      },
+      {
+        "name": "activate(ctx)",
+        "type": "void | Promise<void>",
+        "desc": "Once per activation. Register listeners / timers / layers through ctx so they are released on deactivate. A throw isolates the plugin.",
+        "required": false
+      },
+      {
+        "name": "deactivate(ctx)",
+        "type": "void",
+        "desc": "Before the host disposes everything registered through ctx.",
+        "required": false
+      },
+      {
+        "name": "saveState(ctx) / restoreState(ctx, data)",
+        "type": "…",
+        "desc": "The SaveState.ext[id] slice (needs save.slice).",
+        "required": false
+      }
+    ],
+    "context": [
+      {
+        "name": "id / permissions / lang / actors",
+        "type": "readonly",
+        "desc": "Identity, granted permissions, the work language, the actor table.",
+        "required": false
+      },
+      {
+        "name": "resolve(path)",
+        "type": "string",
+        "desc": "Resource path → URL (aliases / by-ref assets / base URL).",
+        "required": false
+      },
+      {
+        "name": "t(id, params?)",
+        "type": "string",
+        "desc": "The plugin’s own `messages`, then the engine chrome catalog, in the work language.",
+        "required": false
+      },
+      {
+        "name": "report(message, error?)",
+        "type": "void",
+        "desc": "A `plugin` diagnostic attributed to this plugin (never throw over content).",
+        "required": false
+      },
+      {
+        "name": "listen(target, type, fn, opts?)",
+        "type": "() => void",
+        "desc": "Event listener removed on dispose.",
+        "required": false
+      },
+      {
+        "name": "onDispose(fn)",
+        "type": "void",
+        "desc": "Run on deactivate.",
+        "required": false
+      },
+      {
+        "name": "registerCommand / registerTextEffect / registerEffect / registerKind / on(hook, fn) / addStyle(css)",
+        "type": "…",
+        "desc": "Dynamic registration; all disposable.",
+        "required": false
+      },
+      {
+        "name": "stage",
+        "type": "StageCap?",
+        "desc": "stage.read: hasObject / getProp / getBand / getFace / hasChar / charFace / snapshot. stage.write adds every Renderer write verb + applyEffect / showActor / playFrames / stopFrames / startLoop / stopLoop / runningLoops (write verbs are reporting stubs under stage.read only). playFrames / startLoop / stopLoop accept the keyframe WIRE forms (`obj#t:ch=v;…|…`, `t:ch=v;…`, `ch=v,…`) as well as decoded tracks — the engine owns the codec.",
+        "required": false
+      },
+      {
+        "name": "audio",
+        "type": "AudioCap?",
+        "desc": "audio.play: playTrack / stopTrack / stopAllTracks / playSe / volume(channel) / voicePlaying.",
+        "required": false
+      },
+      {
+        "name": "vars",
+        "type": "VarsCap?",
+        "desc": "vars.read: get / has / all; vars.write adds set (a stub without it).",
+        "required": false
+      },
+      {
+        "name": "saves",
+        "type": "SavesCap?",
+        "desc": "session.save: saveState / restoreState / restart / saveKey / buildInfo.",
+        "required": false
+      },
+      {
+        "name": "settings",
+        "type": "SettingsCap?",
+        "desc": "session.settings: textSpeed, getVolume / setVolume, lang / languages / languageName / setLanguage / onLanguageChange, resolveText.",
+        "required": false
+      },
+      {
+        "name": "backlog",
+        "type": "BacklogCap?",
+        "desc": "session.backlog: entries / replayVoice.",
+        "required": false
+      },
+      {
+        "name": "replay",
+        "type": "ReplayCap?",
+        "desc": "session.replay: list / isReplaying / play / end / fireSeen / onSeen / onEnd.",
+        "required": false
+      },
+      {
+        "name": "ui",
+        "type": "UiCap?",
+        "desc": "ui.layer: layer(className) → a host container in the stage root; onStage(type, fn) for stage input. Both released on dispose.",
+        "required": false
+      },
+      {
+        "name": "timer",
+        "type": "TimerCap?",
+        "desc": "timer: setTimeout / setInterval / requestAnimationFrame and their clears; all cleared on dispose.",
+        "required": false
+      }
+    ],
+    "commandContext": [
+      {
+        "name": "name / args / params / raw",
+        "type": "…",
+        "desc": "The parsed tag.",
+        "required": false
+      },
+      {
+        "name": "str(keyOrIndex, def?) / num(keyOrIndex, def?) / numOpt(keyOrIndex)",
+        "type": "…",
+        "desc": "Argument accessors (positional index or named key); numOpt yields undefined for an absent / non-numeric param instead of a default.",
+        "required": false
+      },
+      {
+        "name": "resolve(path) / wait(sec)",
+        "type": "…",
+        "desc": "Path resolution and a delay.",
+        "required": false
+      },
+      {
+        "name": "plugin",
+        "type": "PluginContext",
+        "desc": "The owning plugin’s capability context — the ONLY way to the stage / audio / vars.",
+        "required": false
+      }
+    ],
+    "capabilities": {
+      "stage.read": [
+        "hasObject",
+        "getProp",
+        "getBand",
+        "getFace",
+        "hasChar",
+        "charFace",
+        "snapshot"
+      ],
+      "stage.write": [
+        "setBackground",
+        "showChar",
+        "moveChar",
+        "hideChar",
+        "clearChars",
+        "focusChar",
+        "showSprite",
+        "hideSprite",
+        "clearSprites",
+        "setProp",
+        "animate",
+        "setBand",
+        "setFace",
+        "setName",
+        "showDialog",
+        "showIndicator",
+        "setWindowSkin",
+        "fadeScreen",
+        "transitionScreen",
+        "flash",
+        "applyEffect",
+        "showActor",
+        "playFrames",
+        "stopFrames",
+        "startLoop",
+        "stopLoop",
+        "runningLoops"
+      ],
+      "audio.play": [
+        "playTrack",
+        "stopTrack",
+        "stopAllTracks",
+        "playSe",
+        "volume",
+        "voicePlaying"
+      ],
+      "vars.read": [
+        "get",
+        "has",
+        "all"
+      ],
+      "vars.write": [
+        "set"
+      ],
+      "save.slice": [
+        "saveState",
+        "restoreState (module methods are called)"
+      ],
+      "session.save": [
+        "saveState",
+        "restoreState",
+        "restart",
+        "saveKey",
+        "buildInfo"
+      ],
+      "session.settings": [
+        "textSpeed",
+        "getVolume",
+        "setVolume",
+        "lang",
+        "languages",
+        "languageName",
+        "setLanguage",
+        "onLanguageChange",
+        "resolveText"
+      ],
+      "session.backlog": [
+        "entries",
+        "replayVoice"
+      ],
+      "session.replay": [
+        "list",
+        "isReplaying",
+        "play",
+        "end",
+        "fireSeen",
+        "onSeen",
+        "onEnd"
+      ],
+      "ui.layer": [
+        "layer",
+        "onStage"
+      ],
+      "timer": [
+        "setTimeout",
+        "clearTimeout",
+        "setInterval",
+        "clearInterval",
+        "requestAnimationFrame",
+        "cancelAnimationFrame"
+      ],
+      "project.read": [
+        "state (editor)"
+      ],
+      "project.commit": [
+        "commit",
+        "run (editor)"
+      ],
+      "assets.read": [
+        "assets (editor)"
+      ],
+      "assets.write": [
+        "assets imports (editor)"
+      ],
+      "ui.panel": [
+        "refresh (editor)"
+      ],
+      "ui.window": [
+        "refresh (editor)"
+      ],
+      "ui.toast": [
+        "toast",
+        "refresh (editor)"
+      ]
+    },
+    "lifecycle": [
+      "register(manifest / module) → validate (id grammar · apiVersion · engine range · dependencies · permission catalog) → activate(ctx) → running → deactivate(ctx) → dispose",
+      "Every contribution and resource registered through ctx is released on deactivate; a plugin must not hold globals.",
+      "activate() may be async; a rejection or throw isolates the plugin (its commands become no-ops, one diagnostic).",
+      "N consecutive command failures (default 3) isolate the plugin; one success resets the count.",
+      "reload = saveState slice → deactivate → (re-import cache-busted for path plugins) → activate → restoreState; any failure rolls back to the previous module.",
+      "activation.engine: eager (default) | onCommand (first execution of one of its commands) | manual (enablePlugin / setPlugins only).",
+      "A running engine (finished game) never hot-swaps its command set; the editor toggles in edit mode and rebuilds the preview per run."
+    ],
+    "proxyRules": [
+      "Capability methods are async or pure; return values and parameters must be structured-cloneable.",
+      "No DOM handles cross the boundary — TextSpan / ChoiceHandle / StageObjectHandle are proxyable handle objects (index / id + methods).",
+      "ui.layer hands a same-realm first-party plugin the element; a sandboxed plugin receives a container id instead.",
+      "A denied capability is undefined on the context, never an exception; stage write verbs under stage.read only are reporting stubs.",
+      "Third-party plugins default-deny net:* and fs.*; those permissions are reserved until the host mediates them."
+    ]
+  },
+  "editor": {
+    "module": [
+      {
+        "name": "id",
+        "type": "string",
+        "desc": "Must equal the manifest id.",
+        "required": true
+      },
+      {
+        "name": "panels",
+        "type": "Record<panelId, (ctx: EditorPluginCtx, host, api) => void>",
+        "desc": "Builders for contributes.panels; the host renders the tab + container.",
+        "required": false
+      },
+      {
+        "name": "nodeKinds",
+        "type": "Record<kind, { label(), form?() }>",
+        "desc": "Forms for contributes.nodeKinds (deep integration: receives the full editor context).",
+        "required": false
+      },
+      {
+        "name": "stageTool / objectMenuSection / lineActions",
+        "type": "…",
+        "desc": "Deep integrations for contributes.stageTools / objectMenu / lineActions (full editor context).",
+        "required": false
+      }
+    ],
+    "context": [
+      {
+        "name": "id / permissions",
+        "type": "readonly",
+        "desc": "Identity and the granted editor-side permissions.",
+        "required": false
+      },
+      {
+        "name": "state",
+        "type": "EditorState?",
+        "desc": "project.read: the open project and selection.",
+        "required": false
+      },
+      {
+        "name": "commit(name, mutate, opts?) / run(op)",
+        "type": "?",
+        "desc": "project.commit: change the project through the editor command surface (a named undoable transaction, or a registry op with serializable params); nothing else writes.",
+        "required": false
+      },
+      {
+        "name": "assets",
+        "type": "AssetStore?",
+        "desc": "assets.read (imports also need assets.write).",
+        "required": false
+      },
+      {
+        "name": "refresh()",
+        "type": "?",
+        "desc": "Any ui.*: repaint the editor.",
+        "required": false
+      },
+      {
+        "name": "toast(message, kind?)",
+        "type": "?",
+        "desc": "ui.toast.",
+        "required": false
+      }
+    ]
+  },
+  "firstParty": {
+    "idPrefix": "app.nilvn.",
+    "package": "@nilvn/plugins",
+    "repository": "https://github.com/nilzx/nilvn-plugins"
+  },
+  "example": {
+    "manifest": {
+      "id": "com.example.neon",
+      "name": "plugin.neon.name",
+      "description": "plugin.neon.desc",
+      "version": "1.0.0",
+      "engine": ">=0.14 <1",
+      "entries": {
+        "engine": "./engine.js"
+      },
+      "permissions": [
+        "stage.write"
+      ],
+      "contributes": {
+        "textEffects": [
+          {
+            "name": "neon",
+            "label": "plugin.neon.te.neon.label"
+          }
+        ],
+        "commands": [
+          {
+            "name": "boom",
+            "label": "plugin.neon.cmd.boom.label",
+            "category": "fx",
+            "params": [
+              {
+                "key": "strength",
+                "label": "plugin.neon.cmd.boom.strength",
+                "type": "number",
+                "default": 12
+              }
+            ]
+          }
+        ]
+      },
+      "styles": [
+        "./main.css"
+      ],
+      "messages": {
+        "en": {
+          "plugin.neon.name": "Neon",
+          "plugin.neon.desc": "A glowing text effect and a camera boom.",
+          "plugin.neon.te.neon.label": "Neon",
+          "plugin.neon.cmd.boom.label": "Boom",
+          "plugin.neon.cmd.boom.strength": "Strength"
+        },
+        "zh": {
+          "plugin.neon.name": "霓虹",
+          "plugin.neon.desc": "发光文字特效与镜头震动。",
+          "plugin.neon.te.neon.label": "霓虹",
+          "plugin.neon.cmd.boom.label": "震动",
+          "plugin.neon.cmd.boom.strength": "强度"
+        }
+      },
+      "authorUsage": [
+        "inline {neon:text} — glowing text",
+        "[boom strength=12] — a short camera rumble"
+      ]
+    },
+    "engineModule": "// engine.js — the runtime half named by plugin.json \"entries.engine\"\nexport default {\n  id: 'com.example.neon',\n  permissions: ['stage.write'],\n  textEffects: { neon: (span) => span.addClass('fx-neon') },\n  commands: {\n    async boom({ num, plugin }) {\n      const frames = []\n      for (let i = 0; i < 8; i++) frames.push({ x: (Math.random() - 0.5) * num('strength', 12), y: 0 })\n      frames.push({ x: 0, y: 0 })\n      await plugin.stage?.animate('camera', frames, { durationSec: 0.4, easing: 'linear', compose: 'offset' })\n    },\n  },\n  activate(ctx) { ctx.onDispose(() => {/* release anything acquired here */}) },\n}\n",
+    "use": [
+      "[use ./plugins/neon/plugin.json]",
+      "[use com.example.neon]  ; once registered by the host",
+      "[use ./plugins/neon/engine.js]  ; a bare module (inline permissions)"
+    ]
+  }
+}

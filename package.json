@@ -1,0 +1,30 @@
+{
+  "name": "nilvn-engine",
+  "private": true,
+  "type": "module",
+  "description": "NilVN — a tiny DOM-based visual-novel engine: @nilvn/core (contracts), @nilvn/engine (runtime), @nilvn/plugin-sdk (plugin authoring)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nilzx/nilvn-engine.git"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "typecheck": "pnpm -r typecheck",
+    "typecheck:test": "tsc -p tsconfig.test.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "build": "pnpm -r build",
+    "spec:check": "pnpm --filter @nilvn/plugin-sdk spec:check",
+    "pack:smoke": "node scripts/pack-smoke.mjs",
+    "version:set": "node scripts/set-version.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.1",
+    "jsdom": "^29.1.1",
+    "typescript": "^5.9.2",
+    "vitest": "^4.1.9"
+  }
+}

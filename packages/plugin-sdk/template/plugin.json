@@ -1,0 +1,59 @@
+{
+  "id": "com.example.neon",
+  "name": "plugin.neon.name",
+  "description": "plugin.neon.desc",
+  "version": "1.0.0",
+  "engine": ">=0.14 <1",
+  "entries": {
+    "engine": "./engine.js"
+  },
+  "permissions": [
+    "stage.write"
+  ],
+  "contributes": {
+    "textEffects": [
+      {
+        "name": "neon",
+        "label": "plugin.neon.te.neon.label"
+      }
+    ],
+    "commands": [
+      {
+        "name": "boom",
+        "label": "plugin.neon.cmd.boom.label",
+        "category": "fx",
+        "params": [
+          {
+            "key": "strength",
+            "label": "plugin.neon.cmd.boom.strength",
+            "type": "number",
+            "default": 12
+          }
+        ]
+      }
+    ]
+  },
+  "styles": [
+    "./main.css"
+  ],
+  "messages": {
+    "en": {
+      "plugin.neon.name": "Neon",
+      "plugin.neon.desc": "A glowing text effect and a camera boom.",
+      "plugin.neon.te.neon.label": "Neon",
+      "plugin.neon.cmd.boom.label": "Boom",
+      "plugin.neon.cmd.boom.strength": "Strength"
+    },
+    "zh": {
+      "plugin.neon.name": "霓虹",
+      "plugin.neon.desc": "发光文字特效与镜头震动。",
+      "plugin.neon.te.neon.label": "霓虹",
+      "plugin.neon.cmd.boom.label": "震动",
+      "plugin.neon.cmd.boom.strength": "强度"
+    }
+  },
+  "authorUsage": [
+    "inline {neon:text} — glowing text",
+    "[boom strength=12] — a short camera rumble"
+  ]
+}

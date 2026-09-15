@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Type surface of the packages + the test suites themselves (vitest runs
+      # via esbuild and does NOT type-check; tsconfig.test.json covers the tests).
+      - run: pnpm typecheck
+      - run: pnpm typecheck:test
+
+      # Includes packages/engine/test/iife-smoke.test.ts, which rebuilds the
+      # engine IIFE from the shared builder and boots a real engine from the
+      # minified bytes — the artifact exports inline is exercised on every run.
+      - run: pnpm test
+
+      # The generated plugin contract must match its source.
+      - run: pnpm spec:check
+
+      # Build the three packages exactly as `pnpm publish` would, then consume
+      # the tarballs from a throwaway project: tsc with skipLibCheck OFF under
+      # bundler + NodeNext resolution, a bare-node import, and a jsdom boot of
+      # the ESM dist and the IIFE (scripts/pack-smoke.mjs).
+      - run: pnpm build
+      - run: pnpm pack:smoke

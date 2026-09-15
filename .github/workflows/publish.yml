@@ -1,0 +1,64 @@
+# Publish the three packages to npm when an engine-v* tag is pushed.
+# Needs the NPM_TOKEN secret (an npm automation token for the @nilvn scope).
+# The tag must equal the packages' version (checked below), which
+# `pnpm version:set engine x.y.z` keeps in sync across the three package.json
+# files and packages/engine/src/version.ts.
+name: Publish
+
+on:
+  push:
+    tags: ['engine-v*']
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Tag must match the package version
+        run: |
+          v="$(node -p "require('./packages/engine/package.json').version")"
+          test "engine-v$v" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME != package version $v"; exit 1; }
+          for p in core plugin-sdk; do
+            pv="$(node -p "require('./packages/$p/package.json').version")"
+            test "$pv" = "$v" || { echo "packages/$p is $pv, engine is $v"; exit 1; }
+          done
+
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+      - run: pnpm spec:check
+      - run: pnpm pack:smoke
+
+      # `prepack` rebuilds each package; --no-git-checks because the tag ref is
+      # detached. workspace:^ deps are rewritten to ^x.y.z by pnpm. A version
+      # that is already on npm (published by hand) is skipped, so re-pushing a
+      # tag or tagging after a manual release stays green.
+      - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          v="$(node -p "require('./packages/engine/package.json').version")"
+          for p in core engine plugin-sdk; do
+            name="$(node -p "require('./packages/$p/package.json').name")"
+            if npm view "$name@$v" version >/dev/null 2>&1; then
+              echo "$name@$v is already on npm — skipping"
+              continue
+            fi
+            pnpm --filter "$name" publish --access public --no-git-checks
+          done

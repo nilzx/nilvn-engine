@@ -1,0 +1,5 @@
+/* Styles listed in plugin.json "styles": injected while the plugin is active and
+   removed when it is deactivated. Scope every rule to your own classes. */
+.nilvn-ch.fx-neon.on {
+  text-shadow: 0 0 0.5em #0ff;
+}

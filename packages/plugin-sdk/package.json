@@ -1,0 +1,65 @@
+{
+  "name": "@nilvn/plugin-sdk",
+  "version": "0.14.0",
+  "type": "module",
+  "description": "NilVN plugin SDK — manifest types and validator, extension-point / permission catalogs, runtime plugin types, a package template and the generated plugin-spec.json contract",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/nilzx/nilvn-engine.git",
+    "directory": "packages/plugin-sdk"
+  },
+  "keywords": [
+    "nilvn",
+    "visual-novel",
+    "plugin",
+    "sdk"
+  ],
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "files": [
+    "dist",
+    "template",
+    "plugin-spec.json",
+    "LICENSE",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public",
+    "main": "dist/index.js",
+    "types": "dist/index.d.ts",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      },
+      "./plugin-spec.json": "./plugin-spec.json",
+      "./template/*": "./template/*"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.lib.json",
+    "prepack": "pnpm build && pnpm spec:check",
+    "spec:gen": "tsx scripts/gen-spec.ts",
+    "spec:check": "tsx scripts/gen-spec.ts --check"
+  },
+  "dependencies": {
+    "@nilvn/core": "workspace:^"
+  },
+  "peerDependencies": {
+    "@nilvn/engine": "workspace:^"
+  },
+  "peerDependenciesMeta": {
+    "@nilvn/engine": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@nilvn/engine": "workspace:^",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0",
+    "tsx": "^4.19.0"
+  }
+}
