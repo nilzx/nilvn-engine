@@ -9,8 +9,13 @@ on:
   push:
     tags: ['engine-v*']
 
+# contents:read to check out; id-token:write so pnpm can publish through npm's
+# trusted publishing (OIDC) once each package lists this repository + workflow
+# as a trusted publisher on npmjs.com — no token and no one-time code needed.
+# NPM_TOKEN stays as the fallback for a package that is not set up yet.
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   publish:
