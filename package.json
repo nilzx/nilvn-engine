@@ -18,8 +18,7 @@
     "test:watch": "vitest",
     "build": "pnpm -r build",
     "spec:check": "pnpm --filter @nilvn/plugin-sdk spec:check",
-    "pack:smoke": "node scripts/pack-smoke.mjs",
-    "version:set": "node scripts/set-version.mjs"
+    "pack:smoke": "node scripts/pack-smoke.mjs"
   },
   "devDependencies": {
     "@types/node": "^26.0.1",

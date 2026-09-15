@@ -42,8 +42,15 @@ test for what it changes.
   `pnpm --filter @nilvn/plugin-sdk spec:gen` after changing the contract.
 - Code, comments, documentation and commit messages are English.
 
-## Releases
+## How changes land
 
-`pnpm version:set engine x.y.z` sets the shared version (three `package.json`
-files and `packages/engine/src/version.ts`); pushing the tag `engine-vx.y.z`
-publishes the three packages to npm.
+This repository is a mirror: NilVN is developed in a private monorepo, and
+every push there re-exports these packages here as one sync commit. A merged
+pull request is therefore carried back into the monorepo by the maintainer and
+comes out again in the next sync, rather than staying as a commit of its own.
+
+Releases work the same way: the maintainer sets the shared version (three
+`package.json` files and `packages/engine/src/version.ts`) and tags
+`engine-vx.y.z` in the monorepo, the tag is mirrored onto the matching sync
+commit, and the publish workflow releases the three packages to npm through
+npm trusted publishing.

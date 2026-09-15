@@ -1,8 +1,8 @@
 # Publish the three packages to npm when an engine-v* tag is pushed, through
 # npm trusted publishing (no secret needed).
-# The tag must equal the packages' version (checked below), which
-# `pnpm version:set engine x.y.z` keeps in sync across the three package.json
-# files and packages/engine/src/version.ts.
+# The tag is mirrored from the monorepo and must equal the packages' version
+# (checked below), which the monorepo's version script keeps in sync across the
+# three package.json files and packages/engine/src/version.ts.
 name: Publish
 
 on:

@@ -99,7 +99,7 @@ packages/
   core/         @nilvn/core
   engine/       @nilvn/engine   src/ · docs/ · scripts/ (the bare IIFE builder)
   plugin-sdk/   @nilvn/plugin-sdk
-scripts/        set-version.mjs · pack-smoke.mjs
+scripts/        pack-smoke.mjs
 ```
 
 ```bash
@@ -110,8 +110,11 @@ pnpm typecheck:test    # the test suites themselves
 pnpm build             # dist/ for the three packages (ESM + .d.ts + the engine IIFE)
 pnpm spec:check        # the generated plugin contract matches its source
 pnpm pack:smoke        # pack the tarballs and consume them from a throwaway project
-pnpm version:set engine 0.14.0
 ```
+
+This repository is a mirror of the packages' home in NilVN's private monorepo:
+every change arrives as a sync commit, and an `engine-v*` tag mirrored onto one
+releases the three packages to npm ([CONTRIBUTING.md](CONTRIBUTING.md)).
 
 The demo game and the single-file game bundler live in `nilvn-plugins`, next to
 the plugins they show off.
