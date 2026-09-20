@@ -112,7 +112,7 @@ purpose-built evaluator, never by `eval`, so a script cannot reach into the page
 
 | Function | Result |
 |---|---|
-| `has(list, x)` | Whether `list` contains `x`: a member of a list (a persistent set such as `sys.endings`), or a substring of a string (so `has(clues, "burn")` works on a comma-joined string). |
+| `has(list, x)` | Whether `list` (a persistent set such as `sys.endings`, or a string) contains `x`. |
 | `rand(n)` / `rand(a, b)` / `rand()` | An integer in `[0, n)`, an integer in `[a, b]`, a float in `[0, 1)`. |
 | `min(…)` / `max(…)` / `floor(x)` | Arithmetic. |
 | `len(x)` | A string's or a list's length (0 otherwise). |
@@ -219,18 +219,11 @@ a script line can say. When the commands move the playhead (`[jump]`,
 on from there — a map screen is a background, a few hotspots and a parked line.
 
 ```
-[label map]
 [bg @bg/map.png]
 [hotspot shop x=10 y=20 w=25 h=30 onclick="jump shop"]
 [hotspot home x=60 y=50 w=20 h=25 onclick="jump home" if=day > 1]
 narr: Where to?
-[jump map]
 ```
-
-The parked line is an ordinary line: a tap ends it and play goes on below, so
-a map loops back to itself (the `[jump map]`) until a hotspot moves the
-playhead. A `[hotspot]`'s `if=` runs to the end of the tag, as a `[choice]`'s
-does.
 
 ## Transitions
 

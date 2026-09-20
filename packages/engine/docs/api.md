@@ -83,7 +83,7 @@ actors, languages and plugin set.
 | `jump(label)` | Move the playhead to a label (loads its chunk first in chunked play). |
 | `restart()` | Fresh variables, blank stage, silence, then play from the beginning. |
 | `showTitle()` | Stop any run, clear the session (variables, stage, audio, backlog), enter the `title` state and draw the title page — what `[title]` does. `start()` from there is a fresh game. |
-| `continueGame()` / `hasContinue()` | Resume from the autosave (the title page's Continue) / whether one exists — both async (`await engine.hasContinue()`; the store is asynchronous). |
+| `continueGame()` / `hasContinue()` | Resume from the autosave (the title page's Continue) / whether one exists. |
 | `auto` / `setAuto(on)`, `skip` / `setSkip(on)` | Auto mode (lines advance by themselves; a tap ends it) and skip mode (read lines — or everything per `skipMode` — pass at once; ends at the first unread line and at every choice). Holding Ctrl skips while held. |
 | `autoDelay` / `setAutoDelay(sec)`, `skipMode` / `setSkipMode(mode)` | Auto's pause and skip's reach — player settings, persisted. |
 | `getVolume(ch)` / `setVolume(ch, v)`, `dialogOpacity` / `setDialogOpacity(v)`, `uiScale` / `setUiScale(v)`, `isFullscreen()` / `setFullscreen(on)` | The other player settings the panel drives (the two sliders write the `dialog-opacity` / `ui-scale` theme tokens). |
@@ -328,7 +328,7 @@ stylesheet that read it, but the engine no longer reads it; use `name-bg`.
 | `lang`, `defaultLang`, `languages` | Current content language, fallback, and the switchable set. |
 | `catalogs` | Content text by language and key. |
 | `resolveText(key)` | A key in the current language, then the default language, then `''`. |
-| `setLanguage(lang)` | Switch content and chrome language and repaint the line or choices on screen in place (a line parked at a `{p}` page repaints that page); playback state is untouched. Ignored for a language with no catalog. Async, because chunked play may need to fetch that language's text slice first. |
+| `setLanguage(lang)` | Switch content and chrome language and repaint the line or choices on screen in place; playback state is untouched. Ignored for a language with no catalog. Async, because chunked play may need to fetch that language's text slice first. |
 | `onLanguageChange(fn)` | Subscribe to switches; returns an unsubscribe function. |
 
 Chrome strings: the engine's own pages carry theirs (`en` base, `zh`, `ja`;

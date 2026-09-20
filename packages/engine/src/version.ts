@@ -2,4 +2,4 @@
 // checked at runtime without reading package.json (which the IIFE never sees).
 // `pnpm version:set engine x.y.z` rewrites this constant along with package.json;
 // version.test.ts pins the two equal.
-export const ENGINE_VERSION = '0.16.2'
+export const ENGINE_VERSION = '0.16.0'

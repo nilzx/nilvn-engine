@@ -3,7 +3,7 @@
 // keys, wrong types and values off their lists; `applyConfig` surfaces them as
 // diagnostics; the kitchen-sink sample's config passes clean.
 import { describe, it, expect } from 'vitest'
-import { existsSync, readFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { parse } from 'smol-toml'
 import { createEngine, MemorySaveStore, applyConfig, checkConfig, CONFIG_SCHEMA } from '../src/index'
@@ -47,14 +47,10 @@ describe('checkConfig', () => {
     e.destroy()
   })
 
-  // The kitchen-sink sample lives in the private monorepo only (vitest runs
-  // from its root); the public engine repository has no apps/ and skips it.
-  const sample = resolve(process.cwd(), 'apps/e2e-game/public/nilvn.config.toml')
-  it.skipIf(!existsSync(sample))('the kitchen-sink sample config passes clean', () => {
-    expect(problems(parse(readFileSync(sample, 'utf8')))).toEqual([])
-  })
-
-  it('the schema is plain data', () => {
+  it('the kitchen-sink sample config passes clean; the schema is plain data', () => {
+    const file = resolve(process.cwd(), 'apps/e2e-game/public/nilvn.config.toml') // vitest runs from the repository root
+    const cfg = parse(readFileSync(file, 'utf8'))
+    expect(problems(cfg)).toEqual([])
     expect(JSON.parse(JSON.stringify(CONFIG_SCHEMA))).toEqual(CONFIG_SCHEMA)
     expect(Object.keys(CONFIG_SCHEMA.properties ?? {})).toContain('ui')
   })

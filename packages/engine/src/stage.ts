@@ -325,11 +325,9 @@ const BASE_CSS = `
 .nilvn-name.nilvn-hidden{display:none}
 .nilvn-text{font-size:calc(var(--nilvn-text-size)*var(--nilvn-ui-scale));line-height:var(--nilvn-text-line-height);letter-spacing:.02em;color:var(--nilvn-text-color);text-shadow:var(--nilvn-text-shadow)}
 .nilvn-ch{opacity:0;display:inline-block;white-space:pre}
-.nilvn-word{display:inline-block;white-space:nowrap}
 .nilvn-ch.on{opacity:1}
 .nilvn-off{display:none!important}
-.nilvn-dialog--fixed{height:var(--nilvn-dialog-height)}
-.nilvn-dialog--fixed .nilvn-text{height:100%;overflow:hidden}
+.nilvn-dialog--fixed{height:var(--nilvn-dialog-height);overflow:hidden}
 .nilvn-indicator{position:absolute;right:2.4cqw;bottom:1.8cqh;width:0;height:0;border-left:calc(var(--nilvn-indicator-size)*.64) solid transparent;border-right:calc(var(--nilvn-indicator-size)*.64) solid transparent;border-top:var(--nilvn-indicator-size) solid var(--nilvn-indicator-color);opacity:0}
 .nilvn-indicator.on{opacity:1;animation:nilvn-blink 1s ease-in-out infinite}
 @keyframes nilvn-blink{50%{transform:translateY(.5cqh);opacity:.3}}
@@ -552,15 +550,6 @@ interface LineItem {
   page?: boolean
 }
 
-/** A character that belongs to a word (breaks only at its edges): letters,
- *  digits, marks and Latin-style punctuation — not CJK, kana, hangul or Thai,
- *  which wrap per character, and not spaces. */
-const NO_WORD = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\p{Script=Thai}\u3000-\u303f\uff00-\uffef]/u
-const WORD = /[\p{L}\p{N}\p{M}\p{P}]/u
-function isWordChar(ch: string): boolean {
-  return WORD.test(ch) && !NO_WORD.test(ch)
-}
-
 /** A chrome button for the modal boxes (confirm / prompt). */
 function modalButton(label: string, id: 'ok' | 'cancel', primary: boolean, onClick: () => void): HTMLButtonElement {
   const b = document.createElement('button')
@@ -638,17 +627,6 @@ export class DomRenderer implements Renderer, EditStage {
   private choicesTimer: number | undefined
   private choicesLayout: ChoicesLayout = {}
   private overflow: OverflowMode = 'grow'
-  /** The line being typed: its items and where the next page starts. A repaint
-   *  while the player is parked at a page break (`repaintLine`) swaps both. */
-  private lineItems: LineItem[] = []
-  private lineStart = 0
-  /** Pages already turned in the current line (0 = still on the first). */
-  private linePage = 0
-  /** Set while `typeLine` waits at a page break. */
-  private lineParked = false
-  /** An image the stage was told to show failed to load (a wrong path). The
-   *  engine turns it into a diagnostic. */
-  onAssetError?: (what: string, url: string) => void
   /** Screen-space band hosting objects promoted over the dialogue (band='front').
    *  Sits above dialogue/choices, below the transition fader; empty by default. */
   readonly frontLayer: HTMLDivElement
@@ -843,10 +821,8 @@ export class DomRenderer implements Renderer, EditStage {
     if (model.logo) {
       const img = document.createElement('img')
       img.className = 'nilvn-screen__logo'
-      this.watchImage(img, 'logo')
       img.src = model.logo
       img.alt = model.heading ?? ''
-      if (model.logoWidth) img.style.width = model.logoWidth
       el.append(img)
     }
     if (model.heading) {
@@ -998,7 +974,6 @@ export class DomRenderer implements Renderer, EditStage {
         this.applyLayers(slot, opts.layers!, false)
       } else {
         const img = new Image()
-        this.watchImage(img, `sprite of "${id}"`)
         img.src = url
         img.draggable = false
         el.append(img)
@@ -1030,7 +1005,6 @@ export class DomRenderer implements Renderer, EditStage {
         slot.box = undefined
         slot.layers = undefined
         const img = new Image()
-        this.watchImage(img, `sprite of "${id}"`)
         img.draggable = false
         slot.el.append(img)
         slot.img = img
@@ -1071,7 +1045,6 @@ export class DomRenderer implements Renderer, EditStage {
       let cur = have.get(l.name)
       if (!cur) {
         const img = new Image()
-        this.watchImage(img, `layer "${l.name}"`)
         img.draggable = false
         img.src = l.url
         cur = { img, value: l.value, ref: l.ref }
@@ -1665,14 +1638,9 @@ export class DomRenderer implements Renderer, EditStage {
     parent.replaceChildren()
     const items: LineItem[] = []
     let index = 0
-    // Characters are inline-blocks (text effects transform them), which would
-    // let a line break between any two of them; runs of word characters go
-    // into a nowrap wrapper so Latin words wrap as words. CJK stays per character.
-    let word: HTMLSpanElement | null = null
     for (const seg of segments) {
       if (seg.kind === 'br') {
         parent.append(document.createElement('br'))
-        word = null
         continue
       }
       if (seg.kind === 'pause') {
@@ -1681,7 +1649,6 @@ export class DomRenderer implements Renderer, EditStage {
       }
       if (seg.kind === 'page') {
         items.push({ page: true })
-        word = null
         continue
       }
       for (const ch of seg.text) {
@@ -1689,17 +1656,7 @@ export class DomRenderer implements Renderer, EditStage {
         span.className = revealed ? 'nilvn-ch on' : 'nilvn-ch'
         span.textContent = ch
         span.style.setProperty('--i', String(index))
-        if (isWordChar(ch)) {
-          if (!word) {
-            word = document.createElement('span')
-            word.className = 'nilvn-word'
-            parent.append(word)
-          }
-          word.append(span)
-        } else {
-          word = null
-          parent.append(span)
-        }
+        parent.append(span)
         const handle: TextSpan = { index, char: ch, addClass: (name) => span.classList.add(name) }
         if (revealed) onSpan?.(handle, seg.effect)
         items.push({ span, handle, effect: seg.effect })
@@ -1728,11 +1685,6 @@ export class DomRenderer implements Renderer, EditStage {
     return limit > 0 ? limit : Infinity
   }
 
-  /** Report an image that fails to load (the engine makes it a diagnostic). */
-  private watchImage(img: HTMLImageElement, what: string): void {
-    img.addEventListener('error', () => this.onAssetError?.(what, img.src))
-  }
-
   private overflows(span: HTMLElement, limit: number): boolean {
     return span.offsetTop + span.offsetHeight > limit
   }
@@ -1755,18 +1707,8 @@ export class DomRenderer implements Renderer, EditStage {
   private hidePage(items: LineItem[], start: number, end: number): void {
     const first = items.slice(start, end).find((it) => it.span)?.span
     const next = items.slice(end).find((it) => it.span)?.span ?? null
-    if (!first) return
-    // Document order, so a page that starts or ends inside a word wrapper hides
-    // the wrapper's characters one by one and everything between as a whole.
-    // A page starting on a word's first character hides the whole word.
-    const wrapper = first.parentElement
-    const from = wrapper && wrapper !== this.textEl && wrapper.firstElementChild === first ? wrapper : first
-    let on = false
-    for (const el of this.textEl.querySelectorAll<HTMLElement>('*')) {
-      if (el === from) on = true
-      if (el === next) break
-      if (!on || (next && el.contains(next))) continue
-      el.classList.add('nilvn-off')
+    for (let n: ChildNode | null = first ?? null; n && n !== next; n = n.nextSibling) {
+      if (n instanceof HTMLElement) n.classList.add('nilvn-off')
     }
   }
 
@@ -1791,78 +1733,29 @@ export class DomRenderer implements Renderer, EditStage {
     }
   }
 
-  async typeLine(segments: Segment[], opts: TypeLineOptions): Promise<boolean> {
-    this.lineItems = this.layoutSegments(this.textEl, segments, false)
-    if (this.overflow === 'shrink') this.shrinkToFit()
-    this.lineStart = 0
-    this.linePage = 0
-    this.lineParked = false
-    try {
-      while (this.lineStart < this.lineItems.length) {
-        const items = this.lineItems
-        const start = this.lineStart
-        const end = this.pageEnd(items, start)
-        for (let i = start; i < end; i++) {
-          const item = items[i]!
-          if (!opts.alive()) return false
-          if (item.pause !== undefined) {
-            await this.skippableSleep(item.pause * 1000, opts.skip)
-            continue
-          }
-          if (!item.span) continue
-          item.span.classList.add('on')
-          opts.onReveal?.(item.handle!, item.effect)
-          const cps = opts.cps()
-          if (!opts.skip() && cps > 0) await this.skippableSleep(1000 / cps, opts.skip)
-        }
-        if (end >= items.length) return false
-        if (!opts.alive()) return false
-        this.lineParked = true
-        await opts.onPage?.()
-        this.lineParked = false
-        if (!opts.alive()) return false
-        if (this.lineItems === items) {
-          // No repaint happened while parked: turn the page of this layout.
-          this.hidePage(items, start, end)
-          this.lineStart = this.nextPageStart(items, end)
-        } else {
-          // A repaint swapped the line while parked (`repaintLine`): lineStart is
-          // the page the player was looking at in the new layout — turn that.
-          const cur = this.lineItems
-          if (this.lineStart >= cur.length) return true // the new text had no page after it: the tap ended the line
-          const curEnd = this.pageEnd(cur, this.lineStart)
-          this.hidePage(cur, this.lineStart, curEnd)
-          this.lineStart = this.nextPageStart(cur, curEnd)
-        }
-        this.linePage++
-      }
-    } finally {
-      this.lineParked = false
-    }
-    return false
-  }
-
-  /** Re-render a line the player is parked INSIDE (at a page break) — a
-   *  language switch while a `{p}` page is up. The new text is laid out, its
-   *  pages before the current one are hidden, the current one shown, and the
-   *  typewriter continues from the page after it once the player advances
-   *  (or the tap ends the line when the new text has no more pages). Returns
-   *  false when no line is parked mid-way (the caller repaints with `setLine`). */
-  repaintLine(segments: Segment[], onSpan?: (span: TextSpan, effect: string | undefined) => void): boolean {
-    if (!this.lineParked) return false
-    const items = this.layoutSegments(this.textEl, segments, true, onSpan)
+  async typeLine(segments: Segment[], opts: TypeLineOptions): Promise<void> {
+    const items = this.layoutSegments(this.textEl, segments, false)
     if (this.overflow === 'shrink') this.shrinkToFit()
     let start = 0
-    for (let page = 0; ; page++) {
+    while (start < items.length) {
       const end = this.pageEnd(items, start)
-      if (page === this.linePage || end >= items.length) {
-        for (let i = end; i < items.length; i++) items[i]!.span?.classList.remove('on')
-        this.lineItems = items
-        // The shown page's start (typeLine turns it on the next tap), or past
-        // the end when the new text has nothing after this page.
-        this.lineStart = end >= items.length ? items.length : start
-        return true
+      for (let i = start; i < end; i++) {
+        const item = items[i]!
+        if (!opts.alive()) return
+        if (item.pause !== undefined) {
+          await this.skippableSleep(item.pause * 1000, opts.skip)
+          continue
+        }
+        if (!item.span) continue
+        item.span.classList.add('on')
+        opts.onReveal?.(item.handle!, item.effect)
+        const cps = opts.cps()
+        if (!opts.skip() && cps > 0) await this.skippableSleep(1000 / cps, opts.skip)
       }
+      if (end >= items.length) return
+      if (!opts.alive()) return
+      await opts.onPage?.()
+      if (!opts.alive()) return
       this.hidePage(items, start, end)
       start = this.nextPageStart(items, end)
     }

@@ -189,15 +189,6 @@ export const builtins: Record<string, BuiltinFn> = {
     ctx.engine.ui[op](id)
   },
 
-  // [choices timer=8 default=2] — the next prompt's timer (seconds, 0 = none) and
-  // 1-based default, overriding the [choices] config for that prompt only.
-  choices(ctx) {
-    const timer = ctx.numOpt('timer')
-    const timerDefault = ctx.numOpt('default')
-    if (timer === undefined && timerDefault === undefined) throw new Error('[choices] syntax: [choices timer=seconds default=n]')
-    ctx.engine.setNextChoices({ timer, timerDefault })
-  },
-
   // [hotspot shop x=10 y=20 w=25 h=30 onclick="jump shop" if=day > 1] — a clickable
   // region (percent of the stage) that runs script commands; [hotspot remove shop],
   // [hotspot clear].
@@ -215,8 +206,7 @@ export const builtins: Record<string, BuiltinFn> = {
     }
     const onclick = ctx.str('onclick')
     if (!first || !onclick) throw new Error('[hotspot] syntax: [hotspot <id> x= y= w= h= onclick="…" if=cond]')
-    // `if=` runs to the end of the tag (spaces allowed), as a [choice]'s does.
-    const cond = tailCondition(ctx.raw)
+    const cond = ctx.str('if')
     if (cond && !truthy(evalExpr(cond, ctx.engine.scope()))) {
       ctx.engine.stage.hideHotspot(first)
       return
@@ -355,12 +345,4 @@ export const builtins: Record<string, BuiltinFn> = {
   async title(ctx) {
     await ctx.engine.showTitle()
   },
-}
-
-/** The `if=` a tag ends with, unquoted — everything after `if=` to the tag's end. */
-function tailCondition(raw: string): string | undefined {
-  const m = /(?:^|\s)if=([\s\S]*)$/.exec(raw)
-  if (!m) return undefined
-  const v = m[1]!.trim()
-  return v.replace(/^"([\s\S]*)"$/, '$1').replace(/^'([\s\S]*)'$/, '$1')
 }

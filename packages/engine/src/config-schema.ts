@@ -82,7 +82,7 @@ export const CONFIG_SCHEMA: ConfigSchema = obj({
     nameSize: len,
     indicatorColor: str,
   }),
-  title: obj({ enabled: bool, heading: str, subtitle: str, logo: str, logoWidth: len, background: str, bgm: str, bgmVolume: num, buttons: strList, layout: oneOf('center', 'left', 'right', 'bottom'), version: bool }),
+  title: obj({ enabled: bool, heading: str, subtitle: str, logo: str, background: str, bgm: str, bgmVolume: num, buttons: strList, layout: oneOf('center', 'left', 'right', 'bottom'), version: bool }),
   ending: table(obj({ enabled: bool, heading: str, subtitle: str, background: str, bgm: str, bgmVolume: num, credits: { type: ['string', 'array'], items: str }, creditsDuration: num, after: oneOf('title', 'restart', 'none'), buttons: bool })),
   saves: obj({ autosave: { type: ['string', 'boolean'], enum: ['label', 'line', false] }, pages: num, slotsPerPage: num, thumbnail: oneOf('bg', 'none') }),
   menu: obj({ enabled: bool, entry: oneOf('top-right', 'top-left', 'bottom-right', 'bottom-left', 'hidden'), items: strList, wheelBacklog: bool }),

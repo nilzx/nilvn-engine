@@ -66,7 +66,7 @@ export class UiPanels {
   /** A panel's display name for a menu / title entry: its title, else its id. */
   label(id: string): string {
     const p = this.panels.get(id)
-    return (p && this.engine.chromeString(p.cfg.title, true)) || id
+    return (p && this.engine.chromeString(p.cfg.title)) || id
   }
 
   show(id: string): void {
@@ -122,7 +122,7 @@ export class UiPanels {
       else visible = playing && (over ?? true)
       p.el.style.display = visible ? '' : 'none'
       if (!visible) continue
-      if (p.title) p.title.textContent = e.chromeString(p.cfg.title, true) ?? ''
+      if (p.title) p.title.textContent = e.chromeString(p.cfg.title) ?? ''
       this.render(p, scope)
     }
   }
@@ -136,7 +136,7 @@ export class UiPanels {
       switch (w.type) {
         case 'text': {
           const t = el('div', 'nilvn-ui__text')
-          const text = e.chromeString(w.text, true)
+          const text = e.chromeString(w.text)
           t.textContent = text !== undefined ? text : w.var ? displayValue(e.getVar(w.var)) : ''
           p.body.append(t)
           break
@@ -145,7 +145,7 @@ export class UiPanels {
           const box = el('div', 'nilvn-ui__bar')
           if (w.label !== undefined) {
             const l = el('div', 'nilvn-ui__bar-label')
-            l.textContent = e.chromeString(w.label, true) ?? ''
+            l.textContent = e.chromeString(w.label) ?? ''
             box.append(l)
           }
           const track = el('div', 'nilvn-ui__bar-track')
@@ -163,7 +163,7 @@ export class UiPanels {
         case 'image': {
           if (!w.src) break
           const img = el('img', 'nilvn-ui__image')
-          img.src = e.resolve(e.fill(w.src, true))
+          img.src = e.resolve(e.fill(w.src))
           img.alt = ''
           img.draggable = false
           if (w.width !== undefined) img.style.width = String(w.width)
@@ -175,15 +175,14 @@ export class UiPanels {
           const items = Array.isArray(v) ? v : typeof v === 'string' && v ? v.split(',').map((s) => s.trim()) : []
           if (!items.length) {
             const t = el('div', 'nilvn-ui__text nilvn-ui__empty')
-            t.textContent = e.chromeString(w.empty, true) ?? ''
+            t.textContent = e.chromeString(w.empty) ?? ''
             p.body.append(t)
             break
           }
           const ul = el('ul', 'nilvn-ui__list')
           for (const it of items) {
             const li = document.createElement('li')
-            // a string item is a config string: `@key` / `{$var}` resolve
-            li.textContent = typeof it === 'string' ? (e.chromeString(it, true) ?? '') : displayValue(it)
+            li.textContent = displayValue(it)
             ul.append(li)
           }
           p.body.append(ul)
@@ -192,7 +191,7 @@ export class UiPanels {
         case 'button': {
           const b = el('button', 'nilvn-screen__button nilvn-ui__button')
           b.type = 'button'
-          b.textContent = e.chromeString(w.label, true) ?? ''
+          b.textContent = e.chromeString(w.label) ?? ''
           const cmd = w.onclick
           b.addEventListener('click', () => {
             if (cmd) void e.runInline(cmd)

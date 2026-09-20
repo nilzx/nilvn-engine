@@ -77,7 +77,6 @@ export function titleModel(cfg: TitleConfig, host: ChromeHost): { model: ScreenM
     heading: host.text(cfg.heading) ?? host.workTitle,
     subtitle: host.text(cfg.subtitle),
     logo: cfg.logo ? host.resolve(cfg.logo) : undefined,
-    logoWidth: typeof cfg.logoWidth === 'number' ? `${cfg.logoWidth}px` : cfg.logoWidth,
     background: screenBackground(cfg.background, host.resolve),
     layout: cfg.layout ?? 'center',
     buttons,
