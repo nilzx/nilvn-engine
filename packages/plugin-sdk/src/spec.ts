@@ -21,8 +21,12 @@ import {
 
 /** Version of the generated-spec FORMAT (bump on breaking shape changes).
  *  v2: the `bundled` inventory left with the first-party plugins (@nilvn/plugins
- *  ships its own catalog); `firstParty` describes the namespace convention only. */
-export const PLUGIN_SPEC_VERSION = 2
+ *  ships its own catalog); `firstParty` describes the namespace convention only.
+ *  v3 (engine 0.15): plugin settings (`config` / `[plugins.<id>]` / `ctx.config`),
+ *  per-plugin storage (`storage.local`), chrome contributions (`menuItems` /
+ *  `titleItems` / `hud` behind `ui.screen`), in-engine dialogs (`ui.dialog`) and
+ *  actor fields (`actorFields`); the in-game menu is the engine's own. */
+export const PLUGIN_SPEC_VERSION = 3
 
 export interface FieldDoc {
   name: string
@@ -105,6 +109,11 @@ const CONTRIBUTES_FIELDS: FieldDoc[] = [
   F('stageTools', 'string[]', 'Stage overlay tool ids.'),
   F('lineActions', 'string[]', 'Dialogue-line action bar button ids.'),
   F('objectMenu', 'string[]', 'On-stage object context-menu section ids.'),
+  F('config', 'ConfigFieldSchema[]', 'Plugin settings: { key, type, default, label, options?, min?, max?, step?, scope? }. The author sets them in the config file’s [plugins.<id>] table (short first-party names work) or the studio; the plugin reads ctx.config.get(key). scope = "player" rows also appear in the in-game settings panel and persist per work (the author’s value is the default). Unknown author keys are one diagnostic.'),
+  F('menuItems', 'MenuItemDef[]', '{ id, label (i18n id), when?: playing | always } — entries in the in-game system menu; the module wires each with ctx.screen.menuItem(id, onSelect) (needs ui.screen).'),
+  F('titleItems', 'MenuItemDef[]', '{ id, label } — buttons on the title page, wired with ctx.screen.titleItem(id, onSelect) (needs ui.screen).'),
+  F('hud', 'HudDef[]', '{ id, slot?: top-left | top-right | bottom-left | bottom-right } — a widget container in a stage corner, shown while playing: ctx.screen.hud(id) (needs ui.screen).'),
+  F('actorFields', 'ActorFieldDef[]', '{ key, type, label? } — fields an actor declaration may carry for this plugin ([actors.<id>] key = … / [actor id key=…]); the engine files them under the actor’s ext[pluginId] and the plugin reads ctx.actorField(actorId, key).'),
 ]
 
 const RUNTIME_MODULE: FieldDoc[] = [
@@ -116,7 +125,7 @@ const RUNTIME_MODULE: FieldDoc[] = [
   F('textEffects', 'Record<name, (span: TextSpan, index, ctx: PluginContext) => void>', 'Inline text effects; `span.addClass` is the only verb.'),
   F('objectKinds', 'ObjectKindDecl[]', 'Runtime kind contracts: `transformable` + `recordable` channels — standard channel NAMES (x / y / scale / rotation / opacity / visible / face / band) or custom RecordableProp descriptors.'),
   F('effects', 'Record<name, { appliesToKinds, apply(handle, params, ctx) }>', 'Effects run with the OWNER plugin’s context.'),
-  F('hooks', 'EngineHooks', 'onDialogue / onDialogueDone / onReveal / onChoices / onChoose / onCommand / onEnd / onError — each receives the plugin context last.'),
+  F('hooks', 'EngineHooks', 'onReady / onSessionChange(state, prev) / onLabel(label) / onDialogue / onDialogueDone / onReveal / onChoices / onChoose / onCommand / onEnd / onSaved(state) / onRestored(state) / onSettingsChange(key, value) / onVarChange(name, value) / onError — each receives the plugin context last.'),
   F('activate(ctx)', 'void | Promise<void>', 'Once per activation. Register listeners / timers / layers through ctx so they are released on deactivate. A throw isolates the plugin.'),
   F('deactivate(ctx)', 'void', 'Before the host disposes everything registered through ctx.'),
   F('saveState(ctx) / restoreState(ctx, data)', '…', 'The SaveState.ext[id] slice (needs save.slice).'),
@@ -130,6 +139,12 @@ const RUNTIME_CONTEXT: FieldDoc[] = [
   F('listen(target, type, fn, opts?)', '() => void', 'Event listener removed on dispose.'),
   F('onDispose(fn)', 'void', 'Run on deactivate.'),
   F('registerCommand / registerTextEffect / registerEffect / registerKind / on(hook, fn) / addStyle(css)', '…', 'Dynamic registration; all disposable.'),
+  F('theme', 'ThemeCap', 'Always present: get(token) / all() / onChange(fn) over the work’s `--nilvn-*` theme overrides (THEME_TOKENS has the defaults). Plugin CSS draws with var(--nilvn-…), never colour literals, so it follows the theme.'),
+  F('config', 'ConfigCap', 'Always present: get(key) / all() / onChange(fn) — this plugin’s settings, resolved schema default ← the author’s [plugins.<id>] value ← the player’s value.'),
+  F('actorField(actorId, key)', 'unknown', 'Always present: a contributes.actorFields value for that actor (undefined when absent).'),
+  F('storage', 'StorageCap?', 'storage.local: get / set / remove / keys — a key-value store namespaced per work and plugin (async, JSON values), backed by the engine’s SaveStore.'),
+  F('screen', 'ScreenCap?', 'ui.screen: open(id, title, render) / close(id?) full-stage screens in the engine’s panel chrome; menuItem(id, onSelect) / titleItem(id, onSelect) wire contributes.menuItems / titleItems; hud(id) → the contributes.hud container. All released on dispose.'),
+  F('dialog', 'DialogCap?', 'ui.dialog: confirm(message) → Promise<boolean>, alert(message), toast(message) — the engine’s own boxes, never the browser’s.'),
   F('stage', 'StageCap?', 'stage.read: hasObject / getProp / getBand / getFace / hasChar / charFace / snapshot. stage.write adds every Renderer write verb + applyEffect / showActor / playFrames / stopFrames / startLoop / stopLoop / runningLoops (write verbs are reporting stubs under stage.read only). playFrames / startLoop / stopLoop accept the keyframe WIRE forms (`obj#t:ch=v;…|…`, `t:ch=v;…`, `ch=v,…`) as well as decoded tracks — the engine owns the codec.'),
   F('audio', 'AudioCap?', 'audio.play: playTrack / stopTrack / stopAllTracks / playSe / volume(channel) / voicePlaying.'),
   F('vars', 'VarsCap?', 'vars.read: get / has / all; vars.write adds set (a stub without it).'),
@@ -160,7 +175,10 @@ const CAPABILITIES: Record<string, string[]> = {
   'session.backlog': ['entries', 'replayVoice'],
   'session.replay': ['list', 'isReplaying', 'play', 'end', 'fireSeen', 'onSeen', 'onEnd'],
   'ui.layer': ['layer', 'onStage'],
+  'ui.screen': ['open', 'close', 'menuItem', 'titleItem', 'hud'],
+  'ui.dialog': ['confirm', 'alert', 'toast'],
   timer: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'requestAnimationFrame', 'cancelAnimationFrame'],
+  'storage.local': ['get', 'set', 'remove', 'keys'],
   'project.read': ['state (editor)'],
   'project.commit': ['commit', 'run (editor)'],
   'assets.read': ['assets (editor)'],

@@ -1,5 +1,5 @@
 {
-  "specVersion": 2,
+  "specVersion": 3,
   "pluginApiVersion": 2,
   "irSchemaVersion": 11,
   "generatedBy": "@nilvn/plugin-sdk spec:gen (packages/plugin-sdk/src/spec.ts)",
@@ -180,6 +180,36 @@
         "type": "string[]",
         "desc": "On-stage object context-menu section ids.",
         "required": false
+      },
+      {
+        "name": "config",
+        "type": "ConfigFieldSchema[]",
+        "desc": "Plugin settings: { key, type, default, label, options?, min?, max?, step?, scope? }. The author sets them in the config file’s [plugins.<id>] table (short first-party names work) or the studio; the plugin reads ctx.config.get(key). scope = \"player\" rows also appear in the in-game settings panel and persist per work (the author’s value is the default). Unknown author keys are one diagnostic.",
+        "required": false
+      },
+      {
+        "name": "menuItems",
+        "type": "MenuItemDef[]",
+        "desc": "{ id, label (i18n id), when?: playing | always } — entries in the in-game system menu; the module wires each with ctx.screen.menuItem(id, onSelect) (needs ui.screen).",
+        "required": false
+      },
+      {
+        "name": "titleItems",
+        "type": "MenuItemDef[]",
+        "desc": "{ id, label } — buttons on the title page, wired with ctx.screen.titleItem(id, onSelect) (needs ui.screen).",
+        "required": false
+      },
+      {
+        "name": "hud",
+        "type": "HudDef[]",
+        "desc": "{ id, slot?: top-left | top-right | bottom-left | bottom-right } — a widget container in a stage corner, shown while playing: ctx.screen.hud(id) (needs ui.screen).",
+        "required": false
+      },
+      {
+        "name": "actorFields",
+        "type": "ActorFieldDef[]",
+        "desc": "{ key, type, label? } — fields an actor declaration may carry for this plugin ([actors.<id>] key = … / [actor id key=…]); the engine files them under the actor’s ext[pluginId] and the plugin reads ctx.actorField(actorId, key).",
+        "required": false
       }
     ]
   },
@@ -225,6 +255,41 @@
       "status": "active",
       "version": 1,
       "description": "Declares a SaveState.ext slice owned by this plugin."
+    },
+    {
+      "key": "config",
+      "side": "engine",
+      "status": "active",
+      "version": 1,
+      "description": "Plugin settings (ConfigFieldSchema[]): the config file’s [plugins.<id>] table and ctx.config at runtime; scope = player rows also appear in the in-game settings panel and persist per work."
+    },
+    {
+      "key": "menuItems",
+      "side": "engine",
+      "status": "active",
+      "version": 1,
+      "description": "Entries in the in-game system menu (wired with ctx.screen.menuItem; needs ui.screen)."
+    },
+    {
+      "key": "titleItems",
+      "side": "engine",
+      "status": "active",
+      "version": 1,
+      "description": "Buttons on the title page (ctx.screen.titleItem; needs ui.screen)."
+    },
+    {
+      "key": "hud",
+      "side": "engine",
+      "status": "active",
+      "version": 1,
+      "description": "Persistent widgets in a stage corner while playing (ctx.screen.hud; needs ui.screen)."
+    },
+    {
+      "key": "actorFields",
+      "side": "engine",
+      "status": "active",
+      "version": 1,
+      "description": "Fields an actor declaration may carry for this plugin ([actors.<id>] / [actor …]), reached as ctx.actorField(actorId, key)."
     },
     {
       "key": "rendererLayers",
@@ -427,6 +492,20 @@
       "description": "A host container inside the stage root (removed on dispose)."
     },
     {
+      "id": "ui.screen",
+      "group": "ui",
+      "side": "engine",
+      "status": "active",
+      "description": "Full-stage screens over the story, entries in the system menu and on the title page, HUD widgets (the menuItems / titleItems / hud contributions)."
+    },
+    {
+      "id": "ui.dialog",
+      "group": "ui",
+      "side": "engine",
+      "status": "active",
+      "description": "In-engine confirm / alert boxes and toasts (never the browser’s)."
+    },
+    {
       "id": "ui.panel",
       "group": "ui",
       "side": "editor",
@@ -519,6 +598,13 @@
       "description": "setTimeout / setInterval / requestAnimationFrame, cleared on dispose."
     },
     {
+      "id": "storage.local",
+      "group": "data",
+      "side": "engine",
+      "status": "active",
+      "description": "A key-value store namespaced per work and plugin (async, JSON values) — the engine’s SaveStore."
+    },
+    {
       "id": "ai.text",
       "group": "ai",
       "side": "host",
@@ -607,7 +693,7 @@
       {
         "name": "hooks",
         "type": "EngineHooks",
-        "desc": "onDialogue / onDialogueDone / onReveal / onChoices / onChoose / onCommand / onEnd / onError — each receives the plugin context last.",
+        "desc": "onReady / onSessionChange(state, prev) / onLabel(label) / onDialogue / onDialogueDone / onReveal / onChoices / onChoose / onCommand / onEnd / onSaved(state) / onRestored(state) / onSettingsChange(key, value) / onVarChange(name, value) / onError — each receives the plugin context last.",
         "required": false
       },
       {
@@ -670,6 +756,42 @@
         "name": "registerCommand / registerTextEffect / registerEffect / registerKind / on(hook, fn) / addStyle(css)",
         "type": "…",
         "desc": "Dynamic registration; all disposable.",
+        "required": false
+      },
+      {
+        "name": "theme",
+        "type": "ThemeCap",
+        "desc": "Always present: get(token) / all() / onChange(fn) over the work’s `--nilvn-*` theme overrides (THEME_TOKENS has the defaults). Plugin CSS draws with var(--nilvn-…), never colour literals, so it follows the theme.",
+        "required": false
+      },
+      {
+        "name": "config",
+        "type": "ConfigCap",
+        "desc": "Always present: get(key) / all() / onChange(fn) — this plugin’s settings, resolved schema default ← the author’s [plugins.<id>] value ← the player’s value.",
+        "required": false
+      },
+      {
+        "name": "actorField(actorId, key)",
+        "type": "unknown",
+        "desc": "Always present: a contributes.actorFields value for that actor (undefined when absent).",
+        "required": false
+      },
+      {
+        "name": "storage",
+        "type": "StorageCap?",
+        "desc": "storage.local: get / set / remove / keys — a key-value store namespaced per work and plugin (async, JSON values), backed by the engine’s SaveStore.",
+        "required": false
+      },
+      {
+        "name": "screen",
+        "type": "ScreenCap?",
+        "desc": "ui.screen: open(id, title, render) / close(id?) full-stage screens in the engine’s panel chrome; menuItem(id, onSelect) / titleItem(id, onSelect) wire contributes.menuItems / titleItems; hud(id) → the contributes.hud container. All released on dispose.",
+        "required": false
+      },
+      {
+        "name": "dialog",
+        "type": "DialogCap?",
+        "desc": "ui.dialog: confirm(message) → Promise<boolean>, alert(message), toast(message) — the engine’s own boxes, never the browser’s.",
         "required": false
       },
       {
@@ -847,6 +969,18 @@
         "layer",
         "onStage"
       ],
+      "ui.screen": [
+        "open",
+        "close",
+        "menuItem",
+        "titleItem",
+        "hud"
+      ],
+      "ui.dialog": [
+        "confirm",
+        "alert",
+        "toast"
+      ],
       "timer": [
         "setTimeout",
         "clearTimeout",
@@ -854,6 +988,12 @@
         "clearInterval",
         "requestAnimationFrame",
         "cancelAnimationFrame"
+      ],
+      "storage.local": [
+        "get",
+        "set",
+        "remove",
+        "keys"
       ],
       "project.read": [
         "state (editor)"

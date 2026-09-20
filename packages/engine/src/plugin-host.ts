@@ -33,7 +33,6 @@ import { ENGINE_CAPABILITIES, makeCapabilities, type CapHost } from './plugin-co
 import { engineGrantable, firstPartyShortName, isPluginId, isPluginManifest, manifestProblems, matchPermission } from './plugin-manifest.js'
 import { resolveKind } from './object.js'
 import { isValidRange, satisfiesRange } from './semver.js'
-import { tUI } from './i18n.js'
 
 const errMsg = (err: unknown): string => (err instanceof Error ? err.message : String(err))
 
@@ -176,7 +175,20 @@ export class PluginHost {
     this.recs.set(id, rec)
     const short = firstPartyShortName(id)
     if (short && !this.aliases.has(short)) this.aliases.set(short, id)
+    if (rec.manifest?.contributes?.actorFields?.length) this.engine.normalizeActors()
     return rec
+  }
+
+  /** The manifest attached to a registered plugin (by id or short name). */
+  manifestOf(nameOrId: string): PluginManifest | undefined {
+    return this.recs.get(this.resolveId(nameOrId))?.manifest
+  }
+
+  /** Every actor field a registered manifest declares (`contributes.actorFields`). */
+  actorFields(): { pluginId: string; key: string }[] {
+    const out: { pluginId: string; key: string }[] = []
+    for (const rec of this.recs.values()) for (const f of rec.manifest?.contributes?.actorFields ?? []) out.push({ pluginId: rec.id, key: f.key })
+    return out
   }
 
   /** Attach a manifest to a registered plugin (EngineOptions.manifests). */
@@ -185,6 +197,7 @@ export class PluginHost {
     if (rec) {
       rec.manifest = m
       rec.commandNames = new Set([...Object.keys(rec.module.commands ?? {}), ...(m.contributes?.commands ?? []).map((c) => c.name)])
+      if (m.contributes?.actorFields?.length) this.engine.normalizeActors()
     }
   }
 
@@ -273,6 +286,7 @@ export class PluginHost {
     rec.state = 'active'
     const ctx = this.makeContext(rec, granted)
     rec.ctx = ctx
+    this.engine.checkPluginConfig(rec.id, (message) => this.warnOnce(rec, message))
     // Declared contributions go through the same disposable registration.
     const mod = rec.module
     if (mod.styles) ctx.addStyle(mod.styles)
@@ -660,10 +674,29 @@ export class PluginHost {
       resolve: (p) => engine.resolve(p),
       t: (id, params) => {
         const own = messages?.[engine.lang]?.[id] ?? messages?.en?.[id]
-        if (own === undefined) return tUI(id, params, engine.lang)
+        if (own === undefined) return engine.t(id, params)
         return params ? own.replace(/\{(\w+)\}/g, (_, k: string) => (k in params ? String(params[k]) : `{${k}}`)) : own
       },
       report: (message, error) => engine.report({ phase: 'plugin', plugin: rec.id, message, error }),
+      theme: {
+        get: (token) => engine.theme[token],
+        all: () => engine.theme,
+        onChange: (fn) => {
+          const off = engine.onThemeChange(fn)
+          rec.disposers.push(off)
+          return off
+        },
+      },
+      config: {
+        get: <T,>(key: string) => engine.pluginConfigValue(rec.id, key) as T | undefined,
+        all: () => engine.pluginConfigAll(rec.id),
+        onChange: (fn) => {
+          const off = engine.onPluginConfigChange(rec.id, fn)
+          rec.disposers.push(off)
+          return off
+        },
+      },
+      actorField: (actorId, key) => engine.actorField(actorId, rec.id, key),
       listen: (target, type, fn, opts) => {
         target.addEventListener(type, fn, opts)
         const off = (): void => target.removeEventListener(type, fn, opts)

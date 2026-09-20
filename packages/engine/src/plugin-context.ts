@@ -6,7 +6,8 @@
 // / DOM node minted here is recorded on the plugin's disposer list, so the host
 // can release all of it deterministically on deactivate (the hot-plug guarantee).
 
-import type { Engine } from './engine.js'
+import { VOLUME_FIELD, type Engine } from './engine.js'
+import { pluginStorageKey } from './save-store.js'
 import { uiLangName } from './i18n.js'
 import type {
   AudioCap,
@@ -21,15 +22,11 @@ import type {
   TimerCap,
   UiCap,
   VarsCap,
-  VolumeChannel,
+  StorageCap,
+  ScreenCap,
+  DialogCap,
 } from './types.js'
 
-const VOLUME_FIELD: Record<VolumeChannel, 'bgmVolume' | 'ambienceVolume' | 'seVolume' | 'voiceVolume'> = {
-  bgm: 'bgmVolume',
-  ambience: 'ambienceVolume',
-  se: 'seVolume',
-  voice: 'voiceVolume',
-}
 
 /** What the capability factories need from the host record. */
 export interface CapHost {
@@ -134,11 +131,7 @@ export function makeVarsCap(engine: Engine, host: CapHost): VarsCap | undefined 
     get: (name) => engine.vars[name],
     has: (name) => Object.prototype.hasOwnProperty.call(engine.vars, name),
     all: () => ({ ...engine.vars }),
-    set: write
-      ? (name, value) => {
-          engine.vars[name] = value
-        }
-      : (name) => host.warn(`vars.set("${name}") ignored — "vars.write" was not granted`),
+    set: write ? (name, value) => engine.setVar(name, value) : (name) => host.warn(`vars.set("${name}") ignored — "vars.write" was not granted`),
   }
 }
 
@@ -169,10 +162,7 @@ export function makeSettingsCap(engine: Engine, host: CapHost): SettingsCap | un
       engine.textSpeed = v
     },
     getVolume: (channel) => engine[VOLUME_FIELD[channel]],
-    setVolume: (channel, value) => {
-      engine[VOLUME_FIELD[channel]] = Math.max(0, Math.min(1, value))
-      engine.applyVolumes()
-    },
+    setVolume: (channel, value) => engine.setVolume(channel, value),
     get lang() {
       return engine.lang
     },
@@ -297,8 +287,57 @@ export function makeTimerCap(host: CapHost): TimerCap | undefined {
   }
 }
 
+/** `storage.local`: the engine's SaveStore, namespaced per plugin. */
+export function makeStorageCap(engine: Engine, host: CapHost): StorageCap | undefined {
+  if (!host.granted.has('storage.local')) return undefined
+  const k = (key: string): string => pluginStorageKey(host.id, key)
+  const prefix = pluginStorageKey(host.id, '')
+  return {
+    get: async <T,>(key: string) => (await engine.saveStore.get(k(key))) as T | undefined,
+    set: (key, value) => engine.saveStore.set(k(key), value),
+    remove: (key) => engine.saveStore.remove(k(key)),
+    keys: async () => (await engine.saveStore.keys()).filter((x) => x.startsWith(prefix)).map((x) => x.slice(prefix.length)),
+  }
+}
+
+/** `ui.dialog`: the engine's own boxes. */
+export function makeDialogCap(engine: Engine, host: CapHost): DialogCap | undefined {
+  if (!host.granted.has('ui.dialog')) return undefined
+  return {
+    confirm: (message) => engine.stage.chrome.confirm(message, { ok: engine.t('ui.dialog.ok'), cancel: engine.t('ui.dialog.cancel') }),
+    alert: async (message) => {
+      await engine.stage.chrome.confirm(message, { ok: engine.t('ui.dialog.ok') })
+    },
+    toast: (message) => engine.stage.chrome.toast(message),
+  }
+}
+
+/** `ui.screen`: plugin screens and chrome entries, each released on dispose. */
+export function makeScreenCap(engine: Engine, host: CapHost): ScreenCap | undefined {
+  if (!host.granted.has('ui.screen')) return undefined
+  return {
+    open: (id, title, render) => engine.openPluginScreen(host.id, id, title, render),
+    close: (id) => engine.closePluginScreen(id),
+    menuItem: (id, onSelect) => {
+      const off = engine.addMenuItem(host.id, id, onSelect)
+      host.dispose(off)
+      return off
+    },
+    titleItem: (id, onSelect) => {
+      const off = engine.addTitleItem(host.id, id, onSelect)
+      host.dispose(off)
+      return off
+    },
+    hud: (id) => {
+      const { el, dispose } = engine.hudWidget(host.id, id)
+      host.dispose(dispose)
+      return el
+    },
+  }
+}
+
 /** Build every capability object the record was granted. */
-export function makeCapabilities(engine: Engine, host: CapHost): Pick<PluginContext, 'stage' | 'audio' | 'vars' | 'saves' | 'settings' | 'backlog' | 'replay' | 'ui' | 'timer'> {
+export function makeCapabilities(engine: Engine, host: CapHost): Pick<PluginContext, 'stage' | 'audio' | 'vars' | 'saves' | 'settings' | 'backlog' | 'replay' | 'ui' | 'timer' | 'storage' | 'screen' | 'dialog'> {
   const caps: Record<string, unknown> = {}
   const put = (key: string, value: unknown): void => {
     if (value !== undefined) caps[key] = value
@@ -312,6 +351,9 @@ export function makeCapabilities(engine: Engine, host: CapHost): Pick<PluginCont
   put('replay', makeReplayCap(engine, host))
   put('ui', makeUiCap(engine, host))
   put('timer', makeTimerCap(host))
+  put('storage', makeStorageCap(engine, host))
+  put('screen', makeScreenCap(engine, host))
+  put('dialog', makeDialogCap(engine, host))
   return caps as ReturnType<typeof makeCapabilities>
 }
 
@@ -328,5 +370,8 @@ export const ENGINE_CAPABILITIES: readonly Permission[] = [
   'session.backlog',
   'session.replay',
   'ui.layer',
+  'ui.screen',
+  'ui.dialog',
   'timer',
+  'storage.local',
 ]

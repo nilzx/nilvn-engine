@@ -126,6 +126,26 @@ export const BUILTIN_COMMANDS: CommandSchema[] = [
     ],
   },
   {
+    name: 'theme',
+    label: 'cmd.theme.label',
+    category: 'stage',
+    icon: '🎨',
+    hint: 'cmd.theme.hint',
+    // The engine accepts ANY token the theme contract names (`--nilvn-<token>`);
+    // the form offers the everyday ones. `[theme reset]` clears the script layer.
+    params: [
+      { key: 'dialog-bg', label: 'cmd.theme.dialogBg', type: 'string' },
+      { key: 'dialog-opacity', label: 'cmd.theme.dialogOpacity', type: 'number' },
+      { key: 'text-color', label: 'cmd.theme.textColor', type: 'string' },
+      { key: 'text-size', label: 'cmd.theme.textSize', type: 'string', advanced: true },
+      { key: 'name-bg', label: 'cmd.theme.nameBg', type: 'string', advanced: true },
+      { key: 'name-color', label: 'cmd.theme.nameColor', type: 'string', advanced: true },
+      { key: 'font', label: 'cmd.theme.font', type: 'string', advanced: true },
+      { key: 'accent', label: 'cmd.theme.accent', type: 'string', advanced: true },
+      { key: 'ui-scale', label: 'cmd.theme.uiScale', type: 'number', advanced: true },
+    ],
+  },
+  {
     name: 'textspeed',
     label: 'cmd.textspeed.label',
     category: 'text',
@@ -175,6 +195,25 @@ export const BUILTIN_COMMANDS: CommandSchema[] = [
     icon: '🏁',
     hint: 'cmd.end.hint',
     params: [{ key: 'sec', label: 'cmd.end.sec', type: 'number', default: 1, positional: 0 }],
+  },
+  {
+    name: 'ending',
+    label: 'cmd.ending.label',
+    category: 'flow',
+    icon: '🎬',
+    hint: 'cmd.ending.hint',
+    params: [
+      { key: 'id', label: 'cmd.ending.id', type: 'string', default: 'default', positional: 0 },
+      { key: 'sec', label: 'cmd.ending.sec', type: 'number', default: 1, advanced: true },
+    ],
+  },
+  {
+    name: 'title',
+    label: 'cmd.title.label',
+    category: 'flow',
+    icon: '🏠',
+    hint: 'cmd.title.hint',
+    params: [],
   },
 ]
 

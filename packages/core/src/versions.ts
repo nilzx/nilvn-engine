@@ -19,7 +19,7 @@ export const FORMAT_VERSIONS = Object.freeze({
   package: PACKAGE_FORMAT,
   /** Engine `SaveState.v` — `restoreState` returns false for any other value. */
   saveState: 2,
-  /** The menu plugin's save-slot wrapper (`SlotPayload.v`). */
+  /** The engine's save-slot wrapper (`SlotPayload.v` — the menu and autosave). */
   saveSlot: 1,
   /** The plugin manifest / runtime contract (`PluginManifest.apiVersion`) —
    *  `validatePluginManifest` rejects a newer one. */

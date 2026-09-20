@@ -77,6 +77,13 @@ examples of every extension point, written against exactly this surface.
 | `authorUsage` | Lines telling an author (or an AI) how to use the plugin in a script. |
 | `apiVersion` | Plugin contract version this manifest targets (current: 2). |
 
+`contributes` also takes, since engine 0.15: `config` (plugin settings — `[plugins.<id>]`
+in the work's config, `ctx.config` at runtime, `scope: "player"` rows in the game's
+settings panel), `menuItems` / `titleItems` (entries in the in-game menu / on the
+title page, wired with `ctx.screen`), `hud` (a corner widget) and `actorFields`
+(fields an actor declaration carries for this plugin, read with `ctx.actorField`).
+The generated `plugin-spec.json` documents each shape.
+
 Validate before shipping:
 
 ```ts
@@ -135,7 +142,7 @@ Everything a module can contribute:
 | `textEffects` | `{ [name]: (span: TextSpan, index, ctx: PluginContext) => void }` | Inline `{name:text}` effects. |
 | `effects` | `{ [name]: { appliesToKinds: string[], apply(handle, params, ctx) } }` | Retargetable effects bound to object kinds; a command applies one with `ctx.plugin.stage.applyEffect(name, objId, params)`. Effects run with their owner's capabilities whichever plugin's command invokes them. |
 | `objectKinds` | `ObjectKind[]` | New addressable stage-object kinds (`{ id, transformable, recordable? }`). |
-| `hooks` | `EngineHooks` | `onDialogue`, `onDialogueDone`, `onReveal(char, index, speaker, ctx)`, `onChoices(items, handles, ctx)`, `onChoose(item, index, ctx)`, `onCommand(name, args, params, ctx)`, `onEnd(ctx)`, `onError(info, ctx)`. Every hook receives the plugin context last. |
+| `hooks` | `EngineHooks` | `onReady(ctx)`, `onSessionChange(state, prev, ctx)`, `onLabel(label, ctx)`, `onDialogue`, `onDialogueDone`, `onReveal(char, index, speaker, ctx)`, `onChoices(items, handles, ctx)`, `onChoose(item, index, ctx)`, `onCommand(name, args, params, ctx)`, `onEnd(ctx)`, `onSaved(state, ctx)`, `onRestored(state, ctx)`, `onSettingsChange(key, value, ctx)`, `onVarChange(name, value, ctx)`, `onError(info, ctx)`. Every hook receives the plugin context last. |
 | `activate(ctx)` | `void \| Promise<void>` | Once per activation (install, enable, reload). A throw or rejection isolates the plugin. |
 | `deactivate(ctx)` | void | Before the host disposes everything registered through `ctx`. |
 | `saveState(ctx)` / `restoreState(ctx, data)` | | The plugin's `SaveState.ext[id]` slice (needs `save.slice`). Keep it JSON-serializable. |
@@ -178,7 +185,13 @@ granted leaves the property `undefined` (never an exception):
 | `session.backlog` | `ctx.backlog` | `entries()` `replayVoice(ref, offset)`. |
 | `session.replay` | `ctx.replay` | `list` `isReplaying` `play` `end` `fireSeen` `onSeen` `onEnd`. |
 | `ui.layer` | `ctx.ui` | `layer(className)` — a host container inside the stage root; `onStage(type, fn)` for stage input. Both removed on dispose. |
+| `ui.screen` | `ctx.screen` | `open(id, title, render)` / `close(id?)` — a full-stage screen in the engine's panel chrome (Esc closes); `menuItem(id, onSelect)` / `titleItem(id, onSelect)` wire `contributes.menuItems` / `titleItems`; `hud(id)` is the `contributes.hud` container. All released on dispose. |
+| `ui.dialog` | `ctx.dialog` | `confirm(message)`, `alert(message)`, `toast(message)` — the engine's own boxes. |
+| `storage.local` | `ctx.storage` | `get` `set` `remove` `keys` — a key-value store namespaced per work and plugin (async, JSON values). |
 | `timer` | `ctx.timer` | `setTimeout` `setInterval` `requestAnimationFrame` and their clears, all cleared on dispose. |
+
+Always on the context, no permission needed: `theme` (the work's theme tokens),
+`config` (this plugin's settings) and `actorField(actorId, key)`.
 
 Stage objects are addressed by id — `camera`, `screen`, `character:<actor>`,
 `sprite:<id>`, `window:dialog` — and animated through the fixed transform schema

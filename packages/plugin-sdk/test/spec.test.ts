@@ -32,10 +32,10 @@ describe('plugin-spec', () => {
       if (p.status === 'active' && p.side === 'engine') expect(spec.runtime.capabilities[p.id], p.id).toBeDefined()
     }
     const points = spec.extensionPoints.map((p) => p.key)
-    for (const k of ['commands', 'textEffects', 'objectKinds', 'effects', 'panels', 'nodeKinds']) expect(points).toContain(k)
+    for (const k of ['commands', 'textEffects', 'objectKinds', 'effects', 'panels', 'nodeKinds', 'config', 'menuItems', 'titleItems', 'hud', 'actorFields']) expect(points).toContain(k)
     // The first-party inventory lives with @nilvn/plugins; the spec names the convention only.
     expect(spec.firstParty).toEqual({ idPrefix: 'app.nilvn.', package: '@nilvn/plugins', repository: expect.stringContaining('nilvn-plugins') })
-    expect(spec.specVersion).toBe(2)
+    expect(spec.specVersion).toBe(3)
     expect(spec.runtime.proxyRules.length).toBeGreaterThanOrEqual(3)
     expect(spec.runtime.lifecycle.length).toBeGreaterThanOrEqual(5)
   })

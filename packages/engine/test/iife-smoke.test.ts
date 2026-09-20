@@ -110,7 +110,8 @@ describe('engine IIFE artifact', () => {
     expect(code).not.toContain('authorUsage') // core's manifest schema field, set only by @nilvn/plugins
     // …and the engine ships NO plugin of its own: the first-party set is @nilvn/plugins' business.
     expect(code).not.toContain('app.nilvn.textfx')
-    expect(code).not.toContain('nilvn-menu')
+    // The in-game menu IS the engine's own (batch G): its chrome ships in the bare bundle.
+    expect(code).toContain('nilvn-menu')
     // Positive control — an engine-own literal proving the scan target is real.
     expect(code).toContain('nilvn-root')
   })

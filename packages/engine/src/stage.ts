@@ -12,6 +12,7 @@
 //                               dialogue (band='front'); empty by default
 //     .nilvn-fader           <- full-screen fade for transitions
 
+import { cleanTheme, themeDefaultsCss, themeVar } from './theme.js'
 import type {
   Renderer,
   StageState,
@@ -27,8 +28,7 @@ import type {
   TransitionOpts,
   TypeLineOptions,
   ChoiceHandle,
-  ChoicePrompt,
-} from './renderer/types.js'
+  ChoicePrompt, ChromeRenderer, ScreenId, ScreenModel } from './renderer/types.js'
 import type { Segment, TextSpan } from './types.js'
 
 // Re-exported so existing importers (`import { StageState } from './stage.js'`) keep
@@ -277,7 +277,7 @@ interface ObjRef {
 }
 
 const BASE_CSS = `
-.nilvn-root{position:relative;width:100%;aspect-ratio:16/9;background:#000;overflow:hidden;font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;user-select:none;cursor:pointer;container-type:size;color:#f4f5fa}
+.nilvn-root{position:relative;width:100%;aspect-ratio:16/9;background:#000;overflow:hidden;font-family:var(--nilvn-font);user-select:none;cursor:pointer;container-type:size;color:var(--nilvn-text)}
 .nilvn-layer{position:absolute;inset:0}
 .nilvn-camera{position:absolute;inset:0}
 .nilvn-bg-item{position:absolute;inset:0;background-size:cover;background-position:center}
@@ -290,21 +290,110 @@ const BASE_CSS = `
 .nilvn-sprite{position:absolute;bottom:0;transform:translateX(-50%);background-repeat:no-repeat;background-position:0 0;pointer-events:none}
 .nilvn-editing .nilvn-sprite{pointer-events:auto}
 .nilvn-editing .nilvn-char{transition:none}
-.nilvn-dialog{position:absolute;left:3.5%;bottom:3.5cqh;width:93%;min-height:24cqh;box-sizing:border-box;border-radius:1.8cqh;padding:3.6cqh 3cqw 2cqh;background:linear-gradient(180deg,rgba(22,26,42,.82),rgba(10,12,22,.92));border:1px solid rgba(255,255,255,.14);backdrop-filter:blur(6px);transition:opacity .3s}
+.nilvn-dialog{position:absolute;left:var(--nilvn-dialog-inset);right:var(--nilvn-dialog-inset);top:var(--nilvn-dialog-top);bottom:var(--nilvn-dialog-bottom);min-height:var(--nilvn-dialog-height);box-sizing:border-box;border-radius:var(--nilvn-dialog-radius);padding:var(--nilvn-dialog-padding);border:var(--nilvn-dialog-border);backdrop-filter:blur(6px);isolation:isolate;transition:opacity .3s}
+.nilvn-dialog::before{content:"";position:absolute;inset:0;z-index:-1;border-radius:inherit;background:var(--nilvn-dialog-skin) center/100% 100% no-repeat,var(--nilvn-dialog-bg);opacity:var(--nilvn-dialog-opacity)}
 .nilvn-dialog.nilvn-hidden{opacity:0!important;pointer-events:none}
-.nilvn-name{position:absolute;top:-2cqh;left:2.4cqw;background:var(--name-color,#7c5cff);color:#fff;font-weight:700;font-size:2.7cqh;line-height:1;padding:1.1cqh 1.6cqw;border-radius:99px;box-shadow:0 2px 10px rgba(0,0,0,.35)}
+.nilvn-name{position:absolute;top:-2cqh;left:var(--nilvn-name-offset);background:var(--nilvn-name-bg);color:var(--nilvn-name-color);font-weight:700;font-size:calc(var(--nilvn-name-size)*var(--nilvn-ui-scale));line-height:1;padding:1.1cqh 1.6cqw;border-radius:99px;box-shadow:0 2px 10px rgba(0,0,0,.35)}
 .nilvn-name.nilvn-hidden{display:none}
-.nilvn-text{font-size:3.4cqh;line-height:1.75;letter-spacing:.02em;text-shadow:0 1px 2px rgba(0,0,0,.5)}
+.nilvn-text{font-size:calc(var(--nilvn-text-size)*var(--nilvn-ui-scale));line-height:var(--nilvn-text-line-height);letter-spacing:.02em;color:var(--nilvn-text-color);text-shadow:var(--nilvn-text-shadow)}
 .nilvn-ch{opacity:0;display:inline-block;white-space:pre}
 .nilvn-ch.on{opacity:1}
-.nilvn-indicator{position:absolute;right:2.4cqw;bottom:1.8cqh;width:0;height:0;border-left:.9cqh solid transparent;border-right:.9cqh solid transparent;border-top:1.4cqh solid rgba(255,255,255,.85);opacity:0}
+.nilvn-indicator{position:absolute;right:2.4cqw;bottom:1.8cqh;width:0;height:0;border-left:calc(var(--nilvn-indicator-size)*.64) solid transparent;border-right:calc(var(--nilvn-indicator-size)*.64) solid transparent;border-top:var(--nilvn-indicator-size) solid var(--nilvn-indicator-color);opacity:0}
 .nilvn-indicator.on{opacity:1;animation:nilvn-blink 1s ease-in-out infinite}
 @keyframes nilvn-blink{50%{transform:translateY(.5cqh);opacity:.3}}
-.nilvn-choices{position:absolute;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;gap:2.6cqh;background:rgba(5,6,12,.35)}
+.nilvn-choices{position:absolute;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;gap:2.6cqh;background:var(--nilvn-choices-backdrop)}
 .nilvn-choices.on{display:flex}
-.nilvn-choice{min-width:38cqw;padding:2cqh 3cqw;font:inherit;font-size:3cqh;color:#fff;text-align:center;background:linear-gradient(180deg,rgba(40,46,74,.92),rgba(24,28,48,.92));border:1px solid rgba(255,255,255,.2);border-radius:99px;cursor:pointer;transition:transform .15s ease,box-shadow .15s ease,border-color .15s ease}
-.nilvn-choice:hover{transform:translateY(-2px) scale(1.02);border-color:rgba(140,160,255,.9);box-shadow:0 6px 24px rgba(80,100,255,.25)}
+.nilvn-choice{min-width:38cqw;padding:2cqh 3cqw;font:inherit;font-size:calc(var(--nilvn-choice-size)*var(--nilvn-ui-scale));color:var(--nilvn-choice-color);text-align:center;background:var(--nilvn-choice-bg);border:var(--nilvn-choice-border);border-radius:var(--nilvn-choice-radius);cursor:pointer;transition:transform .15s ease,box-shadow .15s ease,border-color .15s ease}
+.nilvn-choice:hover{transform:translateY(-2px) scale(1.02);border-color:var(--nilvn-choice-hover);box-shadow:0 6px 24px rgba(80,100,255,.25)}
 .nilvn-fader{position:absolute;inset:0;background:#000;opacity:0;pointer-events:none}
+.nilvn-screens{pointer-events:none;z-index:40}
+.nilvn-screen{position:absolute;inset:0;pointer-events:auto;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2.4cqh;padding:6cqh 6cqw;box-sizing:border-box;color:var(--nilvn-panel-color);cursor:default;text-align:center;overflow:hidden}
+.nilvn-screen__bg{position:absolute;inset:0;z-index:-1;background:var(--screen-bg,rgba(8,10,18,.92)) center/cover no-repeat}
+.nilvn-screen--left{align-items:flex-start;text-align:left;padding-left:10cqw}
+.nilvn-screen--right{align-items:flex-end;text-align:right;padding-right:10cqw}
+.nilvn-screen--bottom{justify-content:flex-end;padding-bottom:8cqh}
+.nilvn-screen__logo{max-height:34cqh;max-width:70cqw;display:block}
+.nilvn-screen__heading{margin:0;font-size:calc(8cqh*var(--nilvn-ui-scale));font-weight:800;letter-spacing:.04em;text-shadow:0 2px 12px rgba(0,0,0,.5)}
+.nilvn-screen__subtitle{margin:0;font-size:calc(3cqh*var(--nilvn-ui-scale));opacity:.8}
+.nilvn-screen__buttons{display:flex;flex-direction:column;gap:1.6cqh;margin-top:2cqh;min-width:28cqw}
+.nilvn-screen__button{font:inherit;font-size:calc(3.2cqh*var(--nilvn-ui-scale));padding:1.6cqh 3cqw;color:var(--nilvn-button-color);background:var(--nilvn-button-bg);border:var(--nilvn-button-border);border-radius:99px;cursor:pointer;transition:background .15s ease,transform .15s ease}
+.nilvn-screen__button:hover,.nilvn-screen__button:focus-visible{background:var(--nilvn-button-hover);transform:translateY(-1px);outline:none}
+.nilvn-screen__button--primary{background:var(--nilvn-accent);border-color:transparent}
+.nilvn-screen__credits{position:relative;width:min(70cqw,100%);height:40cqh;overflow:hidden;mask-image:linear-gradient(transparent,#000 12%,#000 88%,transparent)}
+.nilvn-screen__roll{position:absolute;left:0;right:0;top:100%;font-size:calc(2.8cqh*var(--nilvn-ui-scale));line-height:1.9;white-space:pre-wrap;animation:nilvn-roll var(--roll-duration,12s) linear forwards}
+@keyframes nilvn-roll{to{transform:translateY(calc(-100% - 40cqh))}}
+.nilvn-screen__version{position:absolute;right:2cqw;bottom:1.6cqh;font-size:1.8cqh;opacity:.55}
+.nilvn-menu{position:absolute;z-index:50;font-size:2.6cqh;pointer-events:auto}
+.nilvn-menu--top-right{top:1.6cqh;right:1.6cqw}
+.nilvn-menu--top-left{top:1.6cqh;left:1.6cqw}
+.nilvn-menu--bottom-right{bottom:1.6cqh;right:1.6cqw}
+.nilvn-menu--bottom-left{bottom:1.6cqh;left:1.6cqw}
+.nilvn-menu--hidden .nilvn-menu__btn{display:none}
+.nilvn-menu__btn{width:5cqh;height:5cqh;display:flex;align-items:center;justify-content:center;border-radius:50%;background:var(--nilvn-button-bg);border:var(--nilvn-button-border);color:var(--nilvn-button-color);cursor:pointer;backdrop-filter:blur(4px);line-height:1;font:inherit}
+.nilvn-menu__btn:hover{background:var(--nilvn-button-hover)}
+.nilvn-menu__panel{position:absolute;width:30cqw;display:none;flex-direction:column;gap:1.2cqh;padding:2cqh;border-radius:1.4cqh;background:var(--nilvn-panel-bg);border:var(--nilvn-panel-border);color:var(--nilvn-panel-color);box-shadow:0 1.2cqh 4cqh rgba(0,0,0,.5)}
+.nilvn-menu--top-right .nilvn-menu__panel,.nilvn-menu--top-left .nilvn-menu__panel{top:6cqh}
+.nilvn-menu--bottom-right .nilvn-menu__panel,.nilvn-menu--bottom-left .nilvn-menu__panel{bottom:6cqh}
+.nilvn-menu--top-right .nilvn-menu__panel,.nilvn-menu--bottom-right .nilvn-menu__panel{right:0}
+.nilvn-menu--top-left .nilvn-menu__panel,.nilvn-menu--bottom-left .nilvn-menu__panel{left:0}
+.nilvn-menu--hidden .nilvn-menu__panel{top:6cqh;right:1.6cqw}
+.nilvn-menu.on .nilvn-menu__panel{display:flex}
+.nilvn-menu__item{padding:1.2cqh 1.6cqw;border-radius:.9cqh;background:var(--nilvn-button-bg);border:var(--nilvn-button-border);color:var(--nilvn-button-color);font:inherit;font-size:calc(2.4cqh*var(--nilvn-ui-scale));cursor:pointer;text-align:center}
+.nilvn-menu__item:hover{background:var(--nilvn-button-hover)}
+.nilvn-menu__item.on{background:var(--nilvn-accent);border-color:transparent}
+.nilvn-menu__item:disabled{opacity:.45;cursor:default}
+.nilvn-menu__grid{display:grid;grid-template-columns:minmax(0,max-content) minmax(6cqw,1fr) max-content;align-items:center;gap:1.2cqh 1cqw;font-size:calc(2.1cqh*var(--nilvn-ui-scale));color:var(--nilvn-panel-color);padding:0 5cqw 3cqh}
+.nilvn-menu__row{display:contents}
+.nilvn-menu__head{grid-column:1/-1;margin-top:1.2cqh;padding-top:1.2cqh;border-top:1px solid rgba(255,255,255,.1);font-weight:700;opacity:.85}
+.nilvn-menu__text{grid-column:2/-1;font:inherit;font-size:calc(2.1cqh*var(--nilvn-ui-scale));padding:.6cqh 1cqw;border-radius:.8cqh;background:var(--nilvn-button-bg);border:var(--nilvn-button-border);color:var(--nilvn-button-color)}
+.nilvn-menu__row>span:first-child{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nilvn-menu__seg{grid-column:2/-1;display:flex;gap:.8cqw}
+.nilvn-menu__seg button{flex:1;padding:.8cqh 0;border-radius:.8cqh;background:var(--nilvn-button-bg);border:var(--nilvn-button-border);color:var(--nilvn-button-color);font:inherit;font-size:calc(2.1cqh*var(--nilvn-ui-scale));cursor:pointer}
+.nilvn-menu__seg button.on{background:var(--nilvn-accent);border-color:transparent}
+.nilvn-menu__vol{flex:1;min-width:0;accent-color:var(--nilvn-accent);cursor:pointer}
+.nilvn-menu__pct{width:7cqw;text-align:right;font-size:1.9cqh;opacity:.7;font-variant-numeric:tabular-nums}
+.nilvn-menu__tip{min-height:2.2cqh;font-size:1.9cqh;opacity:.7;text-align:center}
+.nilvn-menu__ver{margin-top:.4cqh;padding-top:1cqh;border-top:1px solid rgba(255,255,255,.1);font-size:1.7cqh;opacity:.55;text-align:center}
+.nilvn-backlog{position:absolute;inset:0;z-index:60;display:none;flex-direction:column;background:var(--nilvn-panel-bg);color:var(--nilvn-panel-color);backdrop-filter:blur(3px);pointer-events:auto;cursor:default}
+.nilvn-backlog.on{display:flex}
+.nilvn-backlog__bar{flex:none;display:flex;justify-content:flex-end;gap:1cqw;padding:1.6cqh 1.6cqw}
+.nilvn-backlog__close{padding:1cqh 2.4cqw;border-radius:.9cqh;background:var(--nilvn-button-bg);border:var(--nilvn-button-border);color:var(--nilvn-button-color);font:inherit;font-size:2.2cqh;cursor:pointer}
+.nilvn-backlog__close:hover{background:var(--nilvn-button-hover)}
+.nilvn-backlog__list{flex:1;min-height:0;overflow-y:auto;padding:0 5cqw 3cqh;display:flex;flex-direction:column;gap:1.4cqh}
+.nilvn-backlog__empty{margin:auto;opacity:.7;font-size:2.4cqh}
+.nilvn-backlog__row{display:flex;gap:1.4cqw;align-items:flex-start;padding:1.4cqh 1.8cqw;border-radius:1cqh;background:var(--nilvn-button-bg);border:var(--nilvn-button-border)}
+.nilvn-backlog__voice{flex:none;width:4.4cqh;height:4.4cqh;margin-top:.3cqh;border-radius:50%;background:var(--nilvn-accent);border:none;color:var(--nilvn-button-color);font-size:2cqh;cursor:pointer;line-height:1}
+.nilvn-backlog__body{flex:1;min-width:0}
+.nilvn-backlog__who{font-size:2cqh;color:var(--nilvn-accent);margin-bottom:.4cqh;font-weight:600}
+.nilvn-backlog__text{font-size:calc(2.3cqh*var(--nilvn-ui-scale));line-height:1.5;white-space:pre-wrap;word-break:break-word}
+.nilvn-saves__title{margin-right:auto;align-self:center;font-size:2.8cqh;font-weight:700}
+.nilvn-saves__body{flex:1;min-height:0;display:flex;flex-direction:column}
+.nilvn-saves__pages{flex:none;display:flex;gap:.8cqw;padding:0 5cqw 1.2cqh}
+.nilvn-saves__page{flex:1;padding:.9cqh 0;border-radius:.8cqh;background:var(--nilvn-button-bg);border:var(--nilvn-button-border);color:var(--nilvn-button-color);font:inherit;font-size:2.1cqh;cursor:pointer;opacity:.75}
+.nilvn-saves__page.on{background:var(--nilvn-accent);border-color:transparent;opacity:1}
+.nilvn-saves__grid{flex:1;min-height:0;overflow-y:auto;display:grid;grid-template-columns:1fr 1fr;gap:1.2cqh 1.2cqw;padding:0 5cqw 3cqh;align-content:start}
+.nilvn-saves__slot{position:relative;display:flex;flex-direction:column;align-items:flex-start;gap:.4cqh;padding:1.3cqh 1.6cqw 1.3cqh 1.6cqw;border-radius:1cqh;background:var(--nilvn-button-bg);border:var(--nilvn-button-border);color:var(--nilvn-panel-color);font:inherit;text-align:left;cursor:pointer;min-height:9cqh;opacity:.7;overflow:hidden}
+.nilvn-saves__slot:hover{background:var(--nilvn-button-hover)}
+.nilvn-saves__slot.has-data{opacity:1}
+.nilvn-saves__slot--special{border-color:var(--nilvn-accent)}
+.nilvn-saves__thumb{position:absolute;right:0;top:0;bottom:0;width:32%;background:center/cover no-repeat;opacity:.55;mask-image:linear-gradient(90deg,transparent,#000 40%)}
+.nilvn-saves__no{font-size:1.9cqh;font-weight:700;opacity:.8}
+.nilvn-saves__when{font-size:2cqh}
+.nilvn-saves__preview{font-size:2.1cqh;opacity:.85;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
+.nilvn-saves__del{position:absolute;right:.8cqw;top:.6cqh;width:3cqh;height:3cqh;border-radius:50%;border:none;background:rgba(0,0,0,.35);color:var(--nilvn-button-color);font:inherit;font-size:1.8cqh;cursor:pointer;line-height:1}
+.nilvn-saves__del:hover{background:var(--nilvn-accent)}
+.nilvn-modal{position:absolute;inset:0;z-index:70;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.45);pointer-events:auto;cursor:default}
+.nilvn-modal__box{min-width:36cqw;max-width:70cqw;padding:3cqh 3cqw;border-radius:1.4cqh;background:var(--nilvn-panel-bg);border:var(--nilvn-panel-border);color:var(--nilvn-panel-color);box-shadow:0 1.2cqh 4cqh rgba(0,0,0,.5);text-align:center}
+.nilvn-modal__msg{font-size:calc(2.6cqh*var(--nilvn-ui-scale));line-height:1.6;margin-bottom:2.4cqh}
+.nilvn-modal__buttons{display:flex;gap:1.2cqw;justify-content:center}
+.nilvn-toast{position:absolute;left:50%;bottom:30cqh;transform:translate(-50%,1cqh);z-index:65;padding:1.2cqh 2.4cqw;border-radius:99px;background:var(--nilvn-panel-bg);border:var(--nilvn-panel-border);color:var(--nilvn-panel-color);font-size:calc(2.2cqh*var(--nilvn-ui-scale));opacity:0;transition:opacity .2s,transform .2s;pointer-events:none}
+.nilvn-toast.on{opacity:1;transform:translate(-50%,0)}
+.nilvn-hud{position:absolute;z-index:45;pointer-events:auto;font-size:calc(2.2cqh*var(--nilvn-ui-scale));color:var(--nilvn-panel-color)}
+.nilvn-hud--top-left{top:1.6cqh;left:1.6cqw}
+.nilvn-hud--top-right{top:1.6cqh;right:8cqw}
+.nilvn-hud--bottom-left{bottom:30cqh;left:1.6cqw}
+.nilvn-hud--bottom-right{bottom:30cqh;right:1.6cqw}
+.nilvn-screen-plugin .nilvn-backlog__list{display:block}
 `
 
 /**
@@ -430,10 +519,174 @@ export class DomRenderer implements Renderer, EditStage {
 
     this.frontLayer = div('nilvn-layer nilvn-front')
     this.fader = div('nilvn-fader')
+    this.screenLayer = div('nilvn-layer nilvn-screens')
+    this.pageSlot = div('nilvn-layer nilvn-pages')
+    this.screenLayer.append(this.pageSlot)
 
-    this.root.append(this.camera, this.dialog, this.choicesEl, this.frontLayer, this.fader)
+    this.root.append(this.camera, this.dialog, this.choicesEl, this.frontLayer, this.fader, this.screenLayer)
     container.append(this.root)
-    this.injectStyle(BASE_CSS, 'nilvn-base-style')
+    this.injectStyle(`.nilvn-root{${themeDefaultsCss()}}` + BASE_CSS, 'nilvn-base-style')
+  }
+
+  // ---- chrome screens: full-stage pages over everything (title / ending; menus in inc 4) ----
+  private readonly screenLayer: HTMLElement
+  private toastEl: HTMLElement | undefined
+  private toastTimer: number | undefined
+  /** Full-stage pages (title / ending) live here, under the menu overlays and modals. */
+  private readonly pageSlot: HTMLElement
+  private screen: { id: ScreenId; el: HTMLElement } | null = null
+  readonly chrome: ChromeRenderer = {
+    showScreen: (id, model) => {
+      this.pageSlot.replaceChildren()
+      const el = this.buildScreen(id, model)
+      this.pageSlot.append(el)
+      this.screen = { id, el }
+      el.querySelector<HTMLButtonElement>('.nilvn-screen__button--primary, .nilvn-screen__button')?.focus({ preventScroll: true })
+    },
+    hideScreen: (id) => {
+      if (this.screen && (id === undefined || this.screen.id === id)) {
+        this.screen.el.remove()
+        this.screen = null
+      }
+    },
+    currentScreen: () => this.screen?.id ?? null,
+    overlay: (className) => {
+      const layer = div(className)
+      this.screenLayer.append(layer)
+      return layer
+    },
+    toast: (message) => {
+      this.toastEl ??= div('nilvn-toast')
+      this.toastEl.textContent = message
+      this.screenLayer.append(this.toastEl)
+      this.toastEl.classList.add('on')
+      if (this.toastTimer !== undefined) clearTimeout(this.toastTimer)
+      this.toastTimer = window.setTimeout(() => this.toastEl?.classList.remove('on'), 1800)
+    },
+    confirm: (message, labels) =>
+      new Promise<boolean>((resolve) => {
+        const modal = div('nilvn-modal')
+        modal.addEventListener('click', (e) => e.stopPropagation())
+        const box = div('nilvn-modal__box')
+        const msg = div('nilvn-modal__msg')
+        msg.textContent = message
+        const bar = div('nilvn-modal__buttons')
+        const finish = (ok: boolean): void => {
+          modal.remove()
+          resolve(ok)
+        }
+        const mk = (label: string, ok: boolean, primary: boolean): HTMLButtonElement => {
+          const b = document.createElement('button')
+          b.type = 'button'
+          b.className = `nilvn-screen__button${primary ? ' nilvn-screen__button--primary' : ''}`
+          b.dataset.id = ok ? 'ok' : 'cancel'
+          b.textContent = label
+          b.addEventListener('click', () => finish(ok))
+          return b
+        }
+        if (labels.cancel !== undefined) bar.append(mk(labels.cancel, false, false))
+        bar.append(mk(labels.ok, true, true))
+        box.append(msg, bar)
+        modal.append(box)
+        // Keys on the focused button: Esc cancels, Enter confirms — and never reach
+        // the window (the engine's advance / menu keys).
+        modal.addEventListener('keydown', (e) => {
+          e.stopPropagation()
+          if (e.key === 'Escape') finish(false)
+        })
+        this.screenLayer.append(modal)
+        bar.querySelector<HTMLButtonElement>('[data-id="ok"]')?.focus({ preventScroll: true })
+      }),
+  }
+
+  private buildScreen(id: ScreenId, model: ScreenModel): HTMLElement {
+    const el = div(`nilvn-screen nilvn-screen--${id} nilvn-screen--${model.layout ?? 'center'}`)
+    // A screen owns its clicks: none may fall through to click-to-advance.
+    el.addEventListener('click', (e) => e.stopPropagation())
+    const bg = div('nilvn-screen__bg')
+    if (model.background) el.style.setProperty('--screen-bg', model.background)
+    el.append(bg)
+    if (model.logo) {
+      const img = document.createElement('img')
+      img.className = 'nilvn-screen__logo'
+      img.src = model.logo
+      img.alt = model.heading ?? ''
+      el.append(img)
+    }
+    if (model.heading) {
+      const h = document.createElement('h1')
+      h.className = 'nilvn-screen__heading'
+      h.textContent = model.heading
+      el.append(h)
+    }
+    if (model.subtitle) {
+      const p = document.createElement('p')
+      p.className = 'nilvn-screen__subtitle'
+      p.textContent = model.subtitle
+      el.append(p)
+    }
+    if (model.credits?.length) {
+      const box = div('nilvn-screen__credits')
+      const roll = div('nilvn-screen__roll')
+      roll.textContent = model.credits.join('\n')
+      if (model.creditsDuration) roll.style.setProperty('--roll-duration', `${model.creditsDuration}s`)
+      roll.addEventListener('animationend', () => model.onCreditsEnd?.())
+      box.append(roll)
+      el.append(box)
+    }
+    if (model.buttons.length) {
+      const bar = div('nilvn-screen__buttons')
+      for (const b of model.buttons) {
+        const btn = document.createElement('button')
+        btn.type = 'button'
+        btn.className = `nilvn-screen__button${b.primary ? ' nilvn-screen__button--primary' : ''}`
+        btn.dataset.id = b.id
+        btn.textContent = b.label
+        btn.addEventListener('click', () => b.onSelect())
+        bar.append(btn)
+      }
+      el.append(bar)
+    }
+    if (model.version) {
+      const v = div('nilvn-screen__version')
+      v.textContent = model.version
+      el.append(v)
+    }
+    return el
+  }
+
+  // ---- theme: two layers of `--nilvn-*` overrides painted inline on the root ----
+  private themeBase: Record<string, string> = {}
+  private themeScript: Record<string, string> = {}
+  private paintedTokens = new Set<string>()
+
+  setThemeBase(tokens: Record<string, string>): void {
+    this.themeBase = cleanTheme(tokens)
+    this.paintTheme()
+  }
+
+  setTheme(patch: Record<string, string | undefined> | null): void {
+    if (patch === null) this.themeScript = {}
+    else {
+      for (const [k, v] of Object.entries(patch)) {
+        if (v === undefined || v === '') delete this.themeScript[k]
+        else this.themeScript[k] = String(v)
+      }
+    }
+    this.paintTheme()
+  }
+
+  getTheme(): Readonly<Record<string, string>> {
+    return { ...this.themeBase, ...this.themeScript }
+  }
+
+  private paintTheme(): void {
+    for (const k of this.paintedTokens) this.root.style.removeProperty(themeVar(k))
+    this.paintedTokens.clear()
+    for (const [k, v] of Object.entries(this.getTheme())) {
+      this.root.style.setProperty(themeVar(k), v)
+      this.paintedTokens.add(k)
+    }
   }
 
   /** Inject a stylesheet once; pass an id to dedupe (plugins use plugin name).
@@ -884,14 +1137,24 @@ export class DomRenderer implements Renderer, EditStage {
     for (const [id, slot] of this.chars) slot.el.classList.toggle('nilvn-dim', active && id !== speaker)
   }
 
-  setName(name?: string, color?: string): void {
+  setName(name?: string, color?: string, textColor?: string): void {
     if (!name) {
       this.nameEl.classList.add('nilvn-hidden')
       return
     }
     this.nameEl.classList.remove('nilvn-hidden')
     this.nameEl.textContent = name
-    this.nameEl.style.setProperty('--name-color', color ?? '#7c5cff')
+    const st = this.nameEl.style
+    // Per-actor colours ride on the tag itself and win over the root's theme
+    // tokens; absent = the theme's `name-bg` / `name-color`.
+    if (color) st.setProperty('--nilvn-name-bg', color)
+    else st.removeProperty('--nilvn-name-bg')
+    if (textColor) st.setProperty('--nilvn-name-color', textColor)
+    else st.removeProperty('--nilvn-name-color')
+    // `--name-color` (pre-0.15) is kept one minor version as a READ alias for
+    // host CSS that consulted it; the stylesheet no longer reads it.
+    if (color) st.setProperty('--name-color', color)
+    else st.removeProperty('--name-color')
   }
 
   showDialog(show: boolean): void {
@@ -1139,7 +1402,9 @@ export class DomRenderer implements Renderer, EditStage {
       camera: cameraState(this.cameraModel),
       cover: coverState(this.fader),
       name: this.nameEl.classList.contains('nilvn-hidden') ? undefined : (this.nameEl.textContent ?? undefined),
-      nameColor: this.nameEl.style.getPropertyValue('--name-color') || undefined,
+      nameColor: this.nameEl.style.getPropertyValue('--nilvn-name-bg') || undefined,
+      nameTextColor: this.nameEl.style.getPropertyValue('--nilvn-name-color') || undefined,
+      theme: Object.keys(this.themeScript).length ? { ...this.themeScript } : undefined,
       text: this.textEl.textContent ?? '',
       dialog: !this.dialog.classList.contains('nilvn-hidden'),
     }
@@ -1225,7 +1490,10 @@ export class DomRenderer implements Renderer, EditStage {
       if (win.skin) this.setWindowSkin('window:dialog', url(win.skin), win.skin)
     }
     this.applyModel({ el: this.dialog, base: '', model: this.windowModel })
-    this.setName(state.name, state.nameColor)
+    // The script theme layer is part of the stage: reset, then re-apply the saved one.
+    this.setTheme(null)
+    if (state.theme) this.setTheme(state.theme)
+    this.setName(state.name, state.nameColor, state.nameTextColor)
     this.textEl.textContent = state.text
     this.showDialog(state.dialog)
     this.showIndicator(state.dialog)

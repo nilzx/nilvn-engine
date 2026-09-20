@@ -156,9 +156,9 @@ import { withFirstParty, firstPartyPlugins, type FirstPartyName } from '@nilvn/p
 import { firstPartyManifests, FIRST_PARTY_IDS } from '@nilvn/plugins/manifests'
 const full: EngineOptions = { ...withFirstParty(), container: document.body }
 const registry = commandRegistry(firstPartyManifests)
-const menuId: string = FIRST_PARTY_IDS.menu
+const textfxId: string = FIRST_PARTY_IDS.textfx
 const name: FirstPartyName = 'textfx'
-export { full, registry, menuId, name, firstPartyPlugins }
+export { full, registry, textfxId, name, firstPartyPlugins }
 `
 
 const SMOKE_MJS = `
@@ -248,11 +248,11 @@ const SMOKE_MJS_PLUGINS = `
   const container = dom.window.document.createElement('div')
   dom.window.document.body.append(container)
   const engine = ADV.createEngine({ container, textSpeed: 0 })
-  engine.loadSource('[use textfx menu]\\n[label s1]\\nyuki: {wave:Hi} from the batteries IIFE\\n')
+  engine.loadSource('[use textfx]\\n[label s1]\\nyuki: {wave:Hi} from the batteries IIFE\\n')
   void engine.start()
   await until(() => (container.textContent ?? '').includes('Hi from the batteries IIFE'), 'batteries IIFE played the line')
-  assert.deepEqual([...engine.activePlugins], ['app.nilvn.textfx', 'app.nilvn.menu'])
-  assert.ok(container.querySelector('.nilvn-menu'), 'menu shell rendered')
+  assert.deepEqual([...engine.activePlugins], ['app.nilvn.textfx'])
+  assert.ok(container.querySelector('.nilvn-menu'), 'the engine-own menu shell rendered')
   engine.destroy()
   console.log('  ✓ @nilvn/plugins/iife boots with the first-party set; bytes:', code.length)
 }

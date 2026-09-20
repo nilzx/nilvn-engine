@@ -274,11 +274,74 @@ export interface StageState {
     opacity: number
   }
   name?: string
+  /** The speaker's name-tag background (the actor's `color`); absent = the theme default. */
   nameColor?: string
+  /** The speaker's name-tag text colour (the actor's `textColor`); absent = the theme default. */
+  nameTextColor?: string
+  /** Theme tokens the script set with `[theme …]` (the SCRIPT layer only — the
+   *  host / config base layer is not part of a save). Absent = none. */
+  theme?: Record<string, string>
   /** Current dialogue text (plain; inline effects are not preserved). */
   text: string
   /** Whether the dialogue box is visible. */
   dialog: boolean
+}
+
+/** A button on a chrome screen. */
+export interface ScreenButton {
+  id: string
+  label: string
+  /** Focused first / styled as the default choice. */
+  primary?: boolean
+  onSelect(): void
+}
+
+/** What a full-stage chrome screen shows — built by the engine (chrome.ts),
+ *  drawn by the renderer. Every field optional but `buttons`. */
+export interface ScreenModel {
+  heading?: string
+  subtitle?: string
+  /** An image URL shown above the heading. */
+  logo?: string
+  /** A CSS background (colour, gradient or `url(…)`); the stage shows through when absent. */
+  background?: string
+  layout?: 'center' | 'left' | 'right' | 'bottom'
+  buttons: ScreenButton[]
+  /** Rolling credits, one entry per line; empty entries are blank lines. */
+  credits?: string[]
+  /** How long the roll takes (seconds). */
+  creditsDuration?: number
+  /** The roll finished. */
+  onCreditsEnd?(): void
+  /** A small label in a corner (the tool version on the title page). */
+  version?: string
+  /** The ending's id (an ending screen). */
+  endingId?: string
+}
+
+/** A chrome screen id: the built-in ones, or a plugin's (`ui.screen`). */
+export type ScreenId = 'title' | 'ending' | 'menu' | 'settings' | 'saves' | 'backlog' | (string & {})
+
+/** The screen layer over the stage: full-stage chrome the engine's session
+ *  state machine shows and hides (a title page, an ending page, the menus).
+ *  One screen at a time. Batch G inc 2 defines the seam; the DOM screens land
+ *  in inc 3 / 4 — until then the DOM renderer only records the current id. */
+export interface ChromeRenderer {
+  /** Show `id` (replacing whatever screen is up) drawn from `model`. */
+  showScreen(id: ScreenId, model: ScreenModel): void
+  /** Hide `id`, or whatever is up when omitted. */
+  hideScreen(id?: ScreenId): void
+  /** The screen up now, or null. */
+  currentScreen(): ScreenId | null
+  /** A host container in the chrome layer for the engine's own DOM chrome (the
+   *  system menu and its panels — like a plugin's `ui.layer`, above the pages).
+   *  Removed by `destroy()`. */
+  overlay(className: string): HTMLElement
+  /** An in-engine confirm box (never the browser's): resolves true on OK. No
+   *  `cancel` label = an alert with a single OK. */
+  confirm(message: string, labels: { ok: string; cancel?: string }): Promise<boolean>
+  /** A transient message over the stage. */
+  toast(message: string): void
 }
 
 /**
@@ -395,8 +458,25 @@ export interface Renderer {
    *  (raw `src=`), in which case the name is recorded but the art can't change. */
   setFace(objId: string, face: string): void
 
+  // ---- chrome screens (title / ending / menus — batch G) ----
+  /** The screen layer. A stub in the DOM renderer until the screens land; the
+   *  engine drives it from the session state machine (`showTitle`, `finish`). */
+  readonly chrome: ChromeRenderer
+
+  // ---- theme (the `--nilvn-*` token contract, see theme.ts) ----
+  /** Replace the BASE layer (host / config). Unknown tokens are painted as given. */
+  setThemeBase(tokens: Record<string, string>): void
+  /** Merge into the SCRIPT layer (`[theme …]`); `null` clears it. A `''` /
+   *  undefined value removes that token from the layer. */
+  setTheme(patch: Record<string, string | undefined> | null): void
+  /** The effective overrides (base then script) — NOT the defaults, which live in
+   *  the stylesheet; `THEME_TOKENS` has those. */
+  getTheme(): Readonly<Record<string, string>>
+
   // ---- dialogue UI (always DOM; shared across backends) ----
-  setName(name?: string, color?: string): void
+  /** `color` = the name-tag background, `textColor` = its text; either absent
+   *  falls back to the theme (`name-bg` / `name-color`). */
+  setName(name?: string, color?: string, textColor?: string): void
   showDialog(show: boolean): void
   showIndicator(on: boolean): void
   /** Type a dialogue line into the text box (typewriter); resolves when every

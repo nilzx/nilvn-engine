@@ -31,6 +31,10 @@ export type {
   TransformKeyframe,
   AnimFrame,
   AnimOpts,
+  ChromeRenderer,
+  ScreenId,
+  ScreenModel,
+  ScreenButton,
 } from './renderer/types.js'
 export { ObjectHandle, kindOf, BUILTIN_KINDS, STANDARD_CHANNELS, resolveKind } from './object.js'
 // Plugin platform v2: the runtime manifest mirror + version the host
@@ -39,14 +43,23 @@ export { PLUGIN_API_VERSION, PLUGIN_MANIFEST_FILE, FIRST_PARTY_ID_PREFIX, PERMIS
 export { satisfiesRange, isValidRange, parseSemVer, compareSemVer } from './semver.js'
 export { ENGINE_VERSION } from './version.js'
 export { ENGINE_CAPABILITIES } from './plugin-context.js'
-export { applyConfig, fetchConfig } from './config.js'
+export { applyConfig, fetchConfig, windowTheme } from './config.js'
+// The theme contract: token table + defaults, the `--nilvn-` prefix, helpers.
+export { THEME_TOKENS, THEME_PREFIX, THEME_TOKEN_RE, isThemeToken, themeVar } from './theme.js'
+export type { ThemeTokens } from './theme.js'
 export { parseScript, parseSegments, parseTag } from './parser.js'
 export type { ParsedScript, ParseDiagnostic } from './parser.js'
 // Recording interpolation core — shared with the editor's event-frame scrub preview:
 // the same sampling the engine plays at runtime.
 export { decodeTracks, decodeFrames, decodeChannelSet, sampleContinuous, sampleContinuousCarry, discreteAt, easeFn } from './keyframes.js'
 export type { DecodedTrack, DecodedFrame } from './keyframes.js'
-export { tUI, setUILang, getUILang, uiLangName } from './i18n.js'
+export { tUI, setUILang, getUILang, uiLangName, CHROME_STRING_IDS } from './i18n.js'
+// Persistence seam (saves / settings) and the built-in screens' model builders.
+export { LocalStorageSaveStore, MemorySaveStore, AUTOSAVE_KEY, QUICKSAVE_KEY, SETTINGS_KEY, READ_KEY, UNLOCKS_KEY, PLUGIN_SETTINGS_KEY, slotKey, pluginStorageKey, isSlotPayload } from './save-store.js'
+export type { SaveStore, SlotPayload, SettingsPayload } from './save-store.js'
+export { MENU_ITEMS_DEFAULT, SETTINGS_ROWS_DEFAULT } from './system-menu.js'
+export { titleModel, endingModel, screenBackground, TITLE_BUTTONS_DEFAULT } from './chrome.js'
+export type { ChromeHost } from './chrome.js'
 export { evalExpr, truthy } from './expr.js'
 export { builtins } from './builtins.js'
 export type * from './types.js'

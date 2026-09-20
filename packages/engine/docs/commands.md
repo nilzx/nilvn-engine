@@ -19,7 +19,9 @@ Always available; they live in the engine itself.
 | `[if cond -> label]` | Jump when `cond` is truthy (see the expression grammar in [script-syntax.md](script-syntax.md#variables-and-conditions)). |
 | `[set var = expr]` | Assign a variable; the `=` is optional. |
 | `[wait sec]` | Pause. Default 0.5; `duration=` is the named form. |
-| `[end sec]` | Fade to black over `sec` (default 1) and finish the script (`onEnd` fires). |
+| `[end sec]` | Fade to black over `sec` (default 1) and finish the script into the `default` ending (`onEnd` fires, the session enters `ending`). |
+| `[ending id sec=1]` | Like `[end]`, into the named ending: `engine.ending` = `id` and its page (`[ending.<id>]` in the config). `[end]` = `[ending default]`. |
+| `[title]` | Stop the story and return to the title (`engine.showTitle()`): variables, stage and audio are cleared. |
 
 ### Declarations
 
@@ -39,7 +41,8 @@ Always available; they live in the engine itself.
 | `[hide id]` | `fade=0.3` | Hide one character. |
 | `[clear]` | `fade=0.3` | Hide every character. |
 | `[dialog show\|hide]` | | Show or hide the dialogue box (default `show`). |
-| `[window skin=image]` | `target=dialog` | Reskin a UI window with an image (stretched); `skin=none` restores the default chrome. Today the only window is the dialogue box. |
+| `[window skin=image]` | `target=dialog` | Reskin a UI window with an image (stretched) for the rest of the scene; `skin=none` restores the chrome the work's theme / `[window]` config defines. Today the only window is the dialogue box. |
+| `[theme token=value …]` | any [theme token](api.md#theming) | Override theme tokens for the rest of the scene (saved with the stage, cleared by a restart): `[theme name-bg=#0b1c2e text-size=4cqh]`. `[theme reset]` clears them. |
 | `[textspeed cps]` | | Typewriter speed; `0` reveals instantly. Default 40. |
 | `[fadeout sec]` | `color=#000` | Cover the screen. Default 0.6 s; `duration=` is the named form. |
 | `[fadein sec]` | | Reveal the screen. Default 0.6 s. |
@@ -54,7 +57,7 @@ Always available; they live in the engine itself.
 | `[voice audio]` | `offset=0` | Queue a voice clip for the next dialogue line. Plays alongside the line, seeking past `offset` seconds of leading silence, and mutes the synthesized typing blip for that line. |
 
 The player's master volumes (music / ambience / SFX / voice, `0..1`) multiply
-every clip's authored volume; the `menu` plugin exposes them.
+every clip's authored volume; the in-game menu's settings expose them.
 
 ## Plugin commands
 

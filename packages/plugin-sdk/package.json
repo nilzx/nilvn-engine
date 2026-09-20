@@ -1,6 +1,6 @@
 {
   "name": "@nilvn/plugin-sdk",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "type": "module",
   "description": "NilVN plugin SDK — manifest types and validator, extension-point / permission catalogs, runtime plugin types, a package template and the generated plugin-spec.json contract",
   "license": "MIT",

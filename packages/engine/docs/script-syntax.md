@@ -131,13 +131,16 @@ explicitly.
 
 ## Actors
 
-`[actor id name=… color=… sprites=… face=…]` declares (or updates) a character:
+`[actor id name=… color=… textColor=… sprites=… face=…]` declares (or updates) a character:
 
 - `name` — the name shown on the name tag (defaults to the id).
-- `color` — the name tag color.
+- `color` — the name tag's **background** colour (the theme's `name-bg` when absent).
+- `textColor` — the name tag's **text** colour (the theme's `name-color` when absent).
 - `sprites` — a sprite URL template where `{face}` is replaced by the current face,
   e.g. `@char/yuki-{face}.svg`.
 - `face` — the default face.
+
+Fields a later `[actor]` line does not mention are kept.
 
 `[char id face]` then shows the character; `speaker(face): …` switches the face
 while speaking. Actors can also be declared in the config file's `[actors.*]`
@@ -171,5 +174,5 @@ in an inline asset table first, so a bundled game needs no network access.
 
 Ship one catalog per language and write the script with `@key` references. The
 engine resolves text in `lang`, falling back to `defaultLang`, and `setLanguage`
-(or the `menu` plugin) switches the language of the line currently on
+(or the in-game menu) switches the language of the line currently on
 screen without losing playback state. See [api.md](api.md#languages).

@@ -5,8 +5,15 @@ import { createEngine } from '@nilvn/engine'
 
 const engine = createEngine({ container: document.getElementById('app')! })
 await engine.loadConfig('./nilvn.config.toml')
-await engine.start()
+await engine.prepare()        // content + plugins in place: show your title page here
+startButton.onclick = () => {
+  void engine.start()         // resolves when the STORY ends, so don't await it to hide the title
+}
 ```
+
+`start()` resolves when the script finishes — `[end]`, `[ending]`, running off
+the end — not when play begins. Use `prepare()` / `ready` for "loaded, show the
+title"; see [Session](#session).
 
 `createEngine(options)` returns an `Engine`. Everything below is on that
 instance unless noted. All content problems are reported as diagnostics; the
@@ -32,8 +39,16 @@ only exceptions the engine throws are host programming errors (for example
 | `catalogs` | `Record<lang, Record<key, text>>` | Content text by key; values carry inline markup. Dialogue, choice and actor-name `@key` references resolve here. |
 | `macros` | `Record<string, string>` | Command macros (see [config.md](config.md#macros)). |
 | `defaults` | `Record<cmd, Record<param, value>>` | Per-command default parameters. |
+| `theme` | `Record<token, value>` | Theme overrides — the base layer (see [Theming](#theming)). |
+| `title`, `endings`, `saves`, `menu`, `settings` | `TitleConfig`, `Record<id, EndingConfig>`, `SavesConfig`, `MenuConfig`, `SettingsConfig` | The built-in pages, the slots and autosave, the system menu and the settings panel — the config file's `[title]` / `[ending.<id>]` / `[saves]` / `[menu]` / `[settings]` (see [config.md](config.md#title)). |
+| `messages` | `Record<lang, Record<id, string>>` | Chrome string overrides (`[strings.<lang>]`). |
+| `pluginConfig` | `Record<pluginId, Record<key, value>>` | Plugin settings (`[plugins.<id>]`); short first-party names work. |
+| `screens` | `false` \| `{ title?, ending?, menu? }` | `false` = the engine draws no chrome at all (a host that owns its own); per piece otherwise. |
+| `saveStore` | `SaveStore` | Where saves persist (default `localStorage` namespaced by `saveKey`). |
 | `assets` | `Record<string, string>` | Virtual asset table: resolved path → inline URL (data URIs). Single-file builds use it so nothing is fetched. |
-| `onEnd` | `() => void` | The script finished (`[end]`, or it ran off the end). |
+| `onEnd` | `() => void` | The script finished (`[end]`, `[ending]`, or it ran off the end). |
+| `onReady` | `() => void` | Content and plugins are in place (see [Session](#session)). |
+| `onSessionChange` | `(state, prev) => void` | The session moved between `idle` / `title` / `playing` / `ending`. |
 | `onError` | `(info: EngineDiagnostic) => void` | Host diagnostic sink (same information as the `onError` plugin hook). |
 | `strict` | boolean | Log every diagnostic with `console.error` each time (the studio preview). Lenient mode dedupes and warns. Never changes playback. |
 | `pluginFailureLimit` | number | Consecutive command failures after which a plugin is quarantined (default 3). |
@@ -61,10 +76,23 @@ actors, languages and plugin set.
 
 | Member | Description |
 |---|---|
-| `start(label?)` | Run from the top or from `label`. Activates queued plugins first. Resolves when the script finishes. |
+| `prepare(label?)` | Content and plugins in place without playing (the auto-loaded entry script, the entry chunk, the queued `[use]` plugins). Resolves `ready` and fires `onReady` the first time. Returns `false` when a reported content problem leaves nothing playable. |
+| `ready` | A promise that resolves after the first successful `prepare()` / `start()`. Never rejects. |
+| `start(label?)` | Run from the top or from `label` (calls `prepare()` first). Resolves when the script **finishes**, not when play begins. |
 | `jump(label)` | Move the playhead to a label (loads its chunk first in chunked play). |
 | `restart()` | Fresh variables, blank stage, silence, then play from the beginning. |
-| `finish()` | End the run now (`onEnd` fires). |
+| `showTitle()` | Stop any run, clear the session (variables, stage, audio, backlog), enter the `title` state and draw the title page — what `[title]` does. `start()` from there is a fresh game. |
+| `continueGame()` / `hasContinue()` | Resume from the autosave (the title page's Continue) / whether one exists. |
+| `auto` / `setAuto(on)`, `skip` / `setSkip(on)` | Auto mode (lines advance by themselves; a tap ends it) and skip mode (read lines — or everything per `skipMode` — pass at once; ends at the first unread line and at every choice). Holding Ctrl skips while held. |
+| `autoDelay` / `setAutoDelay(sec)`, `skipMode` / `setSkipMode(mode)` | Auto's pause and skip's reach — player settings, persisted. |
+| `getVolume(ch)` / `setVolume(ch, v)`, `dialogOpacity` / `setDialogOpacity(v)`, `uiScale` / `setUiScale(v)`, `isFullscreen()` / `setFullscreen(on)` | The other player settings the panel drives (the two sliders write the `dialog-opacity` / `ui-scale` theme tokens). |
+| `saveSlot(n)` / `loadSlot(n)`, `quickSave()` / `quickLoad()`, `writeSave(key)` / `readSave(key)` / `loadSave(key)` / `deleteSave(key)` | The slot API the menu's screen sits on (`slot:<n>`, `quick`, `auto`). |
+| `openMenu(panel)` | Open one of the menu's panels — `saves` / `load` / `backlog` / `replays` / `settings`. |
+| `t(id, params?)` | A chrome string in the work's language (overrides, then the engine catalog). |
+| `setPluginConfig(id, patch, { player? })` / `pluginConfigValue(id, key)` / `pluginConfigAll(id)` / `onPluginConfigChange(id, fn)` | A plugin's settings: the author's layer, or the player's with `player: true` (persisted); what `ctx.config` reads. |
+| `actorField(actorId, pluginId, key)` | A plugin-declared actor field (`contributes.actorFields`), e.g. voicefx's `voice`. |
+| `finish(endingId?)` | End the run now into an ending (`default` when unnamed): the session enters `ending`, `onEnd` fires. |
+| `session` / `ending` / `onSessionChange(fn)` | Where the session is, which ending was reached, and the subscription (see [Session](#session)). |
 | `destroy()` | Stop everything, release listeners, timers, audio, plugins and the stage DOM. The instance is dead afterwards. |
 | `wait(sec)` / `sleep(ms)` | Delays that resolve early if the session is reset. |
 | `vars` | Script variables (`[set]` writes them; `[if]` and choice conditions read them). |
@@ -72,9 +100,84 @@ actors, languages and plugin set.
 | `textSpeed` | Typewriter speed; changing it applies mid-line. |
 | `resolve(path)` | Resolve a resource path: aliases, then the asset table, then `baseUrl`. |
 | `config` | The parsed config file, if one was loaded. |
+| `theme` / `setTheme(patch)` / `onThemeChange(fn)` | The effective theme overrides, the base-layer writer and its change signal (see [Theming](#theming)). |
 
 The player advances a line with click, Space or Enter; a click during typing
 reveals the rest of the line.
+
+## Session
+
+```
+                    ┌──────────── showTitle() / [title] ─────────────┐
+                    ▼                                                 │
+ idle ──prepare()──▶ (ready) ──showTitle()──▶ title ──start()──▶ playing ──[end] / [ending id] / end of script──▶ ending
+   ▲                    └──────────── start() ────────────────────▲       restart() / restoreState() ──┘            │
+   └──────────────────────────────────── destroy() ◀──────────────────────────────────────────────────────────────┘
+```
+
+- **`idle`** — nothing running. `prepare()` brings content and plugins in
+  without leaving it; `ready` resolves.
+- **`title`** — `showTitle()` (or `[title]` in a script) stops whatever ran,
+  clears variables / stage / audio / backlog, and draws the built-in title page
+  (`[title]` in the config: heading, logo, background, music, buttons). New game
+  is `start()`, Continue is `continueGame()` (the autosave), Load and Settings
+  open the menu's panels. A host that draws its own page passes `screens: false`
+  (or `[title] enabled = false`) and keeps the state machine.
+- **`playing`** — every session entry: `start()`, `restart()`, `restoreState()`,
+  a replay.
+- **`ending`** — `[end]`, `[ending id]` or running off the end. `engine.ending`
+  is the id (`default` unless named); `onEnd` still fires; the ending page for
+  that id (`[ending.<id>]`: heading, background, music, rolling credits, what
+  happens after) is drawn. `[ending true_end]` is how a script names its endings
+  — for the page and for plugins (galleries, achievements) listening to
+  `onSessionChange`.
+
+`engine.session` reads the state; `onSessionChange(fn)` (and the
+`onSessionChange` option / plugin hook) receives `(state, prev)`.
+
+While `playing`, the built-in **system menu** (☰ / Esc, `[menu]` in the config)
+offers save / load / quick save / quick load / backlog / auto / skip / settings /
+replays / title / restart over the same API listed under [Playing](#playing);
+wheel-up over the stage opens the backlog. It needs no plugin — `[use menu]`
+from before 0.15 is ignored with a diagnostic.
+
+A title page in a host, today:
+
+```ts
+const engine = createEngine({ container, onSessionChange: (s) => titleEl.hidden = s !== 'title' })
+await engine.load('./game/')       // or loadConfig
+await engine.prepare()
+await engine.showTitle()
+newGameBtn.onclick = () => void engine.start()
+continueBtn.onclick = () => void engine.restoreState(JSON.parse(localStorage.getItem('save')!))
+engine.onSessionChange((s) => { if (s === 'ending') setTimeout(() => void engine.showTitle(), 3000) })
+```
+
+### Screens
+
+The pages are drawn by the renderer from a model the engine builds
+(`titleModel` / `endingModel`, exported for hosts that want the same model
+elsewhere): strings from the chrome catalog (`engine.t(id)`, overridable per work
+through `messages` / `[strings]`), `@key` texts through the content catalogs, the
+buttons wired to `start()` / `continueGame()` / `showTitle()` / `restart()`. A page
+swallows its own clicks (nothing reaches click-to-advance), focuses its primary
+button, follows a language switch, and draws with the theme's `panel-*` /
+`button-*` / `accent` tokens. `Renderer.chrome` (`showScreen(id, model)` /
+`hideScreen` / `currentScreen`) is the seam a non-DOM backend implements.
+
+### Saves and persistence
+
+`engine.saveStore` is where the engine's own persistence goes: the slots
+(`slot:<n>`), the quick save (`quick`), the autosave (`auto`), the player
+settings (`settings`), the read-line set behind skip mode (`read`) and the
+replay unlocks (`unlocks`) — key constants are exported. The default is
+`localStorage` under `nilvn:<saveKey>:<key>` (`LocalStorageSaveStore`;
+`MemorySaveStore` for hosts without storage); a shell passes its own `SaveStore`
+(`get` / `set` / `remove` / `keys`, all async, JSON values). A save is a
+`SlotPayload` (`{ v: 1, savedAt, preview, state }`); the autosave is written at
+every label (or line, or never — `[saves] autosave`); `onSaved` fires for every
+snapshot taken. Saves and settings the pre-0.15 menu plugin kept in
+`localStorage` are migrated into the store on the work's first `prepare()`.
 
 ## Saving and restoring
 
@@ -91,8 +194,99 @@ touching anything when the save is incompatible (wrong version, a label that no
 longer exists, an out-of-range offset). A slice whose plugin is not active is
 carried through to the next save untouched.
 
-`saveKey` and `buildInfo` are the per-work id and tool version a persistence layer
-(the `menu` plugin) uses to namespace and label saves.
+`saveKey` and `buildInfo` are the per-work id and tool version the engine's
+persistence uses to namespace and label saves.
+
+The stage snapshot carries the speaker's name-tag colours (`nameColor` = background,
+`nameTextColor` = text) and the script's theme layer (`theme`, the tokens
+`[theme …]` set) — not the host / config base layer, which belongs to the work.
+
+## Theming
+
+Everything the built-in chrome draws with — the dialogue box, name tag,
+click-to-continue indicator, choice buttons, and the menus and screens — is a
+CSS custom property `--nilvn-<token>` on the stage root. The engine's stylesheet
+declares the defaults; you only ever override. Token names are a public contract
+(renames go through a deprecation period). Three ways in, one output:
+
+| Entry | Layer | Lifetime |
+|---|---|---|
+| `createEngine({ theme })`, `engine.setTheme(patch)` | base | The work — survives `restart()` and loads; not in a save. |
+| `[theme]` / `[window]` in the config file | base | Same (applied by `loadConfig`). |
+| `[theme name-bg=#0b1c2e]` in the script | script | The scene — saved with the stage, cleared by `restart()` / `[theme reset]`. |
+
+`engine.theme` is the effective override map (base then script), `THEME_TOKENS`
+the defaults. A `''` value removes a token from its layer. An unknown token is a
+diagnostic (`load` from the host / config, `exec` from the script) and is painted
+anyway, so typos surface without breaking the page.
+
+| Token | Default | Draws |
+|---|---|---|
+| `font` | PingFang SC, Hiragino Sans GB, Microsoft YaHei, system-ui | The stage font. |
+| `ui-scale` | `1` | Multiplies every chrome font size (`text-size`, `name-size`, `choice-size`) — the one knob for small screens. |
+| `accent` | `#7c5cff` | The accent colour; `name-bg` defaults to it. |
+| `text` | `#f4f5fa` | Base text colour of the stage; `text-color` defaults to it. |
+| `dialog-bg` | dark gradient | Dialogue box background (any CSS background). |
+| `dialog-skin` | `none` | An image stretched over the box (`url(…)`), above `dialog-bg`. |
+| `dialog-border` | `1px solid rgba(255,255,255,.14)` | Box border (`none` to drop it). |
+| `dialog-radius` | `1.8cqh` | Corner radius. |
+| `dialog-opacity` | `1` | Opacity of the default chrome (background + skin), not of the text. |
+| `dialog-inset` | `3.5%` | Left / right inset. |
+| `dialog-bottom` / `dialog-top` | `3.5cqh` / `auto` | Which edge the box hangs from, and how far. |
+| `dialog-height` | `24cqh` | Minimum height. |
+| `dialog-padding` | `3.6cqh 3cqw 2cqh` | Inner padding. |
+| `text-size` / `text-line-height` | `3.4cqh` / `1.75` | Dialogue text. |
+| `text-color` / `text-shadow` | `var(--nilvn-text)` / soft shadow | Dialogue text. |
+| `name-bg` / `name-color` | `var(--nilvn-accent)` / `#ffffff` | Name-tag background and text. An actor's `color` / `textColor` override these for that speaker. |
+| `name-size` / `name-offset` | `2.7cqh` / `2.4cqw` | Name-tag font size and left offset. |
+| `indicator-color` / `indicator-size` | `rgba(255,255,255,.85)` / `1.4cqh` | The click-to-continue triangle. |
+| `choices-backdrop` | `rgba(5,6,12,.35)` | The veil behind a choices prompt. |
+| `choice-bg` / `choice-color` / `choice-border` / `choice-hover` / `choice-radius` / `choice-size` | | Choice buttons. |
+| `panel-bg` / `panel-border` / `panel-color` | | Menus, screens and plugin panels. |
+| `button-bg` / `button-color` / `button-border` / `button-hover` | | Buttons on those panels. |
+
+Sizes use container units (`cqh` / `cqw` = 1 % of the stage height / width) so
+they scale with the stage, not the viewport. The stage itself is a fixed 16:9 box
+that scales to its container's width; on a portrait phone the whole stage is
+small, and `ui-scale` is the intended remedy:
+
+```toml
+[theme]
+"ui-scale" = "1.25"          # bigger dialogue and choices everywhere
+font = "'Noto Serif SC', serif"
+```
+
+A minimal reskin — no CSS, no host code:
+
+```toml
+[window]
+skin = "@ui/box.png"         # your box art, stretched
+position = "bottom"
+opacity = 0.95
+
+[theme]
+"name-bg" = "#0b1c2e"
+"name-color" = "#ffe2a8"
+"text-shadow" = "none"
+
+[actors.yuki]
+color = "#ff7eb6"            # this speaker's name tag stays pink
+```
+
+From a host page, the same thing:
+
+```ts
+engine.setTheme({ 'name-bg': '#0b1c2e', 'name-color': '#ffe2a8', 'ui-scale': 1.25 })
+if (prefersLight) engine.setTheme({ 'dialog-bg': '#fff', 'text-color': '#222' })
+```
+
+Plugins read the theme through `ctx.theme` (`get` / `all` / `onChange`) and write
+their own CSS with `var(--nilvn-…)` rather than colour literals, so a plugin's
+panel follows the work's theme. `editStage` is the studio's hit-testing seam, not a
+theming API — the class names it exposes are not a contract.
+
+Deprecated: `--name-color` on the name tag (pre-0.15) is still *set* for a host
+stylesheet that read it, but the engine no longer reads it; use `name-bg`.
 
 ## Languages
 
@@ -104,11 +298,13 @@ carried through to the next save untouched.
 | `setLanguage(lang)` | Switch content and chrome language and repaint the line or choices on screen in place; playback state is untouched. Ignored for a language with no catalog. Async, because chunked play may need to fetch that language's text slice first. |
 | `onLanguageChange(fn)` | Subscribe to switches; returns an unsubscribe function. |
 
-Chrome strings belong to the plugin that renders the chrome (a manifest's
-`messages`, resolved by `ctx.t`); the engine ships none of its own. The lookup
-mechanism — `tUI(id, params?, lang?)`, `setUILang(lang)`, `getUILang()` — and
-`uiLangName(code)` (`ja` → 日本語, also `settings.languageName` on the plugin
-context) are exported for hosts.
+Chrome strings: the engine's own pages carry theirs (`en` base, `zh`, `ja`;
+ids in `CHROME_STRING_IDS`), a work overrides any id through `messages` /
+`[strings.<lang>]`, and `engine.t(id, params?)` resolves in the work's language.
+A plugin's `ctx.t` looks in the plugin's manifest `messages` first, then here.
+The lookup mechanism — `tUI(id, params?, lang?)`, `setUILang(lang)`,
+`getUILang()` — and `uiLangName(code)` (`ja` → 日本語, also
+`settings.languageName` on the plugin context) are exported for hosts.
 
 ## Diagnostics
 
@@ -221,6 +417,9 @@ build on the stage directly.
 
 | Export | Description |
 |---|---|
+| `LocalStorageSaveStore`, `MemorySaveStore`, `AUTOSAVE_KEY`, `isSlotPayload` | The persistence seam's bundled stores and the autosave's key / payload guard (see [Saves and persistence](#saves-and-persistence)). |
+| `titleModel(cfg, host)`, `endingModel(id, cfg, host)`, `screenBackground`, `TITLE_BUTTONS_DEFAULT`, `CHROME_STRING_IDS` | The built-in pages' model builders and the chrome string ids. |
+| `THEME_TOKENS`, `THEME_PREFIX`, `isThemeToken(key)`, `themeVar(key)`, `windowTheme(win, resolve)` | The theme contract: the token table with defaults, the `--nilvn-` prefix, and the `[window]` → tokens mapping (see [Theming](#theming)). |
 | `parseScript(text)` | `{ nodes, labels, diagnostics }` — the node stream a script becomes. |
 | `parseSegments(text)` | Inline markup → text / pause / break segments. |
 | `parseTag(inner, line)` | One `[…]` tag → a node (macros expand through it). |

@@ -2,10 +2,11 @@
 
 A small visual-novel (ADV / galgame) engine for the browser. Scripts read like a
 story — `yuki: Hi!` plus a few bracket commands — and everything expressive
-(screen shake, text effects, sprite animation, choice styling, camera moves, the
-in-game menu) is a plugin you can write in plain JavaScript. The engine is the
-mechanism: parser, stage, audio, saves, languages and a capability-sandboxed
-plugin host. The first-party plugins live in [`@nilvn/plugins`](https://www.npmjs.com/package/@nilvn/plugins)
+(screen shake, text effects, sprite animation, choice styling, camera moves) is a
+plugin you can write in plain JavaScript. The engine is the mechanism: parser,
+stage, audio, saves, languages, the finished game's shell (title and ending
+pages, the in-game menu with saves / backlog / auto / skip / settings, themeable
+without CSS) and a capability-sandboxed plugin host. The first-party plugins live in [`@nilvn/plugins`](https://www.npmjs.com/package/@nilvn/plugins)
 and are written against the same public surface as yours. TypeScript, DOM + CSS
 rendering, no framework; the only runtime dependency is a TOML parser that the
 single-file build drops.
@@ -19,9 +20,13 @@ import { createEngine } from '@nilvn/engine'
 import { withFirstParty } from '@nilvn/plugins'
 
 const engine = createEngine({ ...withFirstParty(), container: document.getElementById('app')! })
-await engine.loadConfig('./nilvn.config.toml')   // plugins, actors, aliases, macros, defaults
-await engine.start()                             // plays the script the config names as entry
+await engine.loadConfig('./nilvn.config.toml')   // plugins, actors, title / ending pages, menu, theme
+await engine.showTitle()                         // the title page; New game plays the config's entry script
 ```
+
+`start()` plays at once and resolves when the story ends; a host without a title
+page calls it instead. From an empty folder to a deployed game:
+[Getting started](docs/getting-started.md).
 
 The content language defaults to `en`; a multi-language game passes `lang`,
 `defaultLang`, `languages` and per-language `catalogs` (see the [engine API](docs/api.md#languages)).
@@ -61,10 +66,13 @@ The player clicks, or presses Space / Enter, to advance.
 
 | | |
 |---|---|
+| [Getting started](docs/getting-started.md) | An empty folder to a deployed game with a title page, endings, saves and settings; npm-user vs contributor commands. |
 | [Script syntax](docs/script-syntax.md) | Lines, inline markup, `@key` text references, variables and conditions, macros, actors, plugins, paths. |
 | [Config file](docs/config.md) | Every section of `nilvn.config.toml`. |
 | [Command reference](docs/commands.md) | Built-in commands and object ids (the first-party plugins' commands are in [`@nilvn/plugins`](https://github.com/nilzx/nilvn-plugins#the-plugins)). |
 | [Engine API](docs/api.md) | `createEngine` options, loading, playing, saves, languages, diagnostics, audio, plugins, stage, packages, the IIFE build. |
+| [In-game chrome](docs/config.md#title) | The built-in title / ending pages, the system menu (saves, backlog, auto / skip, settings), what `[title]` / `[ending.<id>]` / `[menu]` / `[settings]` / `[saves]` configure. |
+| [Theming](docs/api.md#theming) | The `--nilvn-*` token contract: dialogue box, name tag, choices, panels; `[theme]` / `[window]` in the config, `setTheme()`, the `[theme]` command. |
 | [Script packages](docs/script-package.md) | The `nilvn.json` format, the chunk manifest, custom loaders. |
 | [Writing plugins](../plugin-sdk/README.md) | The plugin package format, permissions and capability objects, lifecycle — in `@nilvn/plugin-sdk`. |
 
@@ -94,7 +102,7 @@ The engine registers nothing by itself. A host hands it plugins three ways:
 - `[use ./x/plugin.json]` / `[use ./x.js]` in the script — fetched at play time.
 
 The first-party set (`textfx`, `screenfx`, `charfx`, `objectfx`, `spriteanim`,
-`choicefx`, `voicefx`, `animstudio`, `abreplay`, `menu`) is documented in
+`choicefx`, `voicefx`, `animstudio`, `abreplay`) is documented in
 [`@nilvn/plugins`](https://github.com/nilzx/nilvn-plugins); writing your own
 starts at [`@nilvn/plugin-sdk`](../plugin-sdk/README.md).
 

@@ -14,7 +14,7 @@
 //                      only ever receives the capability objects it declared AND
 //                      the host granted (the rest are simply `undefined`).
 
-import type { CommandSchema, EffectSchema, ObjectKindSchema, TextEffectDef } from './schema.js'
+import type { CommandSchema, EffectSchema, ObjectKindSchema, ParamSchema, ParamType, TextEffectDef } from './schema.js'
 import { isValidRange, satisfiesRange } from './semver.js'
 
 /** The plugin↔host contract version. A manifest declaring a higher `apiVersion`
@@ -62,6 +62,8 @@ export const PERMISSIONS: readonly PermissionDef[] = [
   { id: 'session.backlog', group: 'session', side: 'engine', status: 'active', description: 'The dialogue backlog and voice replay by ref.' },
   { id: 'session.replay', group: 'session', side: 'engine', status: 'active', description: 'A–B replay segments: list / play / end / seen signals.' },
   { id: 'ui.layer', group: 'ui', side: 'engine', status: 'active', description: 'A host container inside the stage root (removed on dispose).' },
+  { id: 'ui.screen', group: 'ui', side: 'engine', status: 'active', description: 'Full-stage screens over the story, entries in the system menu and on the title page, HUD widgets (the menuItems / titleItems / hud contributions).' },
+  { id: 'ui.dialog', group: 'ui', side: 'engine', status: 'active', description: 'In-engine confirm / alert boxes and toasts (never the browser’s).' },
   { id: 'ui.panel', group: 'ui', side: 'editor', status: 'active', description: 'A manager panel host in the editor.' },
   { id: 'ui.window', group: 'ui', side: 'editor', status: 'active', description: 'A draggable editor window.' },
   { id: 'ui.toast', group: 'ui', side: 'editor', status: 'active', description: 'Editor toasts.' },
@@ -75,6 +77,7 @@ export const PERMISSIONS: readonly PermissionDef[] = [
   { id: 'net:', group: 'system', side: 'host', status: 'reserved', pattern: true, description: 'Network access to one origin (host-mediated; third-party default-deny).' },
   { id: 'clipboard', group: 'system', side: 'host', status: 'reserved', description: 'Clipboard read / write.' },
   { id: 'timer', group: 'system', side: 'engine', status: 'active', description: 'setTimeout / setInterval / requestAnimationFrame, cleared on dispose.' },
+  { id: 'storage.local', group: 'data', side: 'engine', status: 'active', description: 'A key-value store namespaced per work and plugin (async, JSON values) — the engine’s SaveStore.' },
   { id: 'ai.text', group: 'ai', side: 'host', status: 'reserved', description: 'Text generation through the configured provider.' },
   { id: 'ai.image', group: 'ai', side: 'host', status: 'reserved', description: 'Image generation.' },
   { id: 'ai.audio', group: 'ai', side: 'host', status: 'reserved', description: 'Audio / voice generation.' },
@@ -98,6 +101,9 @@ export type Permission =
   | 'session.backlog'
   | 'session.replay'
   | 'ui.layer'
+  | 'ui.screen'
+  | 'ui.dialog'
+  | 'storage.local'
   | 'ui.panel'
   | 'ui.window'
   | 'ui.toast'
@@ -145,6 +151,11 @@ export const EXTENSION_POINTS: readonly ExtensionPointDef[] = [
   { key: 'effects', side: 'engine', status: 'active', version: 1, description: 'Retargetable effects bound to kinds via appliesToKinds.' },
   { key: 'hooks', side: 'engine', status: 'active', version: 1, description: 'Engine hook names the runtime half listens to (introspection; the module is authoritative).' },
   { key: 'saveSlice', side: 'engine', status: 'active', version: 1, description: 'Declares a SaveState.ext slice owned by this plugin.' },
+  { key: 'config', side: 'engine', status: 'active', version: 1, description: 'Plugin settings (ConfigFieldSchema[]): the config file’s [plugins.<id>] table and ctx.config at runtime; scope = player rows also appear in the in-game settings panel and persist per work.' },
+  { key: 'menuItems', side: 'engine', status: 'active', version: 1, description: 'Entries in the in-game system menu (wired with ctx.screen.menuItem; needs ui.screen).' },
+  { key: 'titleItems', side: 'engine', status: 'active', version: 1, description: 'Buttons on the title page (ctx.screen.titleItem; needs ui.screen).' },
+  { key: 'hud', side: 'engine', status: 'active', version: 1, description: 'Persistent widgets in a stage corner while playing (ctx.screen.hud; needs ui.screen).' },
+  { key: 'actorFields', side: 'engine', status: 'active', version: 1, description: 'Fields an actor declaration may carry for this plugin ([actors.<id>] / [actor …]), reached as ctx.actorField(actorId, key).' },
   { key: 'rendererLayers', side: 'engine', status: 'reserved', version: 1, description: 'Named renderer layers.' },
   { key: 'panels', side: 'editor', status: 'active', version: 1, description: 'Manager panels (the editor renders the host; the plugin fills it).' },
   { key: 'nodeKinds', side: 'editor', status: 'active', version: 1, description: 'IR node kinds this plugin owns (forms + inert flag while disabled).' },
@@ -174,6 +185,41 @@ export interface PanelDef {
   kind?: string
 }
 
+/** One plugin setting (`contributes.config`): a `ParamSchema` minus the command
+ *  positional / required bits, plus a numeric range and who may change it. */
+export interface ConfigFieldSchema extends Omit<ParamSchema, 'positional' | 'required'> {
+  min?: number
+  max?: number
+  step?: number
+  /** `author` (default): set in the config file / the studio, read-only in the
+   *  game. `player`: also a row in the in-game settings panel, persisted per work
+   *  (the author's value is the default). */
+  scope?: 'author' | 'player'
+}
+
+/** An entry a plugin adds to the in-game system menu or the title page. */
+export interface MenuItemDef {
+  id: string
+  /** An i18n id resolved through the plugin's `messages`. */
+  label: string
+  /** Menu entries: show only while `playing` (default) or on every session state. */
+  when?: 'playing' | 'always'
+}
+
+/** A HUD widget slot. */
+export interface HudDef {
+  id: string
+  slot?: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right'
+}
+
+/** A field an actor declaration may carry for this plugin. */
+export interface ActorFieldDef {
+  key: string
+  type: ParamType
+  /** An i18n id (the studio's actor form). */
+  label?: string
+}
+
 /** Contributions per extension point. Every field optional; unknown keys are
  *  tolerated (ignored with a warning) so a newer plugin loads on an older host. */
 export interface PluginContributions {
@@ -185,6 +231,11 @@ export interface PluginContributions {
   effects?: EffectSchema[]
   hooks?: string[]
   saveSlice?: boolean
+  config?: ConfigFieldSchema[]
+  menuItems?: MenuItemDef[]
+  titleItems?: MenuItemDef[]
+  hud?: HudDef[]
+  actorFields?: ActorFieldDef[]
   panels?: PanelDef[]
   nodeKinds?: string[]
   stageTools?: string[]
@@ -303,6 +354,17 @@ export function validatePluginManifest(m: PluginManifest, opts: ValidateManifest
   for (const key of Object.keys(m.contributes ?? {})) {
     if (!POINT_KEYS.has(key)) warnings.push(`unknown extension point "${key}" — ignored`)
     else if (EXTENSION_POINTS.find((p) => p.key === key)!.status === 'reserved') warnings.push(`extension point "${key}" is reserved — ignored`)
+  }
+  const CONFIG_KEY_RE = /^[a-zA-Z][a-zA-Z0-9_-]*$/
+  const seen = new Set<string>()
+  for (const f of m.contributes?.config ?? []) {
+    if (!f || typeof f.key !== 'string' || !CONFIG_KEY_RE.test(f.key)) errors.push(`contributes.config: invalid key "${String(f?.key)}"`)
+    else if (seen.has(f.key)) errors.push(`contributes.config: duplicate key "${f.key}"`)
+    else seen.add(f.key)
+    if (f && f.scope !== undefined && f.scope !== 'author' && f.scope !== 'player') errors.push(`contributes.config."${String(f.key)}": unknown scope "${String(f.scope)}"`)
+  }
+  for (const a of m.contributes?.actorFields ?? []) {
+    if (!a || typeof a.key !== 'string' || !CONFIG_KEY_RE.test(a.key)) errors.push(`contributes.actorFields: invalid key "${String(a?.key)}"`)
   }
   if (m.activation?.engine && !['eager', 'onCommand', 'manual'].includes(m.activation.engine)) errors.push(`unknown activation.engine "${m.activation.engine}"`)
   if (m.reload && m.reload !== 'hot' && m.reload !== 'restart') errors.push(`unknown reload policy "${m.reload}"`)

@@ -29,17 +29,34 @@ export const builtins: Record<string, BuiltinFn> = {
     engine.alias[key] = value
   },
 
-  // [actor yuki name=Yuki color=#ff7eb6 sprites=@char/yuki-{face}.svg face=happy]
+  // [actor yuki name=Yuki color=#ff7eb6 textColor=#fff sprites=@char/yuki-{face}.svg face=happy]
+  // `color` is the name-tag BACKGROUND, `textColor` its text (theme defaults when absent).
   actor({ engine, args, params }) {
     const id = args[0]
     if (!id) throw new Error('[actor] needs an id: [actor yuki name=Yuki ...]')
     const prev = engine.actors[id] ?? {}
+    // Anything beyond the engine's own fields (face → defaultFace) is a plugin's
+    // actor field ([actor yuki voice=360]); normalizeActors files it under ext.
+    const extras: Record<string, string> = {}
+    for (const [k, v] of Object.entries(params)) if (!['name', 'color', 'textColor', 'sprites', 'face'].includes(k)) extras[k] = v
     engine.actors[id] = {
+      ...prev,
+      ...extras,
       name: params.name ?? prev.name ?? id,
       color: params.color ?? prev.color,
+      textColor: params.textColor ?? prev.textColor,
       sprites: params.sprites ?? prev.sprites,
       defaultFace: params.face ?? prev.defaultFace,
     }
+    engine.normalizeActors()
+  },
+
+  // [theme name-bg=#0b1c2e text-size=4cqh] — override theme tokens for the rest
+  // of the scene (the SCRIPT layer: saved with the stage, reset by a restart);
+  // [theme reset] clears it. Token names are the `--nilvn-<token>` contract.
+  theme({ engine, args, params }) {
+    if (args[0] === 'reset') engine.setScriptTheme(null)
+    else engine.setScriptTheme(params)
   },
 
   // [bg assets/bg/street.svg fade=1.5] or [bg color=#102030 fade=1]
@@ -103,7 +120,7 @@ export const builtins: Record<string, BuiltinFn> = {
   set(ctx) {
     const m = /^set\s+(\S+?)(?:\s*=\s*|\s+)(.+)$/.exec(ctx.raw)
     if (!m) throw new Error('[set] syntax: [set var expression]')
-    ctx.engine.vars[m[1]!] = evalExpr(m[2]!, ctx.engine.vars)
+    ctx.engine.setVar(m[1]!, evalExpr(m[2]!, ctx.engine.vars))
   },
 
   // [fadeout 1.2 color=#fff] / [fadein 1.2] — duration= also works (for [defaults])
@@ -181,5 +198,18 @@ export const builtins: Record<string, BuiltinFn> = {
   async end(ctx) {
     await ctx.engine.stage.fadeScreen(1, ctx.num(0, ctx.num('duration', 1)))
     ctx.engine.finish()
+  },
+
+  // [ending true_end sec=1] — fade to black and finish INTO a named ending (the
+  // ending screen for `id`; `default` when omitted). `[end]` = `[ending default]`.
+  async ending(ctx) {
+    const id = ctx.str(0) ?? ctx.str('id') ?? 'default'
+    await ctx.engine.stage.fadeScreen(1, ctx.num('sec', ctx.num('duration', 1)))
+    ctx.engine.finish(id)
+  },
+
+  // [title] — stop and go back to the title screen (a fresh game from there).
+  async title(ctx) {
+    await ctx.engine.showTitle()
   },
 }

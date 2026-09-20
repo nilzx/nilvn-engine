@@ -1,4 +1,5 @@
 import type { Engine, SaveState } from './engine.js'
+import type { SaveStore } from './save-store.js'
 import type { AnimOpts, ChoiceHandle, ObjectBand, Renderer, TransformKeyframe, TransformProp, TransformValue } from './renderer/types.js'
 import type { DecodedFrame, DecodedTrack } from './keyframes.js'
 import type { SavedLoop } from './loop-runtime.js'
@@ -18,12 +19,20 @@ export interface ActorDef {
    *  name is resolved from the current language at render time (so it follows a
    *  language switch); otherwise `name` is used. */
   nameKey?: string
+  /** Name-tag BACKGROUND colour (the theme's `name-bg` when absent). */
   color?: string
+  /** Name-tag TEXT colour (the theme's `name-color` when absent). */
+  textColor?: string
   /** Sprite URL template; `{face}` is replaced by the current face name */
   sprites?: string
   defaultFace?: string
-  /** Base pitch (Hz) for the per-character voice blip; voicefx plugin reads this */
+  /** @deprecated (0.15) — a plugin's actor field: the engine moves it into
+   *  `ext['app.nilvn.voicefx'].voice` once that plugin's manifest declares the
+   *  field (`contributes.actorFields`); read through `ctx.actorField()`. */
   voice?: number
+  /** Plugin-declared fields by plugin id (`contributes.actorFields`): what an
+   *  `[actors.<id>]` table or an `[actor …]` line carried for that plugin. */
+  ext?: Record<string, Record<string, unknown>>
 }
 
 /** A piece of dialogue text produced by inline markup like {wave:hi} or {w:0.5} */
@@ -285,7 +294,23 @@ export interface EngineDiagnostic {
   error?: unknown
 }
 
+/** Where the session is: nothing running (`idle`), on the title screen, playing,
+ *  or on an ending screen. */
+export type SessionState = 'idle' | 'title' | 'playing' | 'ending'
+
+/** What `onSettingsChange` reports: the typewriter speed, a channel volume,
+ *  the language, the auto / skip modes and their tuning, the chrome sliders. */
+export type SettingKey = 'textSpeed' | `volume:${VolumeChannel}` | 'lang' | 'auto' | 'skip' | 'autoDelay' | 'skipMode' | 'dialogOpacity' | 'uiScale'
+
 export interface EngineHooks {
+  /** Content and plugins are in place (once per engine): a host may show its
+   *  title screen. Fired by `prepare()` — which `start()` calls first. */
+  onReady?: (ctx: PluginContext) => void
+  /** The session moved between idle / title / playing / ending. */
+  onSessionChange?: (state: SessionState, prev: SessionState, ctx: PluginContext) => void
+  /** The playhead reached a `[label]` (by falling through, a jump, or a start
+   *  at it) — the anchor for chapter tracking, achievements, galleries. */
+  onLabel?: (label: string, ctx: PluginContext) => void
   onDialogue?: (node: DialogueNode, ctx: PluginContext) => void
   onDialogueDone?: (node: DialogueNode, ctx: PluginContext) => void
   /** Fired as each character is revealed by the typewriter (e.g. voice blips) */
@@ -298,6 +323,15 @@ export interface EngineHooks {
   /** A command is about to run (built-in or plugin): its name and parsed tag. */
   onCommand?: (name: string, args: readonly string[], params: Readonly<Record<string, string>>, ctx: PluginContext) => void
   onEnd?: (ctx: PluginContext) => void
+  /** `saveState()` produced a snapshot (a slot UI is about to persist it). */
+  onSaved?: (state: SaveState, ctx: PluginContext) => void
+  /** `restoreState()` accepted a snapshot and play resumed from it. */
+  onRestored?: (state: SaveState, ctx: PluginContext) => void
+  /** A player setting changed: text speed, a channel volume, the language. */
+  onSettingsChange?: (key: SettingKey, value: number | string, ctx: PluginContext) => void
+  /** A script variable was written (`[set]`, `vars.set`). A restore replaces the
+   *  whole table silently — read `vars.all()` in `onRestored`. */
+  onVarChange?: (name: string, value: unknown, ctx: PluginContext) => void
   /** A content problem was reported (see EngineDiagnostic). Never fired for a
    *  problem inside an onError hook itself. */
   onError?: (info: EngineDiagnostic, ctx: PluginContext) => void
@@ -449,6 +483,61 @@ export interface UiCap {
   onStage<K extends keyof HTMLElementEventMap>(type: K, fn: (e: HTMLElementEventMap[K]) => void, opts?: AddEventListenerOptions | boolean): () => void
 }
 
+/** Always present (no permission): the effective theme overrides — the
+ *  `--nilvn-*` token contract (`THEME_TOKENS` has the defaults). Plugin CSS
+ *  draws with `var(--nilvn-…)` rather than colour literals so it follows the
+ *  work's theme; `get` / `onChange` are for plugins that paint in JS. */
+export interface ThemeCap {
+  /** An override's value, or undefined when the token is at its default. */
+  get(token: string): string | undefined
+  /** Every override (base + script layer). */
+  all(): Readonly<Record<string, string>>
+  /** Subscribe to theme changes (either layer); disposed with the plugin. */
+  onChange(fn: (theme: Readonly<Record<string, string>>) => void): () => void
+}
+
+/** `storage.local`: a key-value store namespaced per work AND plugin (the
+ *  engine's SaveStore underneath — localStorage by default, a shell's own file
+ *  store when it substitutes one). Async, JSON values. */
+export interface StorageCap {
+  get<T = unknown>(key: string): Promise<T | undefined>
+  set(key: string, value: unknown): Promise<void>
+  remove(key: string): Promise<void>
+  keys(): Promise<string[]>
+}
+
+/** Always present (no permission): the plugin's own settings, resolved
+ *  schema default ← the author's `[plugins.<id>]` value ← the player's value
+ *  (a `scope: player` field the player changed in the settings panel). */
+export interface ConfigCap {
+  get<T = unknown>(key: string): T | undefined
+  all(): Readonly<Record<string, unknown>>
+  /** A value changed (the host / the settings panel); disposed with the plugin. */
+  onChange(fn: (key: string, value: unknown) => void): () => void
+}
+
+/** `ui.screen`: full-stage screens and chrome entries — everything a plugin adds
+ *  to the finished game's shell. Each registration is released on dispose. */
+export interface ScreenCap {
+  /** Open a full-stage panel (the same chrome as the backlog / settings): `render`
+   *  fills its body; Esc or the close button closes it. One plugin screen at a time. */
+  open(id: string, title: string, render: (body: HTMLElement, close: () => void) => void): void
+  close(id?: string): void
+  /** Wire a `contributes.menuItems` entry (its label comes from the manifest). */
+  menuItem(id: string, onSelect: () => void): () => void
+  /** Wire a `contributes.titleItems` entry: a button on the title page. */
+  titleItem(id: string, onSelect: () => void): () => void
+  /** A `contributes.hud` widget's container in its corner (shown while playing). */
+  hud(id: string): HTMLElement
+}
+
+/** `ui.dialog`: in-engine boxes, never the browser's. */
+export interface DialogCap {
+  confirm(message: string): Promise<boolean>
+  alert(message: string): Promise<void>
+  toast(message: string): void
+}
+
 /** `timer`: timers and frames, all cleared on dispose. */
 export interface TimerCap {
   setTimeout(fn: () => void, ms: number): number
@@ -491,6 +580,13 @@ export interface PluginContext {
   on<K extends keyof EngineHooks>(hook: K, fn: NonNullable<EngineHooks[K]>): () => void
   /** Inject a stylesheet, removed on dispose. */
   addStyle(css: string): void
+  /** The work's theme overrides (no permission needed). */
+  readonly theme: ThemeCap
+  /** This plugin's settings (no permission needed; see `contributes.config`). */
+  readonly config: ConfigCap
+  /** A plugin-declared actor field (`contributes.actorFields`) for `actorId`;
+   *  undefined when absent. No permission needed. */
+  actorField(actorId: string, key: string): unknown
   // ---- capability objects, present iff granted ----
   readonly stage?: StageCap
   readonly audio?: AudioCap
@@ -501,6 +597,9 @@ export interface PluginContext {
   readonly replay?: ReplayCap
   readonly ui?: UiCap
   readonly timer?: TimerCap
+  readonly storage?: StorageCap
+  readonly screen?: ScreenCap
+  readonly dialog?: DialogCap
 }
 
 /** The runtime half of a plugin (plugin platform v2). Declarative contributions
@@ -599,12 +698,37 @@ export interface EngineOptions {
   macros?: Record<string, string>
   /** Per-command default params, e.g. { bg: { fade: 1 } } */
   defaults?: Record<string, Record<string, string | number | boolean>>
+  /** Theme overrides (the BASE layer): token → value, e.g. `{ 'name-bg': '#0b1c2e' }`.
+   *  See `THEME_TOKENS` for the contract and `[theme]` in config.md. */
+  theme?: Record<string, string | number>
+  /** The title page (same keys as the config's `[title]`). */
+  title?: TitleConfig
+  /** Ending pages by id (the config's `[ending.<id>]`). */
+  endings?: Record<string, EndingConfig>
+  saves?: SavesConfig
+  menu?: MenuConfig
+  settings?: SettingsConfig
+  /** Chrome string overrides: `{ zh: { 'ui.title.new': '开始' } }`. */
+  messages?: Record<string, Record<string, string>>
+  /** Plugin settings by plugin id (the config file's `[plugins.<id>]` tables):
+   *  `{ 'app.nilvn.voicefx': { volume: 0.5 } }`. Short first-party names work too. */
+  pluginConfig?: Record<string, Record<string, unknown>>
+  /** `false` = the engine draws no chrome at all (a host that owns its own,
+   *  the studio's preview); per piece otherwise. Default: all on. */
+  screens?: false | { title?: boolean; ending?: boolean; menu?: boolean }
+  /** Where saves and settings persist (default: `localStorage`, namespaced by
+   *  `saveKey`). */
+  saveStore?: SaveStore
   /**
    * Virtual asset table mapping resolved paths to inline URLs (e.g. data URIs).
    * Used by single-file bundles so resources need no network fetch.
    */
   assets?: Record<string, string>
   onEnd?: () => void
+  /** Content and plugins are in place (see `Engine.prepare` / `ready`). */
+  onReady?: () => void
+  /** The session moved between idle / title / playing / ending. */
+  onSessionChange?: (state: SessionState, prev: SessionState) => void
   /** Host-level diagnostic sink (same info as the `onError` plugin hook). */
   onError?: (info: EngineDiagnostic) => void
   /** Strict mode = the editor's preview: every diagnostic is logged with
@@ -650,6 +774,8 @@ export interface AdvConfig {
   plugins?: {
     /** Same entries as [use ...]: bundled names or JS module paths */
     use?: string[]
+    /** `[plugins.<id>]` — a plugin's settings table (see `contributes.config`). */
+    [pluginId: string]: string[] | Record<string, unknown> | undefined
   }
   /** Path prefix aliases, e.g. "@bg" = "assets/bg" */
   path?: Record<string, string>
@@ -659,4 +785,134 @@ export interface AdvConfig {
   defaults?: Record<string, Record<string, string | number | boolean>>
   /** Command macros: [macros] bg_street = "bg @bg/street.svg" */
   macros?: Record<string, string>
+  /** Theme overrides: [theme] name-bg = "#0b1c2e" (token names without the `--nilvn-` prefix). */
+  theme?: Record<string, string | number>
+  /** Dialogue-box shorthand: [window] skin = "@ui/box.png", position = "top" … — sugar over `[theme]`. */
+  window?: WindowConfig
+  /** The title page. */
+  title?: TitleConfig
+  /** Ending pages by id: [ending.default] / [ending.true_end]. */
+  ending?: Record<string, EndingConfig>
+  saves?: SavesConfig
+  menu?: MenuConfig
+  settings?: SettingsConfig
+  /** Chrome string overrides by language: [strings.zh] "ui.title.new" = "开始". */
+  strings?: Record<string, Record<string, string>>
+}
+
+/** `[title]` in nilvn.config.toml — the built-in title page. */
+export interface TitleConfig {
+  /** `false` = the engine draws no title page (the host does; the `title` session state still exists). */
+  enabled?: boolean
+  /** Heading text (`@key` resolves through the catalogs). Default: `[game] title`. */
+  heading?: string
+  subtitle?: string
+  /** An image shown above the heading. */
+  logo?: string
+  /** An image path, or a CSS colour / gradient. */
+  background?: string
+  bgm?: string
+  bgmVolume?: number
+  /** Button ids in order: `new`, `continue` (shown when an autosave exists),
+   *  `load`, `settings` (once those screens exist). Default `["new", "continue"]`. */
+  buttons?: string[]
+  layout?: 'center' | 'left' | 'right' | 'bottom'
+  /** Show the tool version in a corner (default true when `buildInfo` is known). */
+  version?: boolean
+}
+
+/** `[ending.<id>]` in nilvn.config.toml — an ending page (`[ending id]` / `[end]` = `default`). */
+export interface EndingConfig {
+  /** `false` = no page for this ending (the session still enters `ending`). */
+  enabled?: boolean
+  /** Default: the chrome string `ui.ending.title`. */
+  heading?: string
+  subtitle?: string
+  background?: string
+  bgm?: string
+  bgmVolume?: number
+  /** Rolling credits: a multi-line string or a list of lines (`@key` per line ok). */
+  credits?: string | string[]
+  /** Seconds the roll takes (default from the line count). */
+  creditsDuration?: number
+  /** What happens when the roll ends: nothing (default), back to title, or restart. */
+  after?: 'title' | 'restart' | 'none'
+  /** `false` hides the Back-to-title / Play-again buttons. */
+  buttons?: boolean
+}
+
+/** `[saves]` in nilvn.config.toml. */
+export interface SavesConfig {
+  /** When the autosave (the title page's Continue) is written: at every
+   *  `[label]` (default), at every line, or never. */
+  autosave?: 'label' | 'line' | false
+  /** Slot pages × slots per page (default 10 × 10). */
+  pages?: number
+  slotsPerPage?: number
+  /** Show the scene background in a slot (default `bg`); `none` for text only. */
+  thumbnail?: 'bg' | 'none'
+}
+
+/** `[menu]` in nilvn.config.toml — the in-game system menu. */
+export interface MenuConfig {
+  /** `false` = no menu (a host draws its own over `engine.saveSlot()` & co). */
+  enabled?: boolean
+  /** Where the ☰ entry sits; `hidden` keeps the Esc key and gestures only. */
+  entry?: 'top-right' | 'top-left' | 'bottom-right' | 'bottom-left' | 'hidden'
+  /** Item ids in order: `save`, `load`, `quicksave`, `quickload`, `backlog`,
+   *  `auto`, `skip`, `settings`, `replays`, `title`, `restart`. Default: all. */
+  items?: string[]
+  /** Wheel-up over the stage opens the backlog (default true). */
+  wheelBacklog?: boolean
+}
+
+/** `[settings]` in nilvn.config.toml — the settings panel and the players'
+ *  defaults (each is persisted per work once the player changes it). */
+export interface SettingsConfig {
+  /** Seconds auto mode waits after a line (plus per-character time). Default 1.5. */
+  autoDelay?: number
+  /** What skip mode passes: read lines only (default) or everything. */
+  skipMode?: 'read' | 'all'
+  /** Rows to show, in order: `textSpeed`, `autoDelay`, `skipMode`, `volumes`,
+   *  `language`, `fullscreen`, `dialogOpacity`, `uiScale`. Default: all. */
+  show?: string[]
+}
+
+/** `[window]` in nilvn.config.toml — dialogue-box settings that map onto theme
+ *  tokens (config.ts `windowTheme`). Every key optional. */
+export interface WindowConfig {
+  /** Image drawn under the text (whole-image stretch) — sets `dialog-skin` and
+   *  clears the default gradient and border unless they are given too. */
+  skin?: string
+  /** `dialog-bg` — any CSS background (colour, gradient). */
+  background?: string
+  /** `dialog-border` — a CSS border shorthand, or `none`. */
+  border?: string
+  /** `dialog-radius`. */
+  radius?: string | number
+  /** `dialog-opacity` — 0..1, the default chrome's opacity (a skin carries its own alpha). */
+  opacity?: number
+  /** Which edge the box sits on. */
+  position?: 'bottom' | 'top'
+  /** Distance from that edge (`dialog-bottom` / `dialog-top`). */
+  offset?: string | number
+  /** Left / right inset (`dialog-inset`). */
+  inset?: string | number
+  /** Minimum height (`dialog-height`). */
+  height?: string | number
+  /** `dialog-padding`. */
+  padding?: string
+  /** `font` (the whole stage). */
+  font?: string
+  /** `text-size` / `text-color` / `text-line-height` / `text-shadow`. */
+  textSize?: string | number
+  textColor?: string
+  lineHeight?: string | number
+  textShadow?: string
+  /** `name-bg` / `name-color` / `name-size`. */
+  nameBackground?: string
+  nameColor?: string
+  nameSize?: string | number
+  /** `indicator-color`. */
+  indicatorColor?: string
 }
