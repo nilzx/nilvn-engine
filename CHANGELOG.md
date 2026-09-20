@@ -5,6 +5,13 @@ three packages share one version and one `engine-v*` tag. Entries before the
 repository was split out of the NilVN monorepo (September 2026) are condensed
 from its history.
 
+## 0.16.2 — 2026-09-21
+
+The first published build of the 0.16 line: the 0.16.0 and 0.16.1 tags
+failed in this repository's publish step (a test read a sample that only the
+private monorepo has) and never reached npm. Content: 0.16.0 + 0.16.1, plus
+that test now skipping where the sample is absent.
+
 ## 0.16.1 — 2026-09-21
 
 Fixes from a docs-only author round (a sample written against the public
