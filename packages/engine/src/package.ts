@@ -20,7 +20,7 @@ export const PACKAGE_FORMAT = 1
 /** Mirrors core's PACKAGE_MANIFEST_FILE. */
 export const PACKAGE_MANIFEST_FILE = 'nilvn.json'
 /** Mirrors core's CHUNK_MANIFEST_FORMAT (the embedded chunk manifest's `format`). */
-const CHUNK_FORMAT = 1
+export const CHUNK_FORMAT = 1
 
 /** An opened package: its manifest plus the loader that serves its bytes. */
 export interface ScriptPackage {

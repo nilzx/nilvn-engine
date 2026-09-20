@@ -39,6 +39,33 @@ function engineWith(lang?: string): Engine {
 const items = (e: Engine): HTMLButtonElement[] => [...e.stage.root.querySelectorAll<HTMLButtonElement>('.nilvn-menu__item')]
 
 describe('the system menu', () => {
+  it('a config loaded after construction rebuilds the menu: items, labels, entry, enabled; plugin entries survive', async () => {
+    const { applyConfig } = await import('../src/config')
+    const e = engineWith()
+    e.loadSource('[label s1]\nyuki: Hello\n')
+    void e.start()
+    await tick()
+    expect(items(e).length).toBeGreaterThan(5)
+    let fired = 0
+    e.addMenuItem('com.example.x', 'gallery', () => fired++)
+    applyConfig(e, {
+      menu: { items: ['save', 'load', 'title'], entry: 'bottom-left' },
+      strings: { en: { 'ui.menu.save': 'Keep this moment' } },
+    })
+    const after = items(e)
+    expect(after.filter((b) => !b.classList.contains('nilvn-menu__item--plugin')).map((b) => b.textContent)).toEqual(['Keep this moment', e.t('ui.menu.load'), e.t('ui.menu.toTitle')])
+    expect(e.stage.root.querySelector('.nilvn-menu--bottom-left')).not.toBeNull()
+    expect(e.stage.root.querySelectorAll('.nilvn-menu').length).toBe(1)
+    const plugin = after.find((b) => b.classList.contains('nilvn-menu__item--plugin'))!
+    plugin.click()
+    expect(fired).toBe(1)
+    applyConfig(e, { menu: { enabled: false } })
+    expect(e.stage.root.querySelector('.nilvn-menu')).toBeNull()
+    applyConfig(e, { menu: { enabled: true } })
+    expect(e.stage.root.querySelector('.nilvn-menu')).not.toBeNull()
+    e.destroy()
+  })
+
   it('is built in: the shell renders with no plugin, [use menu] is ignored with one diagnostic', async () => {
     const e = engineWith()
     e.loadSource('[use menu]\n[label s1]\nyuki: Hello\n')

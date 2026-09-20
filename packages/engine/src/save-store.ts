@@ -26,6 +26,8 @@ export const SETTINGS_KEY = 'settings'
 export const READ_KEY = 'read'
 /** The unlocked replay segments' key. */
 export const UNLOCKS_KEY = 'unlocks'
+/** The persistent variables' key (`[persist]`, `sys.*`): a `GlobalsPayload`. */
+export const GLOBALS_KEY = 'globals'
 /** The players' plugin settings (`scope: player` config fields) by plugin id. */
 export const PLUGIN_SETTINGS_KEY = 'plugin-settings'
 /** A plugin's own storage keys (`storage.local`) live under this prefix. */
@@ -41,6 +43,13 @@ export interface SettingsPayload {
   lang?: string
   dialogOpacity?: number
   uiScale?: number
+}
+
+/** What the `globals` key holds: every persistent variable ever written by
+ *  this work, declared today or not. */
+export interface GlobalsPayload {
+  v: 1
+  vars: Record<string, unknown>
 }
 
 /** What a slot holds: the snapshot plus what a slot list shows. Mirrors the

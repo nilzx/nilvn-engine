@@ -26,6 +26,14 @@ export interface ActorDef {
   /** Sprite URL template; `{face}` is replaced by the current face name */
   sprites?: string
   defaultFace?: string
+  /** Layered sprite: the shared canvas the layers align on, in image pixels
+   *  (`[600, 1100]`). Layers whose images are cropped position by `offset`
+   *  within it; a full-size layer image needs no offset. */
+  canvas?: [number, number]
+  /** Layered sprite: named layers composed bottom to top in declaration order.
+   *  `face` is the layer `[char id face]` / `speaker(face):` drive; the others
+   *  change through `[char id body=casual extra=blush]`. Wins over `sprites`. */
+  layers?: Record<string, ActorLayerDef>
   /** @deprecated (0.15) — a plugin's actor field: the engine moves it into
    *  `ext['app.nilvn.voicefx'].voice` once that plugin's manifest declares the
    *  field (`contributes.actorFields`); read through `ctx.actorField()`. */
@@ -35,11 +43,26 @@ export interface ActorDef {
   ext?: Record<string, Record<string, unknown>>
 }
 
+/** One layer of a layered sprite (`ActorDef.layers`). */
+export interface ActorLayerDef {
+  /** Image path template; `{<layer name>}` is replaced by the layer's value
+   *  (`"@char/yuki/face-{face}.png"`). */
+  src: string
+  /** The value used until a command sets one. */
+  default?: string
+  /** Where a cropped layer image sits on the canvas, in canvas pixels. */
+  offset?: [number, number]
+  /** An optional layer is left out when it has no value (`extra=none` clears it). */
+  optional?: boolean
+}
+
 /** A piece of dialogue text produced by inline markup like {wave:hi} or {w:0.5} */
 export type Segment =
   | { kind: 'text'; text: string; effect?: string }
   | { kind: 'pause'; sec: number }
   | { kind: 'br' }
+  /** `{p}` — a page break: the text so far waits for a tap, then the box clears. */
+  | { kind: 'page' }
 
 export interface ChoiceItem {
   text: string
@@ -49,6 +72,8 @@ export interface ChoiceItem {
   target: string
   /** Optional condition expression; the choice is hidden when falsy */
   cond?: string
+  /** Optional condition expression; the choice is shown greyed and unpickable when truthy. */
+  disabled?: string
 }
 
 export interface DialogueNode {
@@ -71,6 +96,9 @@ export interface DialogueNode {
  *  persisted in a SaveState. */
 export interface BacklogEntry {
   speaker: string
+  /** The speaking actor's id (when the line named a declared actor), so the
+   *  backlog can draw the name in that actor's colours. */
+  actor?: string
   text: string
   voiceRef?: string
   /** Leading-silence trim (seconds) from `[voice … offset=]`, so replay seeks the
@@ -332,6 +360,8 @@ export interface EngineHooks {
   /** A script variable was written (`[set]`, `vars.set`). A restore replaces the
    *  whole table silently — read `vars.all()` in `onRestored`. */
   onVarChange?: (name: string, value: unknown, ctx: PluginContext) => void
+  /** One asset of a preload batch finished (`done` of `total`; `ref` is the asset). */
+  onPreload?: (done: number, total: number, ref: string, ctx: PluginContext) => void
   /** A content problem was reported (see EngineDiagnostic). Never fired for a
    *  problem inside an onError hook itself. */
   onError?: (info: EngineDiagnostic, ctx: PluginContext) => void
@@ -535,6 +565,9 @@ export interface ScreenCap {
 export interface DialogCap {
   confirm(message: string): Promise<boolean>
   alert(message: string): Promise<void>
+  /** A one-line text box (what `[input]` shows): the trimmed text on OK, `null`
+   *  on cancel. `pattern` is a regular expression the whole value must match. */
+  prompt(message: string, opts?: { default?: string; maxlength?: number; pattern?: string }): Promise<string | null>
   toast(message: string): void
 }
 
@@ -708,6 +741,8 @@ export interface EngineOptions {
   saves?: SavesConfig
   menu?: MenuConfig
   settings?: SettingsConfig
+  /** Keyboard bindings (the config's `[keys]`); see {@link KeysConfig}. */
+  keys?: KeysConfig
   /** Chrome string overrides: `{ zh: { 'ui.title.new': '开始' } }`. */
   messages?: Record<string, Record<string, string>>
   /** Plugin settings by plugin id (the config file's `[plugins.<id>]` tables):
@@ -715,7 +750,7 @@ export interface EngineOptions {
   pluginConfig?: Record<string, Record<string, unknown>>
   /** `false` = the engine draws no chrome at all (a host that owns its own,
    *  the studio's preview); per piece otherwise. Default: all on. */
-  screens?: false | { title?: boolean; ending?: boolean; menu?: boolean }
+  screens?: false | { title?: boolean; ending?: boolean; menu?: boolean; loading?: boolean }
   /** Where saves and settings persist (default: `localStorage`, namespaced by
    *  `saveKey`). */
   saveStore?: SaveStore
@@ -770,6 +805,12 @@ export interface AdvConfig {
     textSpeed?: number
     /** Script auto-loaded by start() when none was loaded explicitly */
     entry?: string
+    /** Fallback content language (`createEngine({ defaultLang })` from the file). */
+    defaultLang?: string
+    /** Several script files played in order, each a chunk: labels are global
+     *  (a jump or call reaches any file), the files fall through in list order,
+     *  saves address the file's chunk. Takes precedence over `entry`. */
+    scripts?: string[]
   }
   plugins?: {
     /** Same entries as [use ...]: bundled names or JS module paths */
@@ -796,6 +837,18 @@ export interface AdvConfig {
   saves?: SavesConfig
   menu?: MenuConfig
   settings?: SettingsConfig
+  /** Keyboard bindings: [keys] auto = "a", quicksave = "F5" … */
+  keys?: KeysConfig
+  /** Persistent variables with their first-run defaults: [persist] player = "", runs = 0. */
+  persist?: Record<string, unknown>
+  /** The `[input]` command's box: skin, position, button labels. */
+  input?: InputConfig
+  /** The choices prompt: position, layout, skin, chosen / disabled looks, timer. */
+  choices?: ChoicesConfig
+  /** Assets warmed before play, and the loading page. */
+  preload?: PreloadConfig
+  /** Declarative panels: [ui.<id>] — a HUD or a window of data-bound widgets. */
+  ui?: Record<string, UiPanelConfig>
   /** Chrome string overrides by language: [strings.zh] "ui.title.new" = "开始". */
   strings?: Record<string, Record<string, string>>
 }
@@ -809,6 +862,8 @@ export interface TitleConfig {
   subtitle?: string
   /** An image shown above the heading. */
   logo?: string
+  /** Its width (a CSS length such as `"40cqw"`; a number = px). Default: at most 70% of the stage's width. */
+  logoWidth?: string | number
   /** An image path, or a CSS colour / gradient. */
   background?: string
   bgm?: string
@@ -876,14 +931,179 @@ export interface SettingsConfig {
   /** Rows to show, in order: `textSpeed`, `autoDelay`, `skipMode`, `volumes`,
    *  `language`, `fullscreen`, `dialogOpacity`, `uiScale`. Default: all. */
   show?: string[]
+  /** The text-speed slider's range in characters per second, slowest to fastest
+   *  (default `[10, 100]`). One notch past the fastest is "instant" (`textSpeed = 0`). */
+  textSpeedRange?: [number, number]
+}
+
+/** One key binding: a `KeyboardEvent.key` name (`a`, `F5`, `Escape`, `Space`,
+ *  `Enter`, `Tab`, `Control`), optionally with `Ctrl+` / `Shift+` / `Alt+` /
+ *  `Meta+` in front (`Ctrl+S`); an array binds several keys; `false` unbinds. */
+export type KeyBinding = string | string[] | false
+
+/** `[keys]` in nilvn.config.toml — the keyboard. `advance`, `menu` and `skipHold`
+ *  always work; the rest are the system menu's actions and apply while the menu
+ *  exists (a host that draws its own chrome binds its own keys). Defaults:
+ *  `advance = ["Space", "Enter"]`, `menu = "Escape"`, `skipHold = "Control"`,
+ *  `skip = "Tab"`, `auto = "a"`, `quicksave = "F5"`, `quickload = "F9"`; the
+ *  others are unbound. Keys are ignored while a text field has focus. */
+export interface KeysConfig {
+  /** Advance the story (also ends auto / skip). */
+  advance?: KeyBinding
+  /** Open / close the system menu (closes the topmost panel first). */
+  menu?: KeyBinding
+  /** Skip while held. */
+  skipHold?: KeyBinding
+  /** Toggle skip mode. */
+  skip?: KeyBinding
+  /** Toggle auto mode. */
+  auto?: KeyBinding
+  quicksave?: KeyBinding
+  quickload?: KeyBinding
+  /** Open the backlog / save / load / settings panel. */
+  backlog?: KeyBinding
+  save?: KeyBinding
+  load?: KeyBinding
+  settings?: KeyBinding
+  /** Toggle fullscreen. */
+  fullscreen?: KeyBinding
+}
+export type KeyAction = keyof KeysConfig
+
+/** `[input]` in nilvn.config.toml — the box the `[input]` command shows. The
+ *  look keys map onto `input-*` theme tokens (config.ts `inputTheme`); the box
+ *  defaults to the panel look. Every key optional. */
+export interface InputConfig {
+  /** Image behind the box (whole-image stretch, or nine-slice with `slice`) —
+   *  clears the default panel background and border unless they are given. */
+  skin?: string
+  /** Nine-slice inset in image pixels (as CSS `border-image-slice`). */
+  slice?: number | string
+  /** How wide the nine-slice edges draw (a CSS length; default: the inset in px). */
+  sliceWidth?: string | number
+  /** `input-box-bg` / `input-box-border` / `input-box-radius`. */
+  background?: string
+  border?: string
+  radius?: string | number
+  /** The text field: `input-bg` / `input-color` / `input-border` / `input-radius` / `input-size`. */
+  fieldBackground?: string
+  fieldColor?: string
+  fieldBorder?: string
+  fieldRadius?: string | number
+  fieldSize?: string | number
+  /** Where the box sits on the stage. Default `center`. */
+  position?: 'center' | 'top' | 'bottom'
+  /** Button labels (`@key` resolves through the catalogs). Default: the chrome's OK / Cancel. */
+  ok?: string
+  cancel?: string
+}
+
+/** `[ui.<id>]` in nilvn.config.toml — a panel the engine draws from widgets. */
+export interface UiPanelConfig {
+  /** `hud` (default): pinned to an anchor, small; `window`: a titled box. */
+  kind?: 'hud' | 'window'
+  /** One of the nine anchors (`top-left` … `bottom-right`, `center`). Default:
+   *  `top-left` for a HUD, `center` for a window. */
+  anchor?: string
+  /** When the panel shows: `playing` (default) while the story plays, `always`,
+   *  or `manual` (only after `[ui show id]`). `[ui show|hide|toggle]` overrides. */
+  show?: 'playing' | 'always' | 'manual'
+  /** A window's title (`@key` or literal; also its menu / title-button label). */
+  title?: string
+  /** CSS lengths (`"40cqw"`). */
+  width?: string | number
+  height?: string | number
+  widgets?: UiWidget[]
+}
+
+/** A widget of a `[ui.<id>]` panel. Every widget takes `if` — a condition that
+ *  hides it when false. Strings resolve like config strings (`@key`, `{$var}`). */
+export type UiWidget =
+  /** A line of text: `text` (with `{$var}` placeholders), or a variable's value. */
+  | { type: 'text'; text?: string; var?: string; if?: string }
+  /** A progress bar for a numeric variable between `min` (0) and `max` (100). */
+  | { type: 'bar'; var: string; max?: number | string; min?: number | string; label?: string; if?: string }
+  /** An image (`src` resolves like an asset path). */
+  | { type: 'image'; src: string; width?: string | number; if?: string }
+  /** A list of a variable's items (a list, or a comma-separated string); `empty` when there are none. */
+  | { type: 'list'; var: string; empty?: string; if?: string }
+  /** A button whose click runs `onclick` — script commands, one per line. */
+  | { type: 'button'; label: string; onclick: string; if?: string }
+
+/** `[preload]` in nilvn.config.toml — what `prepare()` warms before play (the
+ *  built-in loading page shows meanwhile) and what `[preload …]` does mid-story. */
+export interface PreloadConfig {
+  /** Asset refs to warm (paths as the script writes them: aliases resolve). */
+  assets?: string[]
+  /** Also warm what the loaded script references: the resident nodes' assets
+   *  (in chunked play: the entry chunk's and its successors' manifest lists). */
+  auto?: boolean
+  /** Parallel fetches (default 4). */
+  concurrency?: number
+  /** Show the loading page while warming (default true; a host also has
+   *  `screens.loading`). */
+  screen?: boolean
+  /** The loading page's heading (`@key` or literal; default `ui.loading.title`)
+   *  and background (a colour, gradient or image path). */
+  heading?: string
+  background?: string
+}
+
+/** `[choices]` in nilvn.config.toml — the choices prompt. Look keys map onto
+ *  `choice-*` tokens (config.ts `choicesTheme`); the rest is layout and behaviour. */
+export interface ChoicesConfig {
+  /** Where the buttons sit. Default `center`; `bottom` keeps clear of the dialogue box. */
+  position?: 'center' | 'top' | 'bottom' | 'left' | 'right'
+  /** `column` (default) or `grid` with `columns` per row (default 2). */
+  layout?: 'column' | 'grid'
+  columns?: number
+  /** `choices-gap` — space between buttons. */
+  gap?: string | number
+  /** `choice-width` — each button's minimum width. */
+  width?: string | number
+  /** Button image (stretched, or nine-sliced with `slice`) — `choice-skin` /
+   *  `choice-skin-slice`; clears the default gradient and border unless given. */
+  skin?: string
+  slice?: number | string
+  sliceWidth?: string | number
+  /** `choice-bg` / `choice-border` / `choice-radius` / `choice-color` / `choice-size` / `choice-hover`. */
+  background?: string
+  border?: string
+  radius?: string | number
+  color?: string
+  size?: string | number
+  hover?: string
+  /** How an option taken in an earlier run (`sys.chosen`) is drawn: `dim`
+   *  (`choice-chosen-bg` / `choice-chosen-color`) or `none` (default). */
+  chosenStyle?: 'none' | 'dim'
+  chosenBackground?: string
+  chosenColor?: string
+  /** `choice-disabled-bg` / `choice-disabled-color` (`[choice … disabled=cond]`). */
+  disabledBackground?: string
+  disabledColor?: string
+  /** Seconds a prompt waits before picking `timerDefault` by itself; a bar shows the time left. */
+  timer?: number
+  /** The option a timeout picks, counted from 1 among the shown options (default: the first enabled one). */
+  timerDefault?: number
+  /** `choice-timer-bg` / `choice-timer-color`. */
+  timerBackground?: string
+  timerColor?: string
 }
 
 /** `[window]` in nilvn.config.toml — dialogue-box settings that map onto theme
  *  tokens (config.ts `windowTheme`). Every key optional. */
 export interface WindowConfig {
-  /** Image drawn under the text (whole-image stretch) — sets `dialog-skin` and
-   *  clears the default gradient and border unless they are given too. */
+  /** Image drawn under the text (whole-image stretch, or nine-slice with `slice`)
+   *  — sets `dialog-skin` and clears the default gradient and border unless
+   *  they are given too. */
   skin?: string
+  /** Nine-slice the skin instead of stretching it: the inset of the slice lines
+   *  in image pixels (one number, or up to four as in CSS `border-image-slice`).
+   *  Sets `dialog-skin-slice`. */
+  slice?: number | string
+  /** How wide the nine-slice edges draw on the stage (a CSS length; default:
+   *  the slice inset in `px`). */
+  sliceWidth?: string | number
   /** `dialog-bg` — any CSS background (colour, gradient). */
   background?: string
   /** `dialog-border` — a CSS border shorthand, or `none`. */
@@ -894,6 +1114,10 @@ export interface WindowConfig {
   opacity?: number
   /** Which edge the box sits on. */
   position?: 'bottom' | 'top'
+  /** What a line does when it does not fit the box: `grow` the box (default),
+   *  `page` (wait for a tap, then continue in a cleared box) or `shrink` the
+   *  text. `{p}` pages explicitly in every mode. */
+  overflow?: 'grow' | 'page' | 'shrink'
   /** Distance from that edge (`dialog-bottom` / `dialog-top`). */
   offset?: string | number
   /** Left / right inset (`dialog-inset`). */

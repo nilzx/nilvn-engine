@@ -312,6 +312,9 @@ export class ChunkResidency {
       const base = nodes.length
       for (const n of parsed.nodes) nodes.push(n)
       for (const name in parsed.labels) labels[name] = base + parsed.labels[name]!
+      // A chunk's id names its first node (a script file's stem; a scene chunk
+      // already opens with `[label <scene>]`, so this is the same value there).
+      if (!(chunk.id in parsed.labels)) labels[chunk.id] = base
       this.chunkBase.set(chunk.id, base)
       this.chunkLen.set(chunk.id, parsed.nodes.length)
       this.tailChunk = chunk.id // its nodes are now at the physical end of the array
@@ -331,6 +334,26 @@ export class ChunkResidency {
       if (len !== undefined && idx >= base && idx < base + len) return id
     }
     return undefined
+  }
+
+  /** The chunk to continue in when `idx` is the LAST node of its chunk and play
+   *  advanced past it naturally: the chunk's first fall-through successor
+   *  (`ManifestChunk.next[0]`), resident or not — a script file's next file.
+   *  Undefined mid-chunk, without a manifest, or for a chunk with no successor
+   *  (then the physical end of the array decides, see `loadNextChunk`). */
+  fallThroughFrom(idx: number): string | undefined {
+    if (!this.manifest) return undefined
+    const owner = this.chunkOwning(idx)
+    if (owner === undefined) return undefined
+    const base = this.chunkBase.get(owner)!
+    const len = this.chunkLen.get(owner)!
+    if (idx !== base + len - 1) return undefined
+    return this.manifest.chunks.find((c) => c.id === owner)?.next[0]
+  }
+
+  /** Where a resident-or-evicted chunk's nodes start. */
+  baseOf(chunkId: string): number | undefined {
+    return this.chunkBase.get(chunkId)
   }
 
   /** Mark a chunk most-recently-used (move to the end of the LRU list). */

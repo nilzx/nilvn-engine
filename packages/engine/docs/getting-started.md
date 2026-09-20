@@ -152,7 +152,9 @@ npx vite            # http://localhost:5173 — the title page, then your story
 ```
 
 The player gets the ☰ menu (Esc) with save / load, quick save, backlog (wheel
-up), auto, skip (Ctrl held), settings and back-to-title — nothing to write.
+up), auto, skip (Ctrl held), settings and back-to-title — nothing to write. The
+keyboard comes along: `a` auto, `Tab` skip, `F5` / `F9` quick save / load;
+`[keys]` rebinds any of it.
 
 ## 6. No bundler: the single-script build
 
@@ -206,6 +208,49 @@ key (`yuki: @yuki_hi`); pass `catalogs`, `lang`, `defaultLang` and `languages`
 to `createEngine` (see [api.md → Languages](api.md#languages)) and the settings
 panel gains a language switcher. Chrome strings (New game, Continue, Save …)
 ship in `en`, `zh` and `ja` and can be overridden per work with `[strings.<lang>]`.
+
+## 10. More than one file
+
+Split a longer story into files and list them; labels are global, a file falls
+through into the next, and a save addresses the file:
+
+```toml
+[game]
+scripts = ["intro.nvn", "day1.nvn", "day2.nvn"]
+```
+
+`[include shared.nvn]` pastes a file in (actor declarations, sub-routines
+reached by `[call label]` … `[return]`). See [script-syntax.md → Several
+files](script-syntax.md#several-files).
+
+## 11. Naming the player, remembering across runs
+
+```
+[persist player = "" runs = 0]
+[set runs = runs + 1]
+[input player prompt=@ui.askName default=Traveler maxlength=12 persist=true]
+me: Welcome back, {$player} — run {$runs}.
+[choice New game+ -> ng_plus if=has(sys.endings, "true")]
+```
+
+`[persist]` variables outlive the session (they are not part of a save);
+`{$var}` fills a variable into any text, `{@key}` a catalog entry; `[input]`
+asks in an in-engine box; `sys.endings` and `sys.chosen` are kept by the
+engine. See [script-syntax.md → Variables](script-syntax.md#variables-and-conditions).
+
+## 12. Panels, transitions, layers — from the config file
+
+- A HUD or a status window drawn from widgets bound to variables:
+  [config.md → `[ui.<id>]`](config.md#uiid); clicks run script commands
+  ([script-syntax.md → Events](script-syntax.md#events)).
+- `[trans wipe dir=left]` before a scene change, or `[bg … trans=crossfade]`:
+  [script-syntax.md → Transitions](script-syntax.md#transitions).
+- A character from body / face / extra images: [config.md →
+  `[actors.<id>.layers]`](config.md#actorsidlayers).
+- Long lines page (`[window] overflow = "page"`), the choices prompt is a
+  config section (`[choices]`), and `[preload]` warms the opening assets on a
+  loading page. A misspelled section or key is reported as a diagnostic
+  (`engine.diagnostics`, the console).
 
 ## Contributor commands (the repositories, not npm)
 

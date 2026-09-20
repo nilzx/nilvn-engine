@@ -23,6 +23,8 @@ export const THEME_TOKENS: Readonly<Record<string, string>> = Object.freeze({
   // dialogue box
   'dialog-bg': 'linear-gradient(180deg,rgba(22,26,42,.82),rgba(10,12,22,.92))',
   'dialog-skin': 'none',
+  // nine-slice skin: a full `border-image` value (`[window] slice` builds it); `none` = stretch `dialog-skin`
+  'dialog-skin-slice': 'none',
   'dialog-border': '1px solid rgba(255,255,255,.14)',
   'dialog-radius': '1.8cqh',
   'dialog-opacity': '1',
@@ -51,6 +53,36 @@ export const THEME_TOKENS: Readonly<Record<string, string>> = Object.freeze({
   'choice-hover': 'rgba(140,160,255,.9)',
   'choice-radius': '99px',
   'choice-size': '3cqh',
+  'choice-width': '38cqw',
+  'choices-gap': '2.6cqh',
+  'choice-skin': 'none',
+  'choice-skin-slice': 'none',
+  // an option taken in an earlier run ([choices] chosenStyle = "dim"), a disabled one, the timer bar
+  'choice-chosen-bg': 'linear-gradient(180deg,rgba(40,46,74,.6),rgba(24,28,48,.6))',
+  'choice-chosen-color': 'rgba(255,255,255,.6)',
+  'choice-disabled-bg': 'rgba(30,33,46,.7)',
+  'choice-disabled-color': 'rgba(255,255,255,.35)',
+  'choice-timer-bg': 'rgba(255,255,255,.15)',
+  'choice-timer-color': 'var(--nilvn-accent)',
+  // the loading page's progress bar
+  'progress-bg': 'rgba(255,255,255,.15)',
+  'progress-color': 'var(--nilvn-accent)',
+  // declarative panels ([ui.<id>]): a HUD, a window, and the bar widget
+  'hud-bg': 'rgba(10,12,22,.62)',
+  'hud-border': '1px solid rgba(255,255,255,.14)',
+  'hud-color': 'var(--nilvn-panel-color)',
+  'hud-radius': '1.2cqh',
+  'hud-padding': '1.2cqh 1.6cqw',
+  'hud-size': '2.2cqh',
+  'window-bg': 'var(--nilvn-panel-bg)',
+  'window-border': 'var(--nilvn-panel-border)',
+  'window-color': 'var(--nilvn-panel-color)',
+  'window-radius': '1.4cqh',
+  'window-padding': '2.4cqh 2.4cqw',
+  'window-width': '40cqw',
+  'bar-bg': 'rgba(255,255,255,.15)',
+  'bar-color': 'var(--nilvn-accent)',
+  'bar-height': '1.4cqh',
   // panels and buttons (menus, screens, plugin overlays)
   'panel-bg': 'rgba(16,18,28,.96)',
   'panel-border': '1px solid rgba(255,255,255,.16)',
@@ -59,6 +91,20 @@ export const THEME_TOKENS: Readonly<Record<string, string>> = Object.freeze({
   'button-color': '#ffffff',
   'button-border': '1px solid rgba(255,255,255,.18)',
   'button-hover': 'rgba(255,255,255,.16)',
+  // the selected state (an active menu mode, the chosen option in a settings row, the current slot page)
+  'button-on-bg': 'var(--nilvn-accent)',
+  'button-on-color': 'var(--nilvn-button-color)',
+  // the [input] box: its dialog (defaults to the panel look; `[input] skin` reskins it) and the text field
+  'input-box-bg': 'var(--nilvn-panel-bg)',
+  'input-box-border': 'var(--nilvn-panel-border)',
+  'input-box-radius': '1.4cqh',
+  'input-box-skin': 'none',
+  'input-box-skin-slice': 'none',
+  'input-bg': 'rgba(255,255,255,.08)',
+  'input-color': 'var(--nilvn-panel-color)',
+  'input-border': '1px solid rgba(255,255,255,.25)',
+  'input-radius': '0.8cqh',
+  'input-size': '3cqh',
 })
 
 /** A partial token map. `undefined` / `''` removes the token from its layer. */

@@ -1,8 +1,27 @@
 import { evalExpr, truthy } from './expr.js'
 import type { BuiltinContext, CommandContext } from './types.js'
+import type { SceneTransitionOpts, TransitionKind } from './renderer/types.js'
 
 /** A built-in command: engine code, so it runs with the engine in hand. */
 export type BuiltinFn = (ctx: BuiltinContext) => void | Promise<void>
+
+const TRANSITION_KINDS: readonly TransitionKind[] = ['fade', 'crossfade', 'wipe', 'slide', 'circle', 'blinds', 'rule']
+function transitionKind(name: string): TransitionKind {
+  if ((TRANSITION_KINDS as readonly string[]).includes(name)) return name as TransitionKind
+  throw new Error(`unknown transition "${name}" (fade, crossfade, wipe, slide, circle, blinds, rule)`)
+}
+/** The `[trans …]` / `trans=` parameters: `duration` (also the second positional), `dir`, `color`, `mask`, `softness`. */
+function transitionOpts(ctx: CommandContext): SceneTransitionOpts {
+  const mask = ctx.str('mask')
+  const dir = ctx.str('dir')
+  return {
+    duration: optNum(ctx, 'duration') ?? (ctx.name === 'trans' ? ctx.numOpt(1) : undefined),
+    dir: dir === 'left' || dir === 'right' || dir === 'up' || dir === 'down' ? dir : undefined,
+    color: ctx.str('color'),
+    mask: mask ? ctx.resolve(mask) : undefined,
+    softness: optNum(ctx, 'softness'),
+  }
+}
 
 /** Read an optional numeric param: undefined when absent (unlike `ctx.num`, which
  *  substitutes a default). Used for birth-transform params (`y` / `scale` /
@@ -59,17 +78,41 @@ export const builtins: Record<string, BuiltinFn> = {
     else engine.setScriptTheme(params)
   },
 
-  // [bg assets/bg/street.svg fade=1.5] or [bg color=#102030 fade=1]
+  // [bg assets/bg/street.svg fade=1.5] or [bg color=#102030 fade=1];
+  // `trans=wipe dir=left duration=0.6` swaps through a scene transition instead.
   async bg(ctx) {
-    const fade = ctx.num('fade', 0)
     const first = ctx.str(0)
     const color = ctx.str('color') ?? (first?.startsWith('#') ? first : undefined)
+    const trans = ctx.str('trans')
+    if (!color && !first) throw new Error('[bg] needs an image path or color=')
+    if (trans) {
+      ctx.engine.armTransition(transitionKind(trans), transitionOpts(ctx))
+      if (color) await ctx.engine.stage.setBackground({ color }, 0)
+      else await ctx.engine.stage.setBackground({ url: ctx.resolve(first!), ref: first }, 0)
+      await ctx.engine.commitTransition()
+      return
+    }
+    const fade = ctx.num('fade', 0)
     if (color) await ctx.engine.stage.setBackground({ color }, fade)
-    else if (first) await ctx.engine.stage.setBackground({ url: ctx.resolve(first), ref: first }, fade)
-    else throw new Error('[bg] needs an image path or color=')
+    else await ctx.engine.stage.setBackground({ url: ctx.resolve(first!), ref: first }, fade)
   },
 
-  // [char yuki happy at=left fade=0.5] — face/at optional once shown
+  // [trans wipe dir=left duration=0.6] — freeze the picture; the scene changes
+  // that follow happen underneath and the next line (or [trans end]) reveals
+  // them with the effect. Kinds: fade (through `color`), crossfade, wipe, slide,
+  // circle, blinds, rule (`mask=@fx/rule.png`, `softness=0.1`).
+  async trans(ctx) {
+    const kind = ctx.str(0)
+    if (kind === 'end') {
+      await ctx.engine.commitTransition()
+      return
+    }
+    if (!kind) throw new Error('[trans] syntax: [trans fade|crossfade|wipe|slide|circle|blinds|rule …] / [trans end]')
+    ctx.engine.armTransition(transitionKind(kind), transitionOpts(ctx))
+  },
+
+  // [char yuki happy at=left fade=0.5] — face/at optional once shown. A layered
+  // actor also takes its layers by name: [char yuki body=casual extra=blush].
   async char(ctx) {
     const id = ctx.str(0)
     if (!id) throw new Error('[char] needs a character id')
@@ -80,6 +123,7 @@ export const builtins: Record<string, BuiltinFn> = {
       y: optNum(ctx, 'y'),
       scale: optNum(ctx, 'scale'),
       rotation: optNum(ctx, 'rotation'),
+      layers: ctx.params,
     })
   },
 
@@ -109,18 +153,117 @@ export const builtins: Record<string, BuiltinFn> = {
     await ctx.engine.jump(label)
   },
 
+  // [call label] — jump there and come back at the next [return].
+  async call(ctx) {
+    const label = ctx.str(0)
+    if (!label) throw new Error('[call] needs a label')
+    await ctx.engine.call(label)
+  },
+
+  // [return] — back to the line after the last [call].
+  async return(ctx) {
+    await ctx.engine.returnFromCall()
+  },
+
+  // [include path] — spliced in when a script FILE loads (load / loadScript /
+  // [game] entry / scripts); reaching one at run time means the text came in
+  // through loadSource(), which cannot fetch.
+  include(ctx) {
+    ctx.engine.report({ phase: 'exec', message: `[include ${ctx.str(0) ?? ''}] is resolved when a script file loads — text given to loadSource() cannot include files`, line: undefined }, true)
+  },
+
+  // [preload @bg/night.png @se/thunder.wav wait=true] — warm assets ahead of a
+  // heavy scene; `wait=true` blocks on the loading page until they are in.
+  async preload(ctx) {
+    if (!ctx.args.length) throw new Error('[preload] needs at least one asset')
+    const p = ctx.engine.preload(ctx.args, { screen: ctx.str('wait') === 'true' })
+    if (ctx.str('wait') === 'true') await p
+    else void p
+  },
+
+  // [ui show status] / [ui hide status] / [ui toggle status] — a [ui.<id>] panel.
+  ui(ctx) {
+    const op = ctx.str(0)
+    const id = ctx.str(1)
+    if (!id || (op !== 'show' && op !== 'hide' && op !== 'toggle')) throw new Error('[ui] syntax: [ui show|hide|toggle <panel id>]')
+    ctx.engine.ui[op](id)
+  },
+
+  // [choices timer=8 default=2] — the next prompt's timer (seconds, 0 = none) and
+  // 1-based default, overriding the [choices] config for that prompt only.
+  choices(ctx) {
+    const timer = ctx.numOpt('timer')
+    const timerDefault = ctx.numOpt('default')
+    if (timer === undefined && timerDefault === undefined) throw new Error('[choices] syntax: [choices timer=seconds default=n]')
+    ctx.engine.setNextChoices({ timer, timerDefault })
+  },
+
+  // [hotspot shop x=10 y=20 w=25 h=30 onclick="jump shop" if=day > 1] — a clickable
+  // region (percent of the stage) that runs script commands; [hotspot remove shop],
+  // [hotspot clear].
+  hotspot(ctx) {
+    const first = ctx.str(0)
+    if (first === 'clear') {
+      ctx.engine.stage.clearHotspots()
+      return
+    }
+    if (first === 'remove') {
+      const id = ctx.str(1)
+      if (!id) throw new Error('[hotspot remove] needs an id')
+      ctx.engine.stage.hideHotspot(id)
+      return
+    }
+    const onclick = ctx.str('onclick')
+    if (!first || !onclick) throw new Error('[hotspot] syntax: [hotspot <id> x= y= w= h= onclick="…" if=cond]')
+    // `if=` runs to the end of the tag (spaces allowed), as a [choice]'s does.
+    const cond = tailCondition(ctx.raw)
+    if (cond && !truthy(evalExpr(cond, ctx.engine.scope()))) {
+      ctx.engine.stage.hideHotspot(first)
+      return
+    }
+    ctx.engine.stage.showHotspot({ id: first, x: ctx.num('x', 0), y: ctx.num('y', 0), w: ctx.num('w', 10), h: ctx.num('h', 10), onclick })
+  },
+
   // [if affection >= 1 -> good_end]
   async if(ctx) {
     const m = /^if\s+(.+?)\s*->\s*(\S+)\s*$/.exec(ctx.raw)
     if (!m) throw new Error('[if] syntax: [if condition -> label]')
-    if (truthy(evalExpr(m[1]!, ctx.engine.vars))) await ctx.engine.jump(m[2]!)
+    if (truthy(evalExpr(m[1]!, ctx.engine.scope()))) await ctx.engine.jump(m[2]!)
   },
 
   // [set affection = affection + 1] (the "=" is optional)
   set(ctx) {
     const m = /^set\s+(\S+?)(?:\s*=\s*|\s+)(.+)$/.exec(ctx.raw)
     if (!m) throw new Error('[set] syntax: [set var expression]')
-    ctx.engine.setVar(m[1]!, evalExpr(m[2]!, ctx.engine.vars))
+    ctx.engine.setVar(m[1]!, evalExpr(m[2]!, ctx.engine.scope()))
+  },
+
+  // [persist player = "" runs = 0 seen_intro = false] — declare persistent
+  // variables: the store's value wins, the literal seeds the first run (a bare
+  // name defaults to ""). Same as a `[persist]` config section.
+  persist(ctx) {
+    const body = ctx.raw.replace(/^persist\s*/, '')
+    const re = /([A-Za-z_$\u0080-\uffff][\w$.\u0080-\uffff]*)(?:\s*=\s*("[^"]*"|'[^']*'|\S+))?/g
+    let n = 0
+    for (let m = re.exec(body); m; m = re.exec(body)) {
+      n++
+      ctx.engine.declarePersist(m[1]!, m[2] === undefined ? '' : evalExpr(m[2], {}))
+    }
+    if (!n) throw new Error('[persist] syntax: [persist name = default …]')
+  },
+
+  // [input player prompt=@ui.askName default=Traveler maxlength=12 pattern=\S+ persist=true]
+  // — ask the player for a string and write it to `player`.
+  async input(ctx) {
+    const name = ctx.str(0) ?? ctx.str('var')
+    if (!name) throw new Error('[input] syntax: [input var prompt= default= maxlength= pattern= persist=true]')
+    await ctx.engine.promptInput(name, {
+      prompt: ctx.str('prompt'),
+      default: ctx.str('default'),
+      maxlength: ctx.numOpt('maxlength'),
+      pattern: ctx.str('pattern'),
+      persist: ctx.str('persist') === 'true',
+    })
   },
 
   // [fadeout 1.2 color=#fff] / [fadein 1.2] — duration= also works (for [defaults])
@@ -212,4 +355,12 @@ export const builtins: Record<string, BuiltinFn> = {
   async title(ctx) {
     await ctx.engine.showTitle()
   },
+}
+
+/** The `if=` a tag ends with, unquoted — everything after `if=` to the tag's end. */
+function tailCondition(raw: string): string | undefined {
+  const m = /(?:^|\s)if=([\s\S]*)$/.exec(raw)
+  if (!m) return undefined
+  const v = m[1]!.trim()
+  return v.replace(/^"([\s\S]*)"$/, '$1').replace(/^'([\s\S]*)'$/, '$1')
 }

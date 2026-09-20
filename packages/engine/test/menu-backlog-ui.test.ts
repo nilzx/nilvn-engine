@@ -41,6 +41,30 @@ describe('backlog panel', () => {
     engine.destroy()
   })
 
+  it('the speaker name carries the actor\'s colours (background + text), as the name tag does', async () => {
+    const container = document.createElement('div')
+    document.body.append(container)
+    const engine = createEngine({ container, textSpeed: 0, saveStore: new MemorySaveStore() })
+    engine.loadSource('[actor yuki name=Yuki color=#ff7eb6 textColor=#102030]\n[label start]\nyuki: Hi\nrin: Yo\nNarration')
+    void engine.start()
+    const root = container.querySelector<HTMLElement>('.nilvn-root')!
+    for (let i = 0; i < 50 && engine.getBacklog().length < 1; i++) await tick()
+    root.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    for (let i = 0; i < 50 && engine.getBacklog().length < 2; i++) await tick()
+    root.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    for (let i = 0; i < 50 && engine.getBacklog().length < 3; i++) await tick()
+    expect(engine.getBacklog().map((b) => b.actor)).toEqual(['yuki', undefined, undefined])
+    engine.openMenu('backlog')
+    const whos = panel(container).querySelectorAll<HTMLElement>('.nilvn-backlog__who')
+    expect(whos.length).toBe(2) // narration has no name
+    expect(whos[0]!.textContent).toBe('Yuki')
+    expect(whos[0]!.style.background).toBe('rgb(255, 126, 182)')
+    expect(whos[0]!.style.color).toBe('rgb(16, 32, 48)')
+    expect(whos[1]!.textContent).toBe('rin')
+    expect(whos[1]!.style.background).toBe('') // undeclared: the theme's name tokens
+    engine.destroy()
+  })
+
   it('a voiced line gets a ▶ replay button wired to its ref', async () => {
     const { engine, container } = await playedEngine()
     const root = container.querySelector<HTMLElement>('.nilvn-root')!

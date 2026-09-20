@@ -9,11 +9,9 @@ import type { Engine, SaveState } from './engine.js'
 import { AUTOSAVE_KEY, QUICKSAVE_KEY, type SlotPayload } from './save-store.js'
 import type { VolumeChannel } from './types.js'
 
-const SPEEDS: { id: string; cps: number }[] = [
-  { id: 'ui.settings.speed.slow', cps: 20 },
-  { id: 'ui.settings.speed.normal', cps: 40 },
-  { id: 'ui.settings.speed.fast', cps: 80 },
-]
+/** The text-speed slider's default range (characters per second); one notch past
+ *  the top is "instant" (`textSpeed = 0`). `[settings] textSpeedRange` overrides. */
+export const TEXT_SPEED_RANGE_DEFAULT: readonly [number, number] = [10, 100]
 const CHANNELS: { id: string; key: VolumeChannel }[] = [
   { id: 'ui.settings.vol.music', key: 'bgm' },
   { id: 'ui.settings.vol.ambience', key: 'ambience' },
@@ -54,7 +52,7 @@ export class SystemMenu {
   private tipTimer: number | undefined
   private offs: (() => void)[] = []
   private settingsBody: { sync: () => void; relabel: () => void } | null = null
-  private extras = new Map<string, { btn: HTMLButtonElement; label: () => string; when: 'playing' | 'always' }>()
+  private extras = new Map<string, { btn: HTMLButtonElement; label: () => string; onSelect: () => void; when: 'playing' | 'always' }>()
 
   constructor(private readonly engine: Engine) {}
 
@@ -118,6 +116,43 @@ export class SystemMenu {
     for (const p of this.panels.values()) p.wrap.remove()
   }
 
+  /** Tear the DOM down and build it again from the engine's current config
+   *  (a `loadConfig` after construction changed `[menu]` / `[settings]` /
+   *  `[strings]`). Plugin entries added through {@link addItem} are kept. */
+  remount(): void {
+    const extras = [...this.extras.entries()]
+    this.destroy()
+    this.items.clear()
+    this.panels.clear()
+    this.extras.clear()
+    this.settingsBody = null
+    this.verEl = null
+    this.mount()
+    for (const [key, x] of extras) this.addItem(key, x.label, x.onSelect, x.when)
+    this.syncItems()
+  }
+
+  /** Toggle auto / skip the way the menu's own items do (the keyboard bindings). */
+  toggleMode(mode: 'auto' | 'skip'): void {
+    const e = this.engine
+    if (mode === 'auto') e.setAuto(!e.auto)
+    else e.setSkip(!e.skip)
+    this.syncItems()
+    this.flash(e.t(mode === 'auto' ? 'ui.menu.auto' : 'ui.menu.skip') + (mode === 'auto' ? (e.auto ? ' ✓' : ' ✕') : e.skip ? ' ✓' : ' ✕'))
+  }
+
+  /** Quick save / load with the menu's own feedback (toast). */
+  quickSave(): void {
+    const e = this.engine
+    void e.quickSave().then((ok) => this.flash(e.t(ok ? 'ui.saves.msg.saved' : 'ui.saves.msg.failed')))
+  }
+  quickLoad(): void {
+    const e = this.engine
+    void e.quickLoad().then((ok) => {
+      if (!ok) this.flash(e.t('ui.saves.msg.noQuick'))
+    })
+  }
+
   /** The panel or the menu is up (keys should not advance the story). */
   isOpen(): boolean {
     return this.wrap.classList.contains('on') || [...this.panels.values()].some((p) => p.wrap.classList.contains('on'))
@@ -148,7 +183,7 @@ export class SystemMenu {
     })
     btn.dataset.id = key
     this.panel.insertBefore(btn, this.tip)
-    this.extras.set(key, { btn, label, when })
+    this.extras.set(key, { btn, label, onSelect, when })
     return () => {
       btn.remove()
       this.extras.delete(key)
@@ -189,14 +224,12 @@ export class SystemMenu {
       case 'quicksave':
         return item(() => {
           this.close()
-          void e.quickSave().then((ok) => this.flash(e.t(ok ? 'ui.saves.msg.saved' : 'ui.saves.msg.failed')))
+          this.quickSave()
         })
       case 'quickload':
         return item(() => {
           this.close()
-          void e.quickLoad().then((ok) => {
-            if (!ok) this.flash(e.t('ui.saves.msg.noQuick'))
-          })
+          this.quickLoad()
         })
       case 'backlog':
         return item(() => this.open('backlog'))
@@ -227,6 +260,12 @@ export class SystemMenu {
           void this.confirm('ui.msg.restartConfirm').then((ok) => ok && void e.restart())
         })
       default:
+        if (id.startsWith('ui:') && e.ui.has(id.slice(3))) {
+          return item(() => {
+            this.close()
+            e.ui.toggle(id.slice(3))
+          })
+        }
         return null
     }
   }
@@ -260,6 +299,10 @@ export class SystemMenu {
   }
 
   private flash(msg: string): void {
+    if (!this.wrap.classList.contains('on')) {
+      this.engine.stage.chrome.toast(msg) // the tip lives in the closed panel; a keyboard action shows a toast
+      return
+    }
     this.tip.textContent = msg
     if (this.tipTimer !== undefined) clearTimeout(this.tipTimer)
     this.tipTimer = window.setTimeout(() => (this.tip.textContent = ''), 1800)
@@ -407,7 +450,15 @@ export class SystemMenu {
         row.append(v)
       }
       const body = el('div', 'nilvn-backlog__body')
-      if (entry.speaker) body.append(el('div', 'nilvn-backlog__who', entry.speaker))
+      if (entry.speaker) {
+        // The name in the speaker's own colours, as the name tag draws it (actor
+        // `color` = background, `textColor` = text; the theme's name tokens otherwise).
+        const who = el('div', 'nilvn-backlog__who', entry.speaker)
+        const a = entry.actor ? e.actors[entry.actor] : undefined
+        if (a?.color) who.style.background = a.color
+        if (a?.textColor) who.style.color = a.textColor
+        body.append(who)
+      }
       body.append(el('div', 'nilvn-backlog__text', entry.text))
       row.append(body)
       p.body.append(row)
@@ -519,8 +570,23 @@ export class SystemMenu {
     for (const id of e.settingsConfig.show ?? SETTINGS_ROWS_DEFAULT) {
       switch (id) {
         case 'textSpeed': {
+          // A linear slider in characters per second; the notch past the top is instant.
           const r = row('ui.settings.textSpeed')
-          r.row.append(seg(SPEEDS.map((s) => ({ id: s.id, value: s.cps })), () => e.textSpeed, (v) => (e.textSpeed = v)))
+          const [min, max] = e.settingsConfig.textSpeedRange ?? TEXT_SPEED_RANGE_DEFAULT
+          // The coarsest of 1 / 2 / 5 / 10 that divides the range into at most 40
+          // notches, so a configured speed always sits on a notch.
+          const step = [1, 2, 5, 10].find((s) => (max - min) % s === 0 && (max - min) / s <= 40) ?? Math.max(1, Math.round((max - min) / 20))
+          const top = max + step
+          r.row.append(
+            ...slider(
+              min,
+              top,
+              step,
+              () => (e.textSpeed <= 0 ? top : Math.min(max, Math.max(min, e.textSpeed))),
+              (v) => (e.textSpeed = v >= top ? 0 : v),
+              (v) => (v >= top ? e.t('ui.settings.speed.instant') : e.t('ui.settings.speed.cps', { n: v })),
+            ),
+          )
           grid.append(r.row)
           break
         }
@@ -675,7 +741,7 @@ export class SystemMenu {
       restart: 'ui.menu.restart',
       replayExit: 'ui.menu.replayExit',
     }
-    for (const [id, b] of this.items) b.textContent = e.t(labels[id] ?? id)
+    for (const [id, b] of this.items) b.textContent = id.startsWith('ui:') ? e.ui.label(id.slice(3)) : e.t(labels[id] ?? id)
     for (const x of this.extras.values()) x.btn.textContent = x.label()
     if (this.verEl) this.verEl.textContent = e.t('ui.menu.version', { ver: e.buildInfo ?? '' })
     for (const [id, p] of this.panels) {

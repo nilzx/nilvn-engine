@@ -52,7 +52,8 @@ me: I'm sorry...
 [end]
 ```
 
-The player clicks, or presses Space / Enter, to advance.
+The player clicks, or presses Space / Enter, to advance; `[keys]` in the
+config rebinds the shell's keyboard (auto, skip, quick save / load, …).
 
 ## Three ways to load a game
 
@@ -73,6 +74,8 @@ The player clicks, or presses Space / Enter, to advance.
 | [Engine API](docs/api.md) | `createEngine` options, loading, playing, saves, languages, diagnostics, audio, plugins, stage, packages, the IIFE build. |
 | [In-game chrome](docs/config.md#title) | The built-in title / ending pages, the system menu (saves, backlog, auto / skip, settings), what `[title]` / `[ending.<id>]` / `[menu]` / `[settings]` / `[saves]` configure. |
 | [Theming](docs/api.md#theming) | The `--nilvn-*` token contract: dialogue box, name tag, choices, panels; `[theme]` / `[window]` in the config, `setTheme()`, the `[theme]` command. |
+| [Several files, events, transitions](docs/script-syntax.md#several-files) | `[game] scripts` / `[include]` / `[call]`, clicks that run script commands (panels, hotspots, sprites), `[trans …]` and rule masks. |
+| [Panels and layered sprites](docs/config.md#uiid) | Declarative HUD / windows (`[ui.<id>]`), `[actors.<id>.layers]`, `[choices]`, `[input]`, `[persist]`, `[preload]`; the config schema (`CONFIG_SCHEMA` / `checkConfig`). |
 | [Script packages](docs/script-package.md) | The `nilvn.json` format, the chunk manifest, custom loaders. |
 | [Writing plugins](../plugin-sdk/README.md) | The plugin package format, permissions and capability objects, lifecycle — in `@nilvn/plugin-sdk`. |
 

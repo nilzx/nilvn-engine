@@ -55,7 +55,9 @@ describe('command vocabulary', () => {
   it('every engine builtin outside the flow/structure set is described by a core schema', () => {
     // Flow / declaration commands the DSL serializer emits itself (not authorable
     // command nodes) — the editor never offers them from the insert palette.
-    const structural = new Set(['use', 'alias', 'actor', 'jump', 'if', 'set', 'voice'])
+    // `persist` / `include` are declarations, `call` / `return` flow; `input` and
+    // `preload` (batch I) get their schemas in the editor-alignment batch.
+    const structural = new Set(['use', 'alias', 'actor', 'jump', 'if', 'set', 'voice', 'persist', 'input', 'call', 'return', 'include', 'preload', 'trans', 'ui', 'hotspot', 'choices'])
     const undescribed = Object.keys(builtins).filter((k) => !(k in BUILTIN_COMMAND_MAP) && !structural.has(k))
     expect(undescribed).toEqual([])
   })

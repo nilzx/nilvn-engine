@@ -179,7 +179,7 @@ describe('session hooks', () => {
     await engine.restoreState(save)
     await tick()
     expect(log).toEqual([]) // the table came back wholesale — no per-var events (play resumes at the parked line)
-    expect(ctxRef!.vars!.all()).toEqual({ x: 1, y: 2 })
+    expect(ctxRef!.vars!.all()).toMatchObject({ x: 1, y: 2 }) // plus the engine's own sys.* lists
     engine.destroy()
   })
 

@@ -227,7 +227,7 @@ const EXAMPLE_MANIFEST: PluginManifest = {
   name: 'plugin.neon.name',
   description: 'plugin.neon.desc',
   version: '1.0.0',
-  engine: '>=0.14 <1',
+  engine: '>=0.16 <1',
   entries: { engine: './engine.js' },
   permissions: ['stage.write'],
   contributes: {

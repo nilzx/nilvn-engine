@@ -28,7 +28,7 @@ import type {
   TransitionOpts,
   TypeLineOptions,
   ChoiceHandle,
-  ChoicePrompt, ChromeRenderer, ScreenId, ScreenModel } from './renderer/types.js'
+  ChoicePrompt, ChromeRenderer, ScreenId, ScreenModel, ChoiceView, ChoicesPromptOptions, ChoicesLayout, OverflowMode, TransitionKind, SceneTransitionOpts, CharLayer, HotspotSpec } from './renderer/types.js'
 import type { Segment, TextSpan } from './types.js'
 
 // Re-exported so existing importers (`import { StageState } from './stage.js'`) keep
@@ -92,7 +92,12 @@ function div(cls: string): HTMLDivElement {
 
 interface CharSlot {
   el: HTMLDivElement
-  img: HTMLImageElement
+  /** The single sprite image; absent for a layered sprite. */
+  img?: HTMLImageElement
+  /** Layered sprite: the composition box and each layer's image and value. */
+  box?: HTMLDivElement
+  layers?: Map<string, { img: HTMLImageElement; value: string; ref?: string }>
+  layerUrl?: (layer: string, value: string) => string | undefined
   face?: string
   /** Unresolved script path the current image came from (saved instead of the URL). */
   ref?: string
@@ -101,6 +106,8 @@ interface CharSlot {
    *  swap art on a recorded `face` keyframe; absent / undefined for raw-`src=`
    *  characters or an unresolvable face. */
   faceUrl?: (face: string) => string | undefined
+  /** Layered sprite: the shared canvas (image px) the layers align on. */
+  canvas?: [number, number]
   /** Resting transform model. Drives the generic object
    *  surface (setProp / animate); independent of `left` (the slot position). */
   transform: Transform
@@ -286,25 +293,61 @@ const BASE_CSS = `
 .nilvn-sprites{pointer-events:none}
 .nilvn-char{position:absolute;bottom:0;height:88%;transform:translateX(-50%);transition:left .45s ease,filter .35s ease}
 .nilvn-char img{height:100%;width:auto;display:block;pointer-events:none}
+.nilvn-char__layers{position:relative;height:100%;aspect-ratio:var(--canvas-w,600)/var(--canvas-h,1100)}
+.nilvn-char__layers img{position:absolute;left:0;top:0;width:100%;height:auto}
+.nilvn-snapshot{pointer-events:none}
+.nilvn-sprite.nilvn-clickable{pointer-events:auto;cursor:pointer}
+.nilvn-hotspot{position:absolute;pointer-events:auto;cursor:pointer}
+.nilvn-editing .nilvn-hotspot{outline:1px dashed rgba(255,255,255,.5)}
+.nilvn-ui{position:absolute;z-index:44;pointer-events:auto;box-sizing:border-box;font-size:calc(var(--nilvn-hud-size)*var(--nilvn-ui-scale));color:var(--nilvn-hud-color);background:var(--nilvn-hud-bg);border:var(--nilvn-hud-border);border-radius:var(--nilvn-hud-radius);padding:var(--nilvn-hud-padding);cursor:default}
+.nilvn-ui--window{z-index:46;min-width:var(--nilvn-window-width);font-size:calc(2.6cqh*var(--nilvn-ui-scale));color:var(--nilvn-window-color);background:var(--nilvn-window-bg);border:var(--nilvn-window-border);border-radius:var(--nilvn-window-radius);padding:var(--nilvn-window-padding);box-shadow:0 1.2cqh 4cqh rgba(0,0,0,.45)}
+.nilvn-ui--top-left{top:1.6cqh;left:1.6cqw}.nilvn-ui--top{top:1.6cqh;left:50%;transform:translateX(-50%)}.nilvn-ui--top-right{top:1.6cqh;right:8cqw}
+.nilvn-ui--left{top:50%;left:1.6cqw;transform:translateY(-50%)}.nilvn-ui--center{top:50%;left:50%;transform:translate(-50%,-50%)}.nilvn-ui--right{top:50%;right:1.6cqw;transform:translateY(-50%)}
+.nilvn-ui--bottom-left{bottom:30cqh;left:1.6cqw}.nilvn-ui--bottom{bottom:30cqh;left:50%;transform:translateX(-50%)}.nilvn-ui--bottom-right{bottom:30cqh;right:1.6cqw}
+.nilvn-ui__title{font-weight:700;margin-bottom:1.6cqh}
+.nilvn-ui__body{display:flex;flex-direction:column;gap:1cqh}
+.nilvn-ui__text{white-space:pre-wrap}
+.nilvn-ui__empty{opacity:.6}
+.nilvn-ui__bar-label{margin-bottom:.4cqh}
+.nilvn-ui__bar-track{height:var(--nilvn-bar-height);border-radius:99px;background:var(--nilvn-bar-bg);overflow:hidden;min-width:12cqw}
+.nilvn-ui__bar-fill{height:100%;background:var(--nilvn-bar-color);transition:width .3s ease}
+.nilvn-ui__image{display:block;max-width:100%;height:auto}
+.nilvn-ui__list{margin:0;padding-left:1.4em}
+.nilvn-ui__button{align-self:center;font-size:inherit;padding:1cqh 2.4cqw}
 .nilvn-char.nilvn-dim{filter:brightness(.55) saturate(.7)}
 .nilvn-sprite{position:absolute;bottom:0;transform:translateX(-50%);background-repeat:no-repeat;background-position:0 0;pointer-events:none}
 .nilvn-editing .nilvn-sprite{pointer-events:auto}
 .nilvn-editing .nilvn-char{transition:none}
 .nilvn-dialog{position:absolute;left:var(--nilvn-dialog-inset);right:var(--nilvn-dialog-inset);top:var(--nilvn-dialog-top);bottom:var(--nilvn-dialog-bottom);min-height:var(--nilvn-dialog-height);box-sizing:border-box;border-radius:var(--nilvn-dialog-radius);padding:var(--nilvn-dialog-padding);border:var(--nilvn-dialog-border);backdrop-filter:blur(6px);isolation:isolate;transition:opacity .3s}
-.nilvn-dialog::before{content:"";position:absolute;inset:0;z-index:-1;border-radius:inherit;background:var(--nilvn-dialog-skin) center/100% 100% no-repeat,var(--nilvn-dialog-bg);opacity:var(--nilvn-dialog-opacity)}
+.nilvn-dialog::before{content:"";position:absolute;inset:0;z-index:-1;border-radius:inherit;background:var(--nilvn-dialog-skin) center/100% 100% no-repeat,var(--nilvn-dialog-bg);border:0 solid transparent;border-image:var(--nilvn-dialog-skin-slice);opacity:var(--nilvn-dialog-opacity)}
 .nilvn-dialog.nilvn-hidden{opacity:0!important;pointer-events:none}
 .nilvn-name{position:absolute;top:-2cqh;left:var(--nilvn-name-offset);background:var(--nilvn-name-bg);color:var(--nilvn-name-color);font-weight:700;font-size:calc(var(--nilvn-name-size)*var(--nilvn-ui-scale));line-height:1;padding:1.1cqh 1.6cqw;border-radius:99px;box-shadow:0 2px 10px rgba(0,0,0,.35)}
 .nilvn-name.nilvn-hidden{display:none}
 .nilvn-text{font-size:calc(var(--nilvn-text-size)*var(--nilvn-ui-scale));line-height:var(--nilvn-text-line-height);letter-spacing:.02em;color:var(--nilvn-text-color);text-shadow:var(--nilvn-text-shadow)}
 .nilvn-ch{opacity:0;display:inline-block;white-space:pre}
+.nilvn-word{display:inline-block;white-space:nowrap}
 .nilvn-ch.on{opacity:1}
+.nilvn-off{display:none!important}
+.nilvn-dialog--fixed{height:var(--nilvn-dialog-height)}
+.nilvn-dialog--fixed .nilvn-text{height:100%;overflow:hidden}
 .nilvn-indicator{position:absolute;right:2.4cqw;bottom:1.8cqh;width:0;height:0;border-left:calc(var(--nilvn-indicator-size)*.64) solid transparent;border-right:calc(var(--nilvn-indicator-size)*.64) solid transparent;border-top:var(--nilvn-indicator-size) solid var(--nilvn-indicator-color);opacity:0}
 .nilvn-indicator.on{opacity:1;animation:nilvn-blink 1s ease-in-out infinite}
 @keyframes nilvn-blink{50%{transform:translateY(.5cqh);opacity:.3}}
-.nilvn-choices{position:absolute;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;gap:2.6cqh;background:var(--nilvn-choices-backdrop)}
+.nilvn-choices{position:absolute;inset:0;display:none;align-items:center;justify-content:center;box-sizing:border-box;padding:5cqh 5cqw;background:var(--nilvn-choices-backdrop)}
 .nilvn-choices.on{display:flex}
-.nilvn-choice{min-width:38cqw;padding:2cqh 3cqw;font:inherit;font-size:calc(var(--nilvn-choice-size)*var(--nilvn-ui-scale));color:var(--nilvn-choice-color);text-align:center;background:var(--nilvn-choice-bg);border:var(--nilvn-choice-border);border-radius:var(--nilvn-choice-radius);cursor:pointer;transition:transform .15s ease,box-shadow .15s ease,border-color .15s ease}
-.nilvn-choice:hover{transform:translateY(-2px) scale(1.02);border-color:var(--nilvn-choice-hover);box-shadow:0 6px 24px rgba(80,100,255,.25)}
+.nilvn-choices--top{align-items:flex-start}
+.nilvn-choices--bottom{align-items:flex-end;padding-bottom:calc(var(--nilvn-dialog-height) + var(--nilvn-dialog-bottom) + 3cqh)}
+.nilvn-choices--left{justify-content:flex-start}
+.nilvn-choices--right{justify-content:flex-end}
+.nilvn-choices__list{display:flex;flex-direction:column;align-items:stretch;gap:var(--nilvn-choices-gap);max-width:90cqw}
+.nilvn-choices__list--grid{display:grid;grid-template-columns:repeat(var(--choices-columns,2),minmax(0,1fr))}
+.nilvn-choice{min-width:var(--nilvn-choice-width);padding:2cqh 3cqw;font:inherit;font-size:calc(var(--nilvn-choice-size)*var(--nilvn-ui-scale));color:var(--nilvn-choice-color);text-align:center;background:var(--nilvn-choice-skin) center/100% 100% no-repeat,var(--nilvn-choice-bg);border:var(--nilvn-choice-border);border-image:var(--nilvn-choice-skin-slice);border-radius:var(--nilvn-choice-radius);cursor:pointer;transition:transform .15s ease,box-shadow .15s ease,border-color .15s ease}
+.nilvn-choice:hover:not(:disabled){transform:translateY(-2px) scale(1.02);border-color:var(--nilvn-choice-hover);box-shadow:0 6px 24px rgba(80,100,255,.25)}
+.nilvn-choice.chosen{background:var(--nilvn-choice-skin) center/100% 100% no-repeat,var(--nilvn-choice-chosen-bg);color:var(--nilvn-choice-chosen-color)}
+.nilvn-choice:disabled{background:var(--nilvn-choice-skin) center/100% 100% no-repeat,var(--nilvn-choice-disabled-bg);color:var(--nilvn-choice-disabled-color);cursor:default}
+.nilvn-choices__timer{grid-column:1/-1;height:.8cqh;border-radius:99px;background:var(--nilvn-choice-timer-bg);overflow:hidden}
+.nilvn-choices__timer::before{content:"";display:block;height:100%;background:var(--nilvn-choice-timer-color);animation:nilvn-timer var(--choices-timer,5s) linear forwards}
+@keyframes nilvn-timer{from{width:100%}to{width:0}}
 .nilvn-fader{position:absolute;inset:0;background:#000;opacity:0;pointer-events:none}
 .nilvn-screens{pointer-events:none;z-index:40}
 .nilvn-screen{position:absolute;inset:0;pointer-events:auto;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2.4cqh;padding:6cqh 6cqw;box-sizing:border-box;color:var(--nilvn-panel-color);cursor:default;text-align:center;overflow:hidden}
@@ -315,10 +358,12 @@ const BASE_CSS = `
 .nilvn-screen__logo{max-height:34cqh;max-width:70cqw;display:block}
 .nilvn-screen__heading{margin:0;font-size:calc(8cqh*var(--nilvn-ui-scale));font-weight:800;letter-spacing:.04em;text-shadow:0 2px 12px rgba(0,0,0,.5)}
 .nilvn-screen__subtitle{margin:0;font-size:calc(3cqh*var(--nilvn-ui-scale));opacity:.8}
+.nilvn-screen__progress{width:min(50cqw,100%);height:1.2cqh;border-radius:99px;background:var(--nilvn-progress-bg);overflow:hidden}
+.nilvn-screen__progress::before{content:"";display:block;height:100%;width:calc(var(--progress,0)*100%);background:var(--nilvn-progress-color);transition:width .15s ease}
 .nilvn-screen__buttons{display:flex;flex-direction:column;gap:1.6cqh;margin-top:2cqh;min-width:28cqw}
 .nilvn-screen__button{font:inherit;font-size:calc(3.2cqh*var(--nilvn-ui-scale));padding:1.6cqh 3cqw;color:var(--nilvn-button-color);background:var(--nilvn-button-bg);border:var(--nilvn-button-border);border-radius:99px;cursor:pointer;transition:background .15s ease,transform .15s ease}
 .nilvn-screen__button:hover,.nilvn-screen__button:focus-visible{background:var(--nilvn-button-hover);transform:translateY(-1px);outline:none}
-.nilvn-screen__button--primary{background:var(--nilvn-accent);border-color:transparent}
+.nilvn-screen__button--primary{background:var(--nilvn-button-on-bg);color:var(--nilvn-button-on-color);border-color:transparent}
 .nilvn-screen__credits{position:relative;width:min(70cqw,100%);height:40cqh;overflow:hidden;mask-image:linear-gradient(transparent,#000 12%,#000 88%,transparent)}
 .nilvn-screen__roll{position:absolute;left:0;right:0;top:100%;font-size:calc(2.8cqh*var(--nilvn-ui-scale));line-height:1.9;white-space:pre-wrap;animation:nilvn-roll var(--roll-duration,12s) linear forwards}
 @keyframes nilvn-roll{to{transform:translateY(calc(-100% - 40cqh))}}
@@ -340,7 +385,7 @@ const BASE_CSS = `
 .nilvn-menu.on .nilvn-menu__panel{display:flex}
 .nilvn-menu__item{padding:1.2cqh 1.6cqw;border-radius:.9cqh;background:var(--nilvn-button-bg);border:var(--nilvn-button-border);color:var(--nilvn-button-color);font:inherit;font-size:calc(2.4cqh*var(--nilvn-ui-scale));cursor:pointer;text-align:center}
 .nilvn-menu__item:hover{background:var(--nilvn-button-hover)}
-.nilvn-menu__item.on{background:var(--nilvn-accent);border-color:transparent}
+.nilvn-menu__item.on{background:var(--nilvn-button-on-bg);color:var(--nilvn-button-on-color);border-color:transparent}
 .nilvn-menu__item:disabled{opacity:.45;cursor:default}
 .nilvn-menu__grid{display:grid;grid-template-columns:minmax(0,max-content) minmax(6cqw,1fr) max-content;align-items:center;gap:1.2cqh 1cqw;font-size:calc(2.1cqh*var(--nilvn-ui-scale));color:var(--nilvn-panel-color);padding:0 5cqw 3cqh}
 .nilvn-menu__row{display:contents}
@@ -349,7 +394,7 @@ const BASE_CSS = `
 .nilvn-menu__row>span:first-child{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .nilvn-menu__seg{grid-column:2/-1;display:flex;gap:.8cqw}
 .nilvn-menu__seg button{flex:1;padding:.8cqh 0;border-radius:.8cqh;background:var(--nilvn-button-bg);border:var(--nilvn-button-border);color:var(--nilvn-button-color);font:inherit;font-size:calc(2.1cqh*var(--nilvn-ui-scale));cursor:pointer}
-.nilvn-menu__seg button.on{background:var(--nilvn-accent);border-color:transparent}
+.nilvn-menu__seg button.on{background:var(--nilvn-button-on-bg);color:var(--nilvn-button-on-color);border-color:transparent}
 .nilvn-menu__vol{flex:1;min-width:0;accent-color:var(--nilvn-accent);cursor:pointer}
 .nilvn-menu__pct{width:7cqw;text-align:right;font-size:1.9cqh;opacity:.7;font-variant-numeric:tabular-nums}
 .nilvn-menu__tip{min-height:2.2cqh;font-size:1.9cqh;opacity:.7;text-align:center}
@@ -364,13 +409,13 @@ const BASE_CSS = `
 .nilvn-backlog__row{display:flex;gap:1.4cqw;align-items:flex-start;padding:1.4cqh 1.8cqw;border-radius:1cqh;background:var(--nilvn-button-bg);border:var(--nilvn-button-border)}
 .nilvn-backlog__voice{flex:none;width:4.4cqh;height:4.4cqh;margin-top:.3cqh;border-radius:50%;background:var(--nilvn-accent);border:none;color:var(--nilvn-button-color);font-size:2cqh;cursor:pointer;line-height:1}
 .nilvn-backlog__body{flex:1;min-width:0}
-.nilvn-backlog__who{font-size:2cqh;color:var(--nilvn-accent);margin-bottom:.4cqh;font-weight:600}
+.nilvn-backlog__who{display:inline-block;font-size:calc(2cqh*var(--nilvn-ui-scale));line-height:1;padding:.7cqh 1.4cqw;border-radius:99px;background:var(--nilvn-name-bg);color:var(--nilvn-name-color);margin-bottom:.7cqh;font-weight:600}
 .nilvn-backlog__text{font-size:calc(2.3cqh*var(--nilvn-ui-scale));line-height:1.5;white-space:pre-wrap;word-break:break-word}
 .nilvn-saves__title{margin-right:auto;align-self:center;font-size:2.8cqh;font-weight:700}
 .nilvn-saves__body{flex:1;min-height:0;display:flex;flex-direction:column}
 .nilvn-saves__pages{flex:none;display:flex;gap:.8cqw;padding:0 5cqw 1.2cqh}
 .nilvn-saves__page{flex:1;padding:.9cqh 0;border-radius:.8cqh;background:var(--nilvn-button-bg);border:var(--nilvn-button-border);color:var(--nilvn-button-color);font:inherit;font-size:2.1cqh;cursor:pointer;opacity:.75}
-.nilvn-saves__page.on{background:var(--nilvn-accent);border-color:transparent;opacity:1}
+.nilvn-saves__page.on{background:var(--nilvn-button-on-bg);color:var(--nilvn-button-on-color);border-color:transparent;opacity:1}
 .nilvn-saves__grid{flex:1;min-height:0;overflow-y:auto;display:grid;grid-template-columns:1fr 1fr;gap:1.2cqh 1.2cqw;padding:0 5cqw 3cqh;align-content:start}
 .nilvn-saves__slot{position:relative;display:flex;flex-direction:column;align-items:flex-start;gap:.4cqh;padding:1.3cqh 1.6cqw 1.3cqh 1.6cqw;border-radius:1cqh;background:var(--nilvn-button-bg);border:var(--nilvn-button-border);color:var(--nilvn-panel-color);font:inherit;text-align:left;cursor:pointer;min-height:9cqh;opacity:.7;overflow:hidden}
 .nilvn-saves__slot:hover{background:var(--nilvn-button-hover)}
@@ -386,6 +431,13 @@ const BASE_CSS = `
 .nilvn-modal__box{min-width:36cqw;max-width:70cqw;padding:3cqh 3cqw;border-radius:1.4cqh;background:var(--nilvn-panel-bg);border:var(--nilvn-panel-border);color:var(--nilvn-panel-color);box-shadow:0 1.2cqh 4cqh rgba(0,0,0,.5);text-align:center}
 .nilvn-modal__msg{font-size:calc(2.6cqh*var(--nilvn-ui-scale));line-height:1.6;margin-bottom:2.4cqh}
 .nilvn-modal__buttons{display:flex;gap:1.2cqw;justify-content:center}
+.nilvn-modal--top{align-items:flex-start;padding-top:8cqh}
+.nilvn-modal--bottom{align-items:flex-end;padding-bottom:8cqh}
+.nilvn-modal--input .nilvn-modal__box{background:var(--nilvn-input-box-skin) center/100% 100% no-repeat,var(--nilvn-input-box-bg);border:var(--nilvn-input-box-border);border-image:var(--nilvn-input-box-skin-slice);border-radius:var(--nilvn-input-box-radius)}
+.nilvn-modal__input{display:block;width:100%;box-sizing:border-box;margin:0 0 2.4cqh;padding:1.2cqh 1.6cqw;font:inherit;font-size:calc(var(--nilvn-input-size)*var(--nilvn-ui-scale));text-align:center;color:var(--nilvn-input-color);background:var(--nilvn-input-bg);border:var(--nilvn-input-border);border-radius:var(--nilvn-input-radius);outline:none}
+.nilvn-modal__input:focus{box-shadow:0 0 0 2px var(--nilvn-accent)}
+.nilvn-modal__input[aria-invalid="true"]{box-shadow:0 0 0 2px #e05555}
+.nilvn-screen__button:disabled{opacity:.45;cursor:default}
 .nilvn-toast{position:absolute;left:50%;bottom:30cqh;transform:translate(-50%,1cqh);z-index:65;padding:1.2cqh 2.4cqw;border-radius:99px;background:var(--nilvn-panel-bg);border:var(--nilvn-panel-border);color:var(--nilvn-panel-color);font-size:calc(2.2cqh*var(--nilvn-ui-scale));opacity:0;transition:opacity .2s,transform .2s;pointer-events:none}
 .nilvn-toast.on{opacity:1;transform:translate(-50%,0)}
 .nilvn-hud{position:absolute;z-index:45;pointer-events:auto;font-size:calc(2.2cqh*var(--nilvn-ui-scale));color:var(--nilvn-panel-color)}
@@ -410,6 +462,116 @@ const BASE_CSS = `
  * canvas. Everything else (character hit-testing, containment) goes through
  * methods, so the class/structure contract stays hidden.
  */
+/** Set a CSS mask on an element (both spellings, for WebKit). */
+function setMask(el: HTMLElement, image: string, size: string, repeat: string): void {
+  for (const prefix of ['', '-webkit-']) {
+    el.style.setProperty(`${prefix}mask-image`, image)
+    el.style.setProperty(`${prefix}mask-size`, size)
+    el.style.setProperty(`${prefix}mask-repeat`, repeat)
+  }
+}
+
+/** Run `step(t)` every frame for `ms`, t from 0 to 1 (1 guaranteed last); stops
+ *  early when `stale()` says the picture moved on. */
+function driveFrames(ms: number, step: (t: number) => void, stale: () => boolean): Promise<void> {
+  return new Promise((resolve) => {
+    const start = performance.now()
+    const frame = (): void => {
+      if (stale()) return resolve()
+      const t = ms > 0 ? Math.min(1, (performance.now() - start) / ms) : 1
+      step(t)
+      if (t >= 1) resolve()
+      else if (typeof requestAnimationFrame === 'function') requestAnimationFrame(frame)
+      else setTimeout(frame, 16)
+    }
+    frame()
+  })
+}
+
+/** Rule-image transition: the rule's luminance is a per-pixel delay. Each frame
+ *  a threshold sweeps 0 → 1 and the element's alpha mask keeps the pixels whose
+ *  luminance is still above it (`reverse` keeps the ones below — a cover growing
+ *  over dark pixels first). Drawn on a small canvas (≤ 320 px wide) and handed to
+ *  `mask-image` as a data URL; `softness` widens the edge. Falls back to a plain
+ *  fade when the image cannot be read. */
+async function animateRuleMask(el: HTMLElement, ruleUrl: string, ms: number, softness: number, reverse: boolean, stale: () => boolean): Promise<void> {
+  let lum: Float32Array | undefined
+  let w = 0
+  let h = 0
+  let canvas: HTMLCanvasElement | undefined
+  let ctx: CanvasRenderingContext2D | null = null
+  try {
+    const img = new Image()
+    img.crossOrigin = 'anonymous'
+    img.src = ruleUrl
+    await img.decode()
+    const scale = Math.min(1, 320 / Math.max(1, img.naturalWidth))
+    w = Math.max(1, Math.round(img.naturalWidth * scale))
+    h = Math.max(1, Math.round(img.naturalHeight * scale))
+    canvas = document.createElement('canvas')
+    canvas.width = w
+    canvas.height = h
+    ctx = canvas.getContext('2d', { willReadFrequently: true })
+    if (!ctx) throw new Error('no 2d context')
+    ctx.drawImage(img, 0, 0, w, h)
+    const data = ctx.getImageData(0, 0, w, h).data
+    lum = new Float32Array(w * h)
+    for (let i = 0; i < w * h; i++) lum[i] = (0.2126 * data[i * 4]! + 0.7152 * data[i * 4 + 1]! + 0.0722 * data[i * 4 + 2]!) / 255
+  } catch {
+    lum = undefined
+  }
+  if (!lum || !canvas || !ctx) {
+    if (reverse) await animate(el, [{ opacity: 0 }, { opacity: 1 }], { duration: ms, easing: 'ease' })
+    else await animate(el, [{ opacity: 1 }, { opacity: 0 }], { duration: ms, easing: 'ease' })
+    return
+  }
+  const s = Math.max(0.01, Math.min(1, softness))
+  const frame = ctx.createImageData(w, h)
+  const px = frame.data
+  setMask(el, 'none', '100% 100%', 'no-repeat')
+  await driveFrames(ms, (t) => {
+    // threshold sweeps from -s (everything kept) to 1 (nothing kept)
+    const thr = t * (1 + s) - s
+    for (let i = 0; i < w * h; i++) {
+      let a = (lum![i]! - thr) / s
+      a = a < 0 ? 0 : a > 1 ? 1 : a
+      if (reverse) a = 1 - a
+      px[i * 4 + 3] = Math.round(a * 255)
+    }
+    ctx!.putImageData(frame, 0, 0)
+    setMask(el, `url("${canvas!.toDataURL()}")`, '100% 100%', 'no-repeat')
+  }, stale)
+}
+
+/** One step of a typed line: a character span, a `{w:}` pause, or a `{p}` break. */
+interface LineItem {
+  span?: HTMLSpanElement
+  handle?: TextSpan
+  effect?: string
+  pause?: number
+  page?: boolean
+}
+
+/** A character that belongs to a word (breaks only at its edges): letters,
+ *  digits, marks and Latin-style punctuation — not CJK, kana, hangul or Thai,
+ *  which wrap per character, and not spaces. */
+const NO_WORD = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\p{Script=Thai}\u3000-\u303f\uff00-\uffef]/u
+const WORD = /[\p{L}\p{N}\p{M}\p{P}]/u
+function isWordChar(ch: string): boolean {
+  return WORD.test(ch) && !NO_WORD.test(ch)
+}
+
+/** A chrome button for the modal boxes (confirm / prompt). */
+function modalButton(label: string, id: 'ok' | 'cancel', primary: boolean, onClick: () => void): HTMLButtonElement {
+  const b = document.createElement('button')
+  b.type = 'button'
+  b.className = `nilvn-screen__button${primary ? ' nilvn-screen__button--primary' : ''}`
+  b.dataset.id = id
+  b.textContent = label
+  b.addEventListener('click', onClick)
+  return b
+}
+
 export interface EditStage {
   /** Stage root — host for the editor's overlay layer and the bounding box for
    *  pointer hit-testing. */
@@ -473,12 +635,30 @@ export class DomRenderer implements Renderer, EditStage {
   readonly textEl: HTMLDivElement
   readonly indicator: HTMLDivElement
   readonly choicesEl: HTMLDivElement
+  private choicesTimer: number | undefined
+  private choicesLayout: ChoicesLayout = {}
+  private overflow: OverflowMode = 'grow'
+  /** The line being typed: its items and where the next page starts. A repaint
+   *  while the player is parked at a page break (`repaintLine`) swaps both. */
+  private lineItems: LineItem[] = []
+  private lineStart = 0
+  /** Pages already turned in the current line (0 = still on the first). */
+  private linePage = 0
+  /** Set while `typeLine` waits at a page break. */
+  private lineParked = false
+  /** An image the stage was told to show failed to load (a wrong path). The
+   *  engine turns it into a diagnostic. */
+  onAssetError?: (what: string, url: string) => void
   /** Screen-space band hosting objects promoted over the dialogue (band='front').
    *  Sits above dialogue/choices, below the transition fader; empty by default. */
   readonly frontLayer: HTMLDivElement
   readonly fader: HTMLDivElement
 
   private chars = new Map<string, CharSlot>()
+  /** The frozen picture a `beginTransition` took, until `endTransition` / restore. */
+  private transSnapshot: HTMLElement | null = null
+  private hotspots = new Map<string, { el: HTMLDivElement; spec: HotspotSpec }>()
+  objectClick?: (objId: string, onclick: string) => void
   private sprites = new Map<string, SpriteSlot>()
   /** Resting transform for the `camera` object (singleton, always present). */
   private cameraModel = freshTransform()
@@ -550,6 +730,10 @@ export class DomRenderer implements Renderer, EditStage {
       }
     },
     currentScreen: () => this.screen?.id ?? null,
+    setProgress: (ratio) => {
+      const bar = this.screen?.el.querySelector<HTMLElement>('.nilvn-screen__progress')
+      bar?.style.setProperty('--progress', String(Math.max(0, Math.min(1, ratio))))
+    },
     overlay: (className) => {
       const layer = div(className)
       this.screenLayer.append(layer)
@@ -575,17 +759,8 @@ export class DomRenderer implements Renderer, EditStage {
           modal.remove()
           resolve(ok)
         }
-        const mk = (label: string, ok: boolean, primary: boolean): HTMLButtonElement => {
-          const b = document.createElement('button')
-          b.type = 'button'
-          b.className = `nilvn-screen__button${primary ? ' nilvn-screen__button--primary' : ''}`
-          b.dataset.id = ok ? 'ok' : 'cancel'
-          b.textContent = label
-          b.addEventListener('click', () => finish(ok))
-          return b
-        }
-        if (labels.cancel !== undefined) bar.append(mk(labels.cancel, false, false))
-        bar.append(mk(labels.ok, true, true))
+        if (labels.cancel !== undefined) bar.append(modalButton(labels.cancel, 'cancel', false, () => finish(false)))
+        bar.append(modalButton(labels.ok, 'ok', true, () => finish(true)))
         box.append(msg, bar)
         modal.append(box)
         // Keys on the focused button: Esc cancels, Enter confirms — and never reach
@@ -597,6 +772,65 @@ export class DomRenderer implements Renderer, EditStage {
         this.screenLayer.append(modal)
         bar.querySelector<HTMLButtonElement>('[data-id="ok"]')?.focus({ preventScroll: true })
       }),
+    prompt: (message, opts) => {
+      let cancel: () => void = () => {}
+      const result = new Promise<string | null>((resolve) => {
+        const pos = opts.position && opts.position !== 'center' ? ` nilvn-modal--${opts.position}` : ''
+        const modal = div(`nilvn-modal nilvn-modal--input${pos}`)
+        modal.addEventListener('click', (e) => e.stopPropagation())
+        const box = div('nilvn-modal__box')
+        const field = document.createElement('input')
+        field.type = 'text'
+        field.className = 'nilvn-modal__input'
+        field.autocomplete = 'off'
+        field.spellcheck = false
+        if (opts.default) field.placeholder = opts.default
+        if (opts.maxlength && opts.maxlength > 0) field.maxLength = opts.maxlength
+        let re: RegExp | undefined
+        if (opts.pattern) {
+          try {
+            re = new RegExp(`^(?:${opts.pattern})$`, 'u')
+          } catch {
+            re = undefined
+          }
+        }
+        const valid = (): boolean => !re || field.value.trim() === '' || re.test(field.value.trim())
+        let done = false
+        const finish = (v: string | null): void => {
+          if (done) return
+          done = true
+          modal.remove()
+          resolve(v)
+        }
+        const submit = (): void => {
+          if (valid()) finish(field.value.trim())
+        }
+        const bar = div('nilvn-modal__buttons')
+        const okBtn = modalButton(opts.ok, 'ok', true, submit)
+        bar.append(modalButton(opts.cancel, 'cancel', false, () => finish(null)), okBtn)
+        field.addEventListener('input', () => {
+          const ok = valid()
+          okBtn.disabled = !ok
+          field.setAttribute('aria-invalid', ok ? 'false' : 'true')
+        })
+        if (message) {
+          const msg = div('nilvn-modal__msg')
+          msg.textContent = message
+          box.append(msg)
+        }
+        box.append(field, bar)
+        modal.append(box)
+        modal.addEventListener('keydown', (e) => {
+          e.stopPropagation()
+          if (e.key === 'Escape') finish(null)
+          else if (e.key === 'Enter' && e.target === field) submit()
+        })
+        cancel = () => finish(null)
+        this.screenLayer.append(modal)
+        field.focus({ preventScroll: true })
+      })
+      return { result, cancel: () => cancel() }
+    },
   }
 
   private buildScreen(id: ScreenId, model: ScreenModel): HTMLElement {
@@ -609,8 +843,10 @@ export class DomRenderer implements Renderer, EditStage {
     if (model.logo) {
       const img = document.createElement('img')
       img.className = 'nilvn-screen__logo'
+      this.watchImage(img, 'logo')
       img.src = model.logo
       img.alt = model.heading ?? ''
+      if (model.logoWidth) img.style.width = model.logoWidth
       el.append(img)
     }
     if (model.heading) {
@@ -624,6 +860,11 @@ export class DomRenderer implements Renderer, EditStage {
       p.className = 'nilvn-screen__subtitle'
       p.textContent = model.subtitle
       el.append(p)
+    }
+    if (model.progress !== undefined) {
+      const bar = div('nilvn-screen__progress')
+      bar.style.setProperty('--progress', String(Math.max(0, Math.min(1, model.progress))))
+      el.append(bar)
     }
     if (model.credits?.length) {
       const box = div('nilvn-screen__credits')
@@ -741,33 +982,164 @@ export class DomRenderer implements Renderer, EditStage {
   }
 
   async showChar(id: string, url: string, opts: CharOptions = {}): Promise<void> {
-    await preloadImage(url)
+    const layered = !!opts.layers
+    if (layered) await Promise.all(opts.layers!.map((l) => preloadImage(l.url)))
+    else await preloadImage(url)
     let slot = this.chars.get(id)
     if (!slot) {
-      const img = new Image()
-      img.src = url
-      img.draggable = false
       const el = div('nilvn-char')
       el.dataset.id = id
       el.style.left = toLeft(opts.at ?? 'center')
-      el.append(img)
+      if (layered) {
+        const box = div('nilvn-char__layers')
+        el.append(box)
+        slot = { el, box, layers: new Map(), layerUrl: opts.layerUrl, face: opts.face, faceUrl: opts.faceUrl, transform: freshTransform() }
+        this.setCanvas(slot, opts.canvas)
+        this.applyLayers(slot, opts.layers!, false)
+      } else {
+        const img = new Image()
+        this.watchImage(img, `sprite of "${id}"`)
+        img.src = url
+        img.draggable = false
+        el.append(img)
+        slot = { el, img, face: opts.face, faceUrl: opts.faceUrl, ref: opts.ref, transform: freshTransform() }
+      }
       this.charLayer.append(el)
-      slot = { el, img, face: opts.face, faceUrl: opts.faceUrl, ref: opts.ref, transform: freshTransform() }
       this.chars.set(id, slot)
       this.applyBirthTransform(el, slot.transform, opts)
       const fade = opts.fade ?? 0.3
       if (fade > 0) await animate(el, [{ opacity: 0 }, { opacity: 1 }], { duration: fade * 1000, easing: 'ease' })
       return
     }
-    if (slot.img.src !== url) {
-      slot.img.src = url
-      slot.ref = opts.ref
-      void animate(slot.img, [{ opacity: 0.4 }, { opacity: 1 }], { duration: 160 })
-    } else if (opts.ref !== undefined) slot.ref = opts.ref
+    if (layered) {
+      // A single-image character re-shown as layered (or the reverse) rebuilds its art.
+      if (!slot.box) {
+        slot.img?.remove()
+        slot.img = undefined
+        slot.ref = undefined
+        slot.box = div('nilvn-char__layers')
+        slot.layers = new Map()
+        slot.el.append(slot.box)
+      }
+      if (opts.layerUrl) slot.layerUrl = opts.layerUrl
+      this.setCanvas(slot, opts.canvas)
+      this.applyLayers(slot, opts.layers!, true)
+    } else {
+      if (slot.box) {
+        slot.box.remove()
+        slot.box = undefined
+        slot.layers = undefined
+        const img = new Image()
+        this.watchImage(img, `sprite of "${id}"`)
+        img.draggable = false
+        slot.el.append(img)
+        slot.img = img
+      }
+      const img = slot.img!
+      if (img.src !== url) {
+        img.src = url
+        slot.ref = opts.ref
+        void animate(img, [{ opacity: 0.4 }, { opacity: 1 }], { duration: 160 })
+      } else if (opts.ref !== undefined) slot.ref = opts.ref
+    }
     if (opts.face) slot.face = opts.face
     if (opts.faceUrl) slot.faceUrl = opts.faceUrl
     if (opts.at) slot.el.style.left = toLeft(opts.at)
     this.applyBirthTransform(slot.el, slot.transform, opts)
+  }
+
+  private setCanvas(slot: CharSlot, canvas: [number, number] | undefined): void {
+    if (!slot.box || !canvas) return
+    slot.box.style.setProperty('--canvas-w', String(canvas[0]))
+    slot.box.style.setProperty('--canvas-h', String(canvas[1]))
+    slot.canvas = canvas
+  }
+
+  /** Bring a layered character's images to `layers`: new ones appear, a changed
+   *  one cross-fades, one no longer listed goes. Order (bottom → top) follows the
+   *  list. */
+  private applyLayers(slot: CharSlot, layers: CharLayer[], animateSwap: boolean): void {
+    const box = slot.box!
+    const have = slot.layers!
+    const keep = new Set(layers.map((l) => l.name))
+    for (const [name, l] of [...have]) {
+      if (keep.has(name)) continue
+      l.img.remove()
+      have.delete(name)
+    }
+    for (const l of layers) {
+      let cur = have.get(l.name)
+      if (!cur) {
+        const img = new Image()
+        this.watchImage(img, `layer "${l.name}"`)
+        img.draggable = false
+        img.src = l.url
+        cur = { img, value: l.value, ref: l.ref }
+        have.set(l.name, cur)
+      } else if (cur.img.src !== l.url) {
+        cur.img.src = l.url
+        cur.value = l.value
+        cur.ref = l.ref
+        if (animateSwap) void animate(cur.img, [{ opacity: 0.4 }, { opacity: 1 }], { duration: 160 })
+      } else cur.value = l.value
+      this.placeLayer(slot, cur.img, l.offset)
+      box.append(cur.img) // (re)append keeps the listed order
+    }
+    if (layers.some((l) => l.name === 'face')) slot.face = layers.find((l) => l.name === 'face')!.value
+  }
+
+  /** A layer image's place on the canvas: its offset and natural size as
+   *  percentages of the canvas, so the whole composition scales with the stage. */
+  private placeLayer(slot: CharSlot, img: HTMLImageElement, offset: [number, number] | undefined): void {
+    const [w, h] = slot.canvas ?? [0, 0]
+    const [ox, oy] = offset ?? [0, 0]
+    if (w > 0 && h > 0) {
+      img.style.left = `${(ox / w) * 100}%`
+      img.style.top = `${(oy / h) * 100}%`
+      const nw = img.naturalWidth
+      img.style.width = nw > 0 ? `${(nw / w) * 100}%` : '100%'
+    }
+  }
+
+  charLayers(id: string): Record<string, string> | undefined {
+    const slot = this.chars.get(id)
+    if (!slot?.layers) return undefined
+    return Object.fromEntries([...slot.layers].map(([name, l]) => [name, l.value]))
+  }
+
+  // ---- hotspots: clickable regions in the world (they pan with the camera) ----
+
+  showHotspot(spec: HotspotSpec): void {
+    let h = this.hotspots.get(spec.id)
+    if (!h) {
+      const el = div('nilvn-hotspot')
+      el.dataset.id = spec.id
+      el.addEventListener('click', (ev) => {
+        const cmd = this.hotspots.get(spec.id)?.spec.onclick
+        if (!cmd) return
+        ev.stopPropagation()
+        this.objectClick?.(`hotspot:${spec.id}`, cmd)
+      })
+      this.fxLayer.append(el)
+      h = { el, spec }
+      this.hotspots.set(spec.id, h)
+    }
+    h.spec = { ...spec }
+    h.el.style.left = `${spec.x}%`
+    h.el.style.top = `${spec.y}%`
+    h.el.style.width = `${spec.w}%`
+    h.el.style.height = `${spec.h}%`
+  }
+
+  hideHotspot(id: string): void {
+    const h = this.hotspots.get(id)
+    if (!h) return
+    h.el.remove()
+    this.hotspots.delete(id)
+  }
+
+  clearHotspots(): void {
+    for (const id of [...this.hotspots.keys()]) this.hideHotspot(id)
   }
 
   async moveChar(id: string, at: string, timeSec = 0.45): Promise<void> {
@@ -853,6 +1225,16 @@ export class DomRenderer implements Renderer, EditStage {
       slot.spec = { ...spec, frames: cols, fps, height }
     }
     const el = slot.el
+    el.classList.toggle('nilvn-clickable', !!spec.onclick)
+    if (spec.onclick && !el.dataset.click) {
+      el.dataset.click = '1'
+      el.addEventListener('click', (ev) => {
+        const cmd = this.sprites.get(id)?.spec.onclick
+        if (!cmd) return
+        ev.stopPropagation()
+        this.objectClick?.(`sprite:${id}`, cmd)
+      })
+    }
     el.style.left = toLeft(spec.at ?? 'center')
     el.style.height = `${height}%`
     el.style.aspectRatio = String(frameRatio)
@@ -1038,8 +1420,85 @@ export class DomRenderer implements Renderer, EditStage {
     if (!slot) return
     slot.face = face
     // Snap the image (discrete = no tween); only when a resolver and a real change exist.
+    if (slot.layers) {
+      const url = slot.layerUrl?.('face', face)
+      const cur = slot.layers.get('face')
+      if (url && cur && cur.img.src !== url) {
+        cur.img.src = url
+        cur.value = face
+      }
+      return
+    }
     const url = slot.faceUrl?.(face)
-    if (url && slot.img.src !== url) slot.img.src = url
+    if (url && slot.img && slot.img.src !== url) slot.img.src = url
+  }
+
+  // ---- scene transitions (batch I inc 4): a frozen snapshot of the old picture
+  // over the scene; the scene changes underneath; the snapshot gives way with an
+  // effect. The snapshot is a clone of the camera (backgrounds, characters,
+  // sprites, fx), so whatever the scene becomes shows through where the effect
+  // has cleared it.
+
+  beginTransition(): void {
+    this.dropSnapshot()
+    const clone = this.camera.cloneNode(true) as HTMLElement
+    clone.classList.add('nilvn-snapshot')
+    this.camera.after(clone)
+    this.transSnapshot = clone
+  }
+
+  transitionPending(): boolean {
+    return this.transSnapshot !== null
+  }
+
+  private dropSnapshot(): void {
+    this.transSnapshot?.remove()
+    this.transSnapshot = null
+  }
+
+  async endTransition(kind: TransitionKind, opts: SceneTransitionOpts = {}): Promise<void> {
+    const snap = this.transSnapshot
+    if (!snap) return
+    this.transSnapshot = null
+    const gen = this.restoreGen
+    const dur = Math.max(0, opts.duration ?? 0.6) * 1000
+    const dir = opts.dir ?? (kind === 'slide' ? 'left' : 'right')
+    const stale = (): boolean => this.restoreGen !== gen || !snap.isConnected
+    try {
+      if (opts.mask || kind === 'rule') {
+        if (opts.mask) await animateRuleMask(snap, opts.mask, dur, opts.softness ?? 0.1, false, stale)
+        else await animate(snap, [{ opacity: 1 }, { opacity: 0 }], { duration: dur, easing: 'ease' })
+      } else if (kind === 'fade') {
+        const cover = document.createElement('div')
+        cover.style.cssText = `position:absolute;inset:0;pointer-events:none;background:${opts.color ?? '#000'};opacity:0`
+        snap.after(cover)
+        try {
+          await animate(cover, [{ opacity: 0 }, { opacity: 1 }], { duration: dur / 2, easing: 'ease-in' })
+          snap.remove()
+          if (!stale()) await animate(cover, [{ opacity: 1 }, { opacity: 0 }], { duration: dur / 2, easing: 'ease-out' })
+        } finally {
+          cover.remove()
+        }
+      } else if (kind === 'crossfade') {
+        await animate(snap, [{ opacity: 1 }, { opacity: 0 }], { duration: dur, easing: 'ease' })
+      } else if (kind === 'wipe') {
+        const closed = { right: 'inset(0 0 0 100%)', left: 'inset(0 100% 0 0)', down: 'inset(100% 0 0 0)', up: 'inset(0 0 100% 0)' }[dir]
+        await animate(snap, [{ clipPath: 'inset(0 0 0 0)' }, { clipPath: closed }], { duration: dur, easing: 'ease-in-out' })
+      } else if (kind === 'slide') {
+        const base = snap.style.transform
+        const away = { left: 'translateX(-100%)', right: 'translateX(100%)', up: 'translateY(-100%)', down: 'translateY(100%)' }[dir]
+        await animate(snap, [{ transform: base || 'none' }, { transform: `${away} ${base}`.trim() }], { duration: dur, easing: 'ease-in-out' })
+      } else if (kind === 'circle') {
+        await animate(snap, [{ clipPath: 'circle(75% at 50% 50%)' }, { clipPath: 'circle(0% at 50% 50%)' }], { duration: dur, easing: 'ease-in-out' })
+      } else if (kind === 'blinds') {
+        // Six slats, each closing left → right: a repeating gradient mask whose
+        // opaque part shrinks, driven per frame (a custom property does not tween).
+        setMask(snap, 'linear-gradient(to right, #000 var(--p), transparent var(--p))', 'calc(100% / 6) 100%', 'repeat-x')
+        await driveFrames(dur, (t) => snap.style.setProperty('--p', `${(1 - t) * 100}%`), stale)
+      }
+    } finally {
+      snap.remove()
+    }
   }
 
   /** Full-screen color flash that fades out. A transient overlay primitive (not a
@@ -1195,23 +1654,34 @@ export class DomRenderer implements Renderer, EditStage {
 
   /** Build the per-character spans for `segments` under `parent` (hidden until
    *  revealed unless `revealed`), returning the reveal plan: one item per span,
-   *  interleaved with the `{w:}` pauses. `onSpan` runs for revealed spans at once. */
+   *  interleaved with the `{w:}` pauses (typing only) and the `{p}` page breaks.
+   *  `onSpan` runs for revealed spans at once. */
   private layoutSegments(
     parent: HTMLElement,
     segments: Segment[],
     revealed: boolean,
     onSpan?: (span: TextSpan, effect: string | undefined) => void,
-  ): { span?: HTMLSpanElement; handle?: TextSpan; effect?: string; pause?: number }[] {
+  ): LineItem[] {
     parent.replaceChildren()
-    const items: { span?: HTMLSpanElement; handle?: TextSpan; effect?: string; pause?: number }[] = []
+    const items: LineItem[] = []
     let index = 0
+    // Characters are inline-blocks (text effects transform them), which would
+    // let a line break between any two of them; runs of word characters go
+    // into a nowrap wrapper so Latin words wrap as words. CJK stays per character.
+    let word: HTMLSpanElement | null = null
     for (const seg of segments) {
       if (seg.kind === 'br') {
         parent.append(document.createElement('br'))
+        word = null
         continue
       }
       if (seg.kind === 'pause') {
         if (!revealed) items.push({ pause: seg.sec })
+        continue
+      }
+      if (seg.kind === 'page') {
+        items.push({ page: true })
+        word = null
         continue
       }
       for (const ch of seg.text) {
@@ -1219,60 +1689,247 @@ export class DomRenderer implements Renderer, EditStage {
         span.className = revealed ? 'nilvn-ch on' : 'nilvn-ch'
         span.textContent = ch
         span.style.setProperty('--i', String(index))
-        parent.append(span)
+        if (isWordChar(ch)) {
+          if (!word) {
+            word = document.createElement('span')
+            word.className = 'nilvn-word'
+            parent.append(word)
+          }
+          word.append(span)
+        } else {
+          word = null
+          parent.append(span)
+        }
         const handle: TextSpan = { index, char: ch, addClass: (name) => span.classList.add(name) }
         if (revealed) onSpan?.(handle, seg.effect)
-        else items.push({ span, handle, effect: seg.effect })
+        items.push({ span, handle, effect: seg.effect })
         index++
       }
     }
     return items
   }
 
-  async typeLine(segments: Segment[], opts: TypeLineOptions): Promise<void> {
-    const items = this.layoutSegments(this.textEl, segments, false)
-    for (const item of items) {
-      if (!opts.alive()) return
-      if (item.pause !== undefined) {
-        await this.skippableSleep(item.pause * 1000, opts.skip)
-        continue
+  // ---- overflow: paging and shrinking (`[window] overflow`) ----
+
+  setOverflow(mode: OverflowMode): void {
+    this.overflow = mode
+    // A fixed-height box is what makes "does not fit" measurable; `grow` keeps
+    // the classic min-height box that stretches with its text.
+    this.dialog.classList.toggle('nilvn-dialog--fixed', mode !== 'grow')
+    if (mode !== 'shrink') this.textEl.style.fontSize = ''
+  }
+
+  /** Where the text must end — px from the dialog's padding edge (what a
+   *  character's `offsetTop` is measured from) — or Infinity when the box may
+   *  grow (`grow` mode) or cannot be measured (no layout, as in jsdom). */
+  private textLimit(): number {
+    if (this.overflow === 'grow') return Infinity
+    const limit = this.dialog.clientHeight - (parseFloat(getComputedStyle(this.dialog).paddingBottom) || 0)
+    return limit > 0 ? limit : Infinity
+  }
+
+  /** Report an image that fails to load (the engine makes it a diagnostic). */
+  private watchImage(img: HTMLImageElement, what: string): void {
+    img.addEventListener('error', () => this.onAssetError?.(what, img.src))
+  }
+
+  private overflows(span: HTMLElement, limit: number): boolean {
+    return span.offsetTop + span.offsetHeight > limit
+  }
+
+  /** The index the page starting at `start` ends before: the next `{p}`, or (in
+   *  `page` mode) the first character past the box. Never an empty page. */
+  private pageEnd(items: LineItem[], start: number): number {
+    const limit = this.overflow === 'page' ? this.textLimit() : Infinity
+    for (let i = start; i < items.length; i++) {
+      const it = items[i]!
+      if (it.page) return i
+      if (it.span && limit !== Infinity && this.overflows(it.span, limit)) return i > start ? i : i + 1
+    }
+    return items.length
+  }
+
+  /** Take a finished page out of the flow so the next one starts at the top:
+   *  every node from the page's first character up to the next page's first
+   *  character (line breaks between them included). */
+  private hidePage(items: LineItem[], start: number, end: number): void {
+    const first = items.slice(start, end).find((it) => it.span)?.span
+    const next = items.slice(end).find((it) => it.span)?.span ?? null
+    if (!first) return
+    // Document order, so a page that starts or ends inside a word wrapper hides
+    // the wrapper's characters one by one and everything between as a whole.
+    // A page starting on a word's first character hides the whole word.
+    const wrapper = first.parentElement
+    const from = wrapper && wrapper !== this.textEl && wrapper.firstElementChild === first ? wrapper : first
+    let on = false
+    for (const el of this.textEl.querySelectorAll<HTMLElement>('*')) {
+      if (el === from) on = true
+      if (el === next) break
+      if (!on || (next && el.contains(next))) continue
+      el.classList.add('nilvn-off')
+    }
+  }
+
+  /** Move `start` past the page break itself. */
+  private nextPageStart(items: LineItem[], end: number): number {
+    let start = end
+    while (start < items.length && items[start]!.page) start++
+    return start
+  }
+
+  /** `shrink` mode: scale the text down (to half at most) until the last
+   *  character fits the box. */
+  private shrinkToFit(): void {
+    this.textEl.style.fontSize = ''
+    const limit = this.textLimit()
+    if (limit === Infinity) return
+    const spans = this.textEl.querySelectorAll<HTMLElement>('.nilvn-ch')
+    const last = spans[spans.length - 1]
+    if (!last) return
+    for (let k = 0.95; k >= 0.5 && this.overflows(last, limit); k -= 0.05) {
+      this.textEl.style.fontSize = `calc(var(--nilvn-text-size)*var(--nilvn-ui-scale)*${k.toFixed(2)})`
+    }
+  }
+
+  async typeLine(segments: Segment[], opts: TypeLineOptions): Promise<boolean> {
+    this.lineItems = this.layoutSegments(this.textEl, segments, false)
+    if (this.overflow === 'shrink') this.shrinkToFit()
+    this.lineStart = 0
+    this.linePage = 0
+    this.lineParked = false
+    try {
+      while (this.lineStart < this.lineItems.length) {
+        const items = this.lineItems
+        const start = this.lineStart
+        const end = this.pageEnd(items, start)
+        for (let i = start; i < end; i++) {
+          const item = items[i]!
+          if (!opts.alive()) return false
+          if (item.pause !== undefined) {
+            await this.skippableSleep(item.pause * 1000, opts.skip)
+            continue
+          }
+          if (!item.span) continue
+          item.span.classList.add('on')
+          opts.onReveal?.(item.handle!, item.effect)
+          const cps = opts.cps()
+          if (!opts.skip() && cps > 0) await this.skippableSleep(1000 / cps, opts.skip)
+        }
+        if (end >= items.length) return false
+        if (!opts.alive()) return false
+        this.lineParked = true
+        await opts.onPage?.()
+        this.lineParked = false
+        if (!opts.alive()) return false
+        if (this.lineItems === items) {
+          // No repaint happened while parked: turn the page of this layout.
+          this.hidePage(items, start, end)
+          this.lineStart = this.nextPageStart(items, end)
+        } else {
+          // A repaint swapped the line while parked (`repaintLine`): lineStart is
+          // the page the player was looking at in the new layout — turn that.
+          const cur = this.lineItems
+          if (this.lineStart >= cur.length) return true // the new text had no page after it: the tap ended the line
+          const curEnd = this.pageEnd(cur, this.lineStart)
+          this.hidePage(cur, this.lineStart, curEnd)
+          this.lineStart = this.nextPageStart(cur, curEnd)
+        }
+        this.linePage++
       }
-      item.span!.classList.add('on')
-      opts.onReveal?.(item.handle!, item.effect)
-      const cps = opts.cps()
-      if (!opts.skip() && cps > 0) await this.skippableSleep(1000 / cps, opts.skip)
+    } finally {
+      this.lineParked = false
+    }
+    return false
+  }
+
+  /** Re-render a line the player is parked INSIDE (at a page break) — a
+   *  language switch while a `{p}` page is up. The new text is laid out, its
+   *  pages before the current one are hidden, the current one shown, and the
+   *  typewriter continues from the page after it once the player advances
+   *  (or the tap ends the line when the new text has no more pages). Returns
+   *  false when no line is parked mid-way (the caller repaints with `setLine`). */
+  repaintLine(segments: Segment[], onSpan?: (span: TextSpan, effect: string | undefined) => void): boolean {
+    if (!this.lineParked) return false
+    const items = this.layoutSegments(this.textEl, segments, true, onSpan)
+    if (this.overflow === 'shrink') this.shrinkToFit()
+    let start = 0
+    for (let page = 0; ; page++) {
+      const end = this.pageEnd(items, start)
+      if (page === this.linePage || end >= items.length) {
+        for (let i = end; i < items.length; i++) items[i]!.span?.classList.remove('on')
+        this.lineItems = items
+        // The shown page's start (typeLine turns it on the next tap), or past
+        // the end when the new text has nothing after this page.
+        this.lineStart = end >= items.length ? items.length : start
+        return true
+      }
+      this.hidePage(items, start, end)
+      start = this.nextPageStart(items, end)
     }
   }
 
   setLine(segments: Segment[], onSpan?: (span: TextSpan, effect: string | undefined) => void): void {
-    this.layoutSegments(this.textEl, segments, true, onSpan)
+    const items = this.layoutSegments(this.textEl, segments, true, onSpan)
+    if (this.overflow === 'shrink') this.shrinkToFit()
+    // A repaint shows the line's LAST page (the one the player is parked on).
+    let start = 0
+    for (;;) {
+      const end = this.pageEnd(items, start)
+      if (end >= items.length) return
+      this.hidePage(items, start, end)
+      start = this.nextPageStart(items, end)
+    }
   }
 
-  showChoices(items: Segment[][], onSpan?: (span: TextSpan, effect: string | undefined) => void): ChoicePrompt {
-    this.choicesEl.replaceChildren()
+  setChoicesLayout(layout: ChoicesLayout): void {
+    this.choicesLayout = { ...layout }
+    for (const c of [...this.choicesEl.classList]) if (c.startsWith('nilvn-choices--')) this.choicesEl.classList.remove(c)
+    if (layout.position && layout.position !== 'center') this.choicesEl.classList.add(`nilvn-choices--${layout.position}`)
+  }
+
+  showChoices(items: ChoiceView[], onSpan?: (span: TextSpan, effect: string | undefined) => void, opts: ChoicesPromptOptions = {}): ChoicePrompt {
+    this.clearChoices()
+    const list = div(`nilvn-choices__list${this.choicesLayout.layout === 'grid' ? ' nilvn-choices__list--grid' : ''}`)
+    if (this.choicesLayout.columns) list.style.setProperty('--choices-columns', String(this.choicesLayout.columns))
     let resolve: (i: number | null) => void = () => {}
     const chosen = new Promise<number | null>((r) => {
       resolve = r
     })
+    const settle = (i: number | null): void => {
+      if (this.choicesTimer !== undefined) clearTimeout(this.choicesTimer)
+      this.choicesTimer = undefined
+      resolve(i)
+    }
     const buttons: HTMLButtonElement[] = []
-    const handles: ChoiceHandle[] = items.map((segments, index) => {
+    const handles: ChoiceHandle[] = items.map((item, index) => {
       const btn = document.createElement('button')
       btn.type = 'button'
-      btn.className = 'nilvn-choice'
-      this.layoutSegments(btn, segments, true, onSpan)
+      btn.className = `nilvn-choice${item.chosen ? ' chosen' : ''}`
+      if (item.disabled) btn.disabled = true
+      this.layoutSegments(btn, item.segments, true, onSpan)
       btn.addEventListener('click', (e) => {
         e.stopPropagation()
-        resolve(index)
+        if (!btn.disabled) settle(index)
       })
-      this.choicesEl.append(btn)
+      list.append(btn)
       buttons.push(btn)
       return { index, addClass: (name) => btn.classList.add(name), setVar: (name, value) => btn.style.setProperty(name, value) }
     })
+    if (opts.timer && opts.timer > 0) {
+      const bar = div('nilvn-choices__timer')
+      bar.style.setProperty('--choices-timer', `${opts.timer}s`)
+      list.append(bar)
+      const firstEnabled = items.findIndex((it) => !it.disabled)
+      const want = opts.timeoutIndex
+      const pick = want !== undefined && want >= 0 && want < items.length && !items[want]!.disabled ? want : firstEnabled
+      this.choicesTimer = window.setTimeout(() => settle(pick < 0 ? null : pick), opts.timer * 1000)
+    }
+    this.choicesEl.append(list)
     this.choicesEl.classList.add('on')
     return {
       handles,
       chosen,
-      cancel: () => resolve(null),
+      cancel: () => settle(null),
       relabel: (index, segments, on) => {
         const btn = buttons[index]
         if (btn) this.layoutSegments(btn, segments, true, on ?? onSpan)
@@ -1280,9 +1937,15 @@ export class DomRenderer implements Renderer, EditStage {
     }
   }
 
+  private clearChoices(): void {
+    if (this.choicesTimer !== undefined) clearTimeout(this.choicesTimer)
+    this.choicesTimer = undefined
+    this.choicesEl.replaceChildren()
+  }
+
   hideChoices(): void {
     this.choicesEl.classList.remove('on')
-    this.choicesEl.replaceChildren()
+    this.clearChoices()
   }
 
   showIndicator(on: boolean): void {
@@ -1315,7 +1978,11 @@ export class DomRenderer implements Renderer, EditStage {
     // Revealing: the overlay fully covers the screen at its start state, so the
     // fader underneath can vanish instantly without a visible pop.
     if (!cover) this.fader.style.opacity = '0'
-    if (shape === 'blinds') {
+    if (opts?.mask) {
+      // A rule image: the colour spreads over dark pixels first (cover), or leaves
+      // them first (reveal).
+      await animateRuleMask(overlay, opts.mask, dur, opts.softness ?? 0.1, cover, () => this.restoreGen !== gen)
+    } else if (shape === 'blinds') {
       overlay.style.background = 'none'
       const slats = 6
       const anims: Promise<void>[] = []
@@ -1379,9 +2046,10 @@ export class DomRenderer implements Renderer, EditStage {
       bgRef: this.bgRef,
       chars: [...this.chars].map(([id, slot]) => ({
         id,
-        src: slot.ref ?? slot.img.src,
+        src: slot.ref ?? slot.img?.src ?? '',
         at: pctOr(slot.el.style.left, 50),
         face: slot.face,
+        layers: slot.layers ? Object.fromEntries([...slot.layers].map(([name, l]) => [name, l.value])) : undefined,
         band: slot.band,
         ...restingState(slot),
       })),
@@ -1394,10 +2062,12 @@ export class DomRenderer implements Renderer, EditStage {
             loop: slot.spec.loop,
             at: pctOr(slot.el.style.left, 50),
             height: slot.spec.height,
+            onclick: slot.spec.onclick,
             band: slot.band,
             ...restingState(slot),
           }))
         : undefined,
+      hotspots: this.hotspots.size ? [...this.hotspots.values()].map((h) => ({ ...h.spec })) : undefined,
       windows: windowsState(this.windowModel, this.windowSkinRef ?? this.windowSkin),
       camera: cameraState(this.cameraModel),
       cover: coverState(this.fader),
@@ -1415,8 +2085,10 @@ export class DomRenderer implements Renderer, EditStage {
     state: StageState,
     faceUrl?: (charId: string, face: string) => string | undefined,
     resolveUrl?: (src: string) => string,
+    charLayers?: (charId: string, values: Record<string, string>) => Pick<CharOptions, 'layers' | 'canvas' | 'layerUrl'> | undefined,
   ): Promise<void> {
     this.restoreGen++ // invalidate any in-flight screen transition (see transitionScreen)
+    this.dropSnapshot() // and an armed scene transition: the restored picture is the truth
     const url = (src: string): string => (resolveUrl ? resolveUrl(src) : src)
     this.bgLayer.replaceChildren()
     this.bgRef = undefined
@@ -1434,12 +2106,16 @@ export class DomRenderer implements Renderer, EditStage {
     await this.clearChars(0)
     for (const c of state.chars) {
       // `src` is a ref in new saves and a resolved URL in older ones; the resolver
-      // passes a URL through unchanged, so both paint.
+      // passes a URL through unchanged, so both paint. A layered character is
+      // rebuilt from its layer values through the engine's actor templates.
+      const layered = c.layers && charLayers ? charLayers(c.id, c.layers) : undefined
+      if (c.layers && !layered) continue // the actor lost its layers: nothing to draw
       await this.showChar(c.id, url(c.src), {
         at: String(c.at),
         face: c.face,
         ref: c.src,
         faceUrl: faceUrl ? (f) => faceUrl(c.id, f) : undefined,
+        ...layered,
         fade: 0,
         y: c.y,
         scale: c.scale,
@@ -1454,12 +2130,14 @@ export class DomRenderer implements Renderer, EditStage {
     for (const s of state.sprites ?? []) {
       await this.showSprite(
         s.id,
-        { url: url(s.url), ref: s.url, frames: s.frames, fps: s.fps, loop: s.loop, at: String(s.at), height: s.height, y: s.y, scale: s.scale, rotation: s.rotation },
+        { url: url(s.url), ref: s.url, frames: s.frames, fps: s.fps, loop: s.loop, at: String(s.at), height: s.height, y: s.y, scale: s.scale, rotation: s.rotation, onclick: s.onclick },
         0,
       )
       this.applyRestingPose(`sprite:${s.id}`, s)
       if (s.band && s.band !== 'world') this.setBand(`sprite:${s.id}`, s.band)
     }
+    this.clearHotspots()
+    for (const h of state.hotspots ?? []) if (h && typeof h.id === 'string' && typeof h.onclick === 'string') this.showHotspot(h)
     // Camera resting transform: always reset to identity first (a restore to a
     // point before any camera work must not keep a later pan/zoom), then layer
     // the saved channels on. Fixes the pre-camera-support gap where a load /
@@ -1498,7 +2176,7 @@ export class DomRenderer implements Renderer, EditStage {
     this.showDialog(state.dialog)
     this.showIndicator(state.dialog)
     this.choicesEl.classList.remove('on')
-    this.choicesEl.replaceChildren()
+    this.clearChoices()
     // The full-screen cover is part of the saved stage, so restore it rather than always
     // clearing: a save taken between [transout] and [transin] must come back covered, or
     // the load resumes onto the scene the story is still hiding. No cover in the state

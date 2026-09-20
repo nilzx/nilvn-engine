@@ -89,7 +89,7 @@ export function parseTag(inner: string, line: number): ScriptNode {
   }
 
   if (name === 'choice') {
-    return { type: 'choices', items: [parseChoice(tokens, line)], line } satisfies ChoicesNode
+    return { type: 'choices', items: [parseChoice(tokens, inner, line)], line } satisfies ChoicesNode
   }
 
   const args: string[] = []
@@ -102,7 +102,7 @@ export function parseTag(inner: string, line: number): ScriptNode {
   return { type: 'command', name, args, params, raw: inner, line }
 }
 
-function parseChoice(tokens: string[], line: number) {
+function parseChoice(tokens: string[], inner: string, line: number) {
   const arrow = tokens.indexOf('->')
   if (arrow === -1 || arrow === tokens.length - 1) {
     // The line number rides on the diagnostic (parseScript) or the node (macros).
@@ -114,11 +114,19 @@ function parseChoice(tokens: string[], line: number) {
   const text = keyM ? '' : rawText
   const textKey = keyM ? keyM[1] : undefined
   const target = tokens[arrow + 1]!
+  // The conditions are read from the raw text so they may carry spaces, commas
+  // and quotes (`if=has(sys.endings, "true")`) — the tokenizer would split them.
+  const afterTarget = inner.indexOf(target, inner.indexOf('->')) + target.length
   let cond: string | undefined
-  for (const t of tokens.slice(arrow + 2)) {
-    if (t.startsWith('if=')) cond = t.slice(3)
+  let disabled: string | undefined
+  for (const part of inner.slice(afterTarget).split(/\s+(?=(?:if|disabled)=)/)) {
+    const m = /^(if|disabled)=(.*)$/s.exec(part.trim())
+    if (!m) continue
+    const expr = m[2]!.trim() || undefined
+    if (m[1] === 'if') cond = expr
+    else disabled = expr
   }
-  return { text, textKey, target, cond }
+  return { text, textKey, target, cond, disabled }
 }
 
 /** Split a tag's inner text into tokens, honoring "quoted values" */
@@ -149,7 +157,9 @@ function tokenize(s: string): string[] {
   return out
 }
 
-// Inline markup inside dialogue text: {effect:text} {w:sec} {br}. A backslash
+// Inline markup inside dialogue text: {effect:text} {w:sec} {br} {p}. `{$var}` and
+// `{@key}` are not markup: they pass through as text for `interpolateSegments`
+// (text.ts) to fill at display time. A backslash
 // escapes the next character, so a literal brace is written `\{` / `\}` (and a
 // literal backslash as `\\`). This lets authors type `{` in dialogue without it
 // being swallowed as markup — the editor escapes on write, we unescape here.
@@ -178,12 +188,17 @@ export function parseSegments(text: string): Segment[] {
         if (text[j] === ':') {
           j++
           let v = ''
-          while (j < n && text[j] !== '}') {
+          // A `{$var}` / `{@key}` placeholder inside the value stays whole (its own
+          // `}` is not the effect's); the engine interpolates it at display time.
+          let depth = 0
+          while (j < n && (text[j] !== '}' || depth > 0)) {
             if (text[j] === '\\' && j + 1 < n) {
               v += text[j + 1]
               j += 2
               continue
             }
+            if (text[j] === '{' && (text[j + 1] === '$' || text[j + 1] === '@')) depth++
+            else if (text[j] === '}') depth--
             v += text[j]
             j++
           }
@@ -193,6 +208,7 @@ export function parseSegments(text: string): Segment[] {
           flush()
           if (tag === 'w') segs.push({ kind: 'pause', sec: parseFloat(val ?? '') || 0.5 })
           else if (tag === 'br') segs.push({ kind: 'br' })
+          else if (tag === 'p') segs.push({ kind: 'page' })
           else segs.push({ kind: 'text', text: val ?? '', effect: tag })
           i = j + 1
           continue

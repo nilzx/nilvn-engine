@@ -128,9 +128,9 @@ export function makeVarsCap(engine: Engine, host: CapHost): VarsCap | undefined 
   const write = host.granted.has('vars.write')
   if (!write && !host.granted.has('vars.read')) return undefined
   return {
-    get: (name) => engine.vars[name],
-    has: (name) => Object.prototype.hasOwnProperty.call(engine.vars, name),
-    all: () => ({ ...engine.vars }),
+    get: (name) => engine.getVar(name),
+    has: (name) => Object.prototype.hasOwnProperty.call(engine.globals, name) || Object.prototype.hasOwnProperty.call(engine.vars, name),
+    all: () => engine.scope(),
     set: write ? (name, value) => engine.setVar(name, value) : (name) => host.warn(`vars.set("${name}") ignored — "vars.write" was not granted`),
   }
 }
@@ -308,6 +308,8 @@ export function makeDialogCap(engine: Engine, host: CapHost): DialogCap | undefi
     alert: async (message) => {
       await engine.stage.chrome.confirm(message, { ok: engine.t('ui.dialog.ok') })
     },
+    prompt: (message, opts = {}) =>
+      engine.stage.chrome.prompt(message, { ok: engine.t('ui.dialog.ok'), cancel: engine.t('ui.dialog.cancel'), position: engine.inputConfig.position, ...opts }).result,
     toast: (message) => engine.stage.chrome.toast(message),
   }
 }

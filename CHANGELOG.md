@@ -5,6 +5,180 @@ three packages share one version and one `engine-v*` tag. Entries before the
 repository was split out of the NilVN monorepo (September 2026) are condensed
 from its history.
 
+## 0.16.1 — 2026-09-21
+
+Fixes from a docs-only author round (a sample written against the public
+documentation alone).
+
+### Fixed
+
+- `[game] scripts` no longer moves `baseUrl` to the script files' folder: assets, aliases and plugin packages resolve from the config file's directory, so scripts may live in a subfolder.
+- `has(str, x)` on a string means "contains" (a comma-joined string works), as documented.
+- `[hotspot] if=` runs to the end of the tag, spaces and all, like a `[choice]`'s.
+- A language switch while the player is parked at a `{p}` page repaints that page (the tap ends the line when the new text has no page after it).
+- `[window] overflow = "page"` clips the text box, not the dialogue box: the name plate is no longer cut.
+- `list` widget items go through the catalogs (`@key`, `{$var}`); panels drawn before the script's first `[set]` show an undefined variable as empty without a diagnostic.
+- A sprite, layer or logo image that fails to load is reported as a diagnostic.
+- The typewriter wraps Latin words as words (CJK still per character).
+- A click (hotspot, panel button, sprite) that runs `[jump]` / `[call]` while a line is still typing takes effect at once instead of after the next tap.
+
+### Added
+
+- `[choices timer= default=]`: a per-prompt override of the `[choices]` countdown and default (`timer=0` turns it off for that prompt).
+- `[title] logoWidth`.
+
+### Docs
+
+- `[strings.<lang>]` lists every chrome string id; `hasContinue()` is async; the bare value in `[char id value]` is always the face layer; the map-screen example loops back; `skin=none` semantics and how to show a plain box for a scene.
+
+## 0.16.0 — 2026-09-21
+
+Batch I "core completion": text and variables, dialogue paging and the
+choices prompt, script files as chunks with `[include]` / `[call]` /
+`[preload]`, scene transitions and layered sprites, declarative UI, and a
+config schema. `@nilvn/plugins` 0.3.0 pairs with it.
+
+### Added
+
+- **Config schema.** `CONFIG_SCHEMA` (plain data, a JSON-Schema subset) and
+  `checkConfig(cfg)` describe `nilvn.config.toml`; `applyConfig` runs the
+  check, so a misspelled section or key, a wrong type or a value off its list
+  is a `load` diagnostic (`config: <path>: …`) instead of a silent no-op.
+  `[game] defaultLang` is honoured.
+- **Interpolation.** Dialogue, choice labels, actor names and config strings
+  fill `{$var}` (a session or persistent variable) and `{@key}` (a catalog entry,
+  re-resolved on a language switch) when shown. Placeholders nest inside an
+  effect (`{wave:{$player}}`); an effect whose whole content is `@key` resolves
+  it (`{pop:@route.name}`). An undefined variable shows as empty with one
+  diagnostic. `engine.fill(text)`, `interpolateText` / `interpolateSegments`.
+- **Persistent variables.** `[persist name = default …]` (or a `[persist]`
+  config section) declares variables that outlive the session: kept in the save
+  store's `globals` key (`GLOBALS_KEY`, `GlobalsPayload`), never in a
+  `SaveState`; `[set]` writes them, expressions and `{$var}` read them,
+  `onVarChange` fires. The engine maintains `sys.endings` (every ending reached)
+  and `sys.chosen` (every choice taken, by target label). API: `globals`,
+  `setGlobal`, `declarePersist`, `isPersistent`, `getVar`, `scope`.
+- **Expression functions** `has(list, x)`, `rand(n)` / `rand(a, b)` / `rand()`,
+  `min`, `max`, `floor`, `len` (`EXPR_FUNCTIONS`), and dotted variable names.
+- **`[input var prompt= default= maxlength= pattern= persist=true]`**: an
+  in-engine text box (never the browser's). Cancel or an empty OK yields
+  `default` — or the variable's current value when it has one; `pattern` gates
+  OK. The `[input]` config section (`skin` / `slice` / `sliceWidth`,
+  `position`, `ok` / `cancel`, `background` / `border` / `radius`, `field*`) and
+  ten `input-*` theme tokens style it; `inputTheme` exported; plugins get
+  `ui.dialog.prompt()`; `ChromeRenderer.prompt()` is the renderer seam.
+
+- **Paging.** `{p}` breaks a line into pages: the page waits for a tap (auto
+  and skip turn it), then the box clears and the rest types; the backlog keeps
+  the whole line and a voice clip plays on. `[window] overflow = "page"` also
+  breaks where the text would run past the box (the box is fixed at `height`);
+  `"shrink"` scales the text down until it fits; `"grow"` (default) is the old
+  stretching box. `Segment` gains `{ kind: 'page' }`; `TypeLineOptions.onPage`.
+- **`[choices]` config section** for the prompt: `position` (center / top /
+  bottom / left / right), `layout` column or grid with `columns`, `width`,
+  `gap`, `skin` (+ nine-slice `slice`), `chosenStyle = "dim"` (options taken in
+  an earlier run, from `sys.chosen`), `timer` + `timerDefault` (a bar shows the
+  time left, then the prompt picks by itself), and the look keys mapped onto
+  new `choice-*` tokens (`choices-gap`, `choice-width`, `choice-skin`,
+  `choice-skin-slice`, `choice-chosen-*`, `choice-disabled-*`,
+  `choice-timer-*`). `choicesTheme` exported.
+- **`[choice … disabled=cond]`** shows an option greyed and unpickable
+  (`if=` hides). Renderer seam: `showChoices(views, onSpan, opts)` takes
+  `ChoiceView`s (`segments`, `disabled`, `chosen`) and `ChoicesPromptOptions`;
+  `setOverflow`, `setChoicesLayout`.
+
+- **Several script files.** `[game] scripts = ["a.nvn", "b.nvn"]` (or
+  `engine.loadScripts()`) plays files in order as chunks: labels are global, a
+  file's stem names its first line, files fall through in list order, a save
+  addresses the file. A label defined twice is reported. `[include path]`
+  pastes a file in when the script file loads (relative to the including file,
+  eight levels deep, cycles reported). `[call label]` / `[return]` with the
+  return stack in `SaveState.calls`. `buildFileManifest`, `FileScriptLoader`,
+  `expandIncludes`, `scanLabels`, `scriptId` exported.
+- **Preloading.** The `[preload]` config section (`assets`, `auto`,
+  `concurrency`, `screen`, `heading`, `background`) warms the opening assets in
+  `prepare()` on a built-in loading page (`screens.loading`, `progress-*`
+  tokens, `ui.loading.title`); `[preload ref …]` warms mid-story
+  (`wait=true` blocks on the page); `engine.preload()`; the `onPreload` hook;
+  `ChromeRenderer.setProgress`. `scanAssetRefs` / `isImageUrl` exported.
+- Chunked play continues into a chunk's fall-through successor at its end even
+  when another chunk was appended after it by a jump (list / scene order wins
+  over physical order).
+
+- **Scene transitions.** `[trans kind …]` freezes the picture (a snapshot of
+  the camera), the scene changes underneath, and the next line — or
+  `[trans end]` — reveals it with `fade`, `crossfade`, `wipe`, `slide`,
+  `circle`, `blinds` or `rule` (`mask=` a luminance image, `softness=`);
+  `[bg image trans=kind]` swaps a background the same way. Renderer seam:
+  `beginTransition` / `endTransition` / `transitionPending`;
+  `transitionScreen` takes `mask` too. `armTransition` / `commitTransition`.
+- **Layered sprites.** `[actors.<id>] canvas = [w, h]` with
+  `[actors.<id>.layers]` (`src` template `{layer}`, `default`, `offset`,
+  `optional`) draws a character from several images on one canvas;
+  `[char id face body=casual extra=blush]` sets layers by name,
+  `speaker(face):` drives the `face` layer, `extra=none` clears an optional
+  one. Saves keep the layer values (`StageState.chars[].layers`); a `face`
+  keyframe repaints the face layer; `[preload] auto` warms every layer image.
+  `CharOptions.layers` / `canvas` / `layerUrl`, `Renderer.charLayers`.
+
+- **Declarative UI.** `[ui.<id>]` config sections draw a HUD (pinned to one of
+  nine anchors) or a window from data-bound widgets — `text`, `bar`, `image`,
+  `list`, `button` — with `if` conditions, `show = playing | always | manual`,
+  `[ui show|hide|toggle id]` (the decisions ride in `SaveState.ui`), `ui:<id>`
+  entries for `[menu] items` / `[title] buttons`, and `hud-*` / `window-*` /
+  `bar-*` tokens. Panels re-render on every variable, language and session
+  change. `engine.ui`, `UiPanels` exported.
+- **Events are script commands.** A `button`'s `onclick`, `[hotspot id x= y=
+  w= h= onclick= if=]` (`remove` / `clear`; saved with the stage) and
+  `[sprite … onclick=]` run their commands in the current session through
+  `engine.runInline()`; when they move the playhead the parked line is
+  released. Renderer seam: `showHotspot` / `hideHotspot` / `clearHotspots`,
+  `objectClick`, `SpriteSpec.onclick`, `StageState.hotspots`.
+
+### Fixed
+
+- A choice's `if=` condition was cut at the first space (the tag tokenizer);
+  it is now read from the raw tag, so `if=has(sys.endings, "true") && x > 1`
+  works.
+- The settings blob is written only when a setting changed; reading a line or
+  writing a variable no longer rewrites it (which pinned the current language
+  as the player's choice).
+
+- A `loadConfig()` after `createEngine()` — the documented order — left the
+  system menu as it was built at construction: `[menu] items` / `entry` and
+  `[strings]` labels did not apply (the config and `engine.t()` were right; the
+  screen was not). `applyConfig` now rebuilds the menu (`engine.refreshMenu()`);
+  plugin menu entries survive, and a changed `[menu] enabled` creates or removes it.
+
+### Added
+
+- **`[keys]`** / `createEngine({ keys })`: keyboard bindings for the shell —
+  `advance`, `menu`, `skipHold`, `skip`, `auto`, `quicksave`, `quickload`,
+  `backlog`, `save`, `load`, `settings`, `fullscreen`. Defaults: Space / Enter,
+  Esc, Ctrl (held), Tab, `a`, F5, F9; the rest unbound. `Ctrl+` / `Shift+` /
+  `Alt+` / `Meta+` prefixes, arrays, `false` to unbind; bound keys are consumed
+  (F5 no longer reloads), text fields keep their keys. The menu's actions bind
+  only while the menu exists. `KEYS_DEFAULT`, `matchKey`, `parseBinding` exported.
+- The text-speed setting is a linear slider in characters per second
+  (`[settings] textSpeedRange`, default `[10, 100]`); its top notch is
+  **instant** (`textSpeed = 0`). The three-step slow / normal / fast row and its
+  `ui.settings.speed.slow|normal|fast` strings are gone (`ui.settings.speed.cps`
+  / `.instant` replace them).
+- The backlog draws each speaker's name as the name tag does: the actor's
+  `color` (background) and `textColor`, the theme's `name-*` tokens otherwise
+  (`BacklogEntry.actor`).
+- Theme tokens `button-on-bg` / `button-on-color` for the selected state of menu
+  items, settings options and slot pages (was hard-wired to `accent`), so a
+  light accent can keep a readable selection; the docs now list what `accent`
+  reaches. `dialog-skin-slice` + `[window] slice` / `sliceWidth`: a nine-slice
+  dialogue skin (`border-image`) instead of a whole-image stretch.
+- Quick save / load from the keyboard confirm with a stage toast.
+- The title and ending pages' primary button draws with `button-on-bg` /
+  `button-on-color` too (it used `accent` with the plain button text colour, so
+  a light accent lost its label). The text-speed slider's step is the coarsest
+  of 1 / 2 / 5 / 10 that divides the configured range, so a configured speed
+  always sits on a notch.
+
 ## 0.15.0 — 2026-09-20
 
 A finished visual novel out of the box: the engine now carries the whole shell —

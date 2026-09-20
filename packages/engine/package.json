@@ -1,6 +1,6 @@
 {
   "name": "@nilvn/engine",
-  "version": "0.15.0",
+  "version": "0.16.1",
   "type": "module",
   "description": "NilVN — a tiny DOM-based ADV / visual-novel engine with story-like script syntax and a capability-sandboxed plugin host",
   "license": "MIT",

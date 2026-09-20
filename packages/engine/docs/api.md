@@ -41,6 +41,7 @@ only exceptions the engine throws are host programming errors (for example
 | `defaults` | `Record<cmd, Record<param, value>>` | Per-command default parameters. |
 | `theme` | `Record<token, value>` | Theme overrides — the base layer (see [Theming](#theming)). |
 | `title`, `endings`, `saves`, `menu`, `settings` | `TitleConfig`, `Record<id, EndingConfig>`, `SavesConfig`, `MenuConfig`, `SettingsConfig` | The built-in pages, the slots and autosave, the system menu and the settings panel — the config file's `[title]` / `[ending.<id>]` / `[saves]` / `[menu]` / `[settings]` (see [config.md](config.md#title)). |
+| `keys` | `KeysConfig` | Keyboard bindings (`[keys]`, see [config.md](config.md#keys)); `KEYS_DEFAULT` is the base. |
 | `messages` | `Record<lang, Record<id, string>>` | Chrome string overrides (`[strings.<lang>]`). |
 | `pluginConfig` | `Record<pluginId, Record<key, value>>` | Plugin settings (`[plugins.<id>]`); short first-party names work. |
 | `screens` | `false` \| `{ title?, ending?, menu? }` | `false` = the engine draws no chrome at all (a host that owns its own); per piece otherwise. |
@@ -82,12 +83,13 @@ actors, languages and plugin set.
 | `jump(label)` | Move the playhead to a label (loads its chunk first in chunked play). |
 | `restart()` | Fresh variables, blank stage, silence, then play from the beginning. |
 | `showTitle()` | Stop any run, clear the session (variables, stage, audio, backlog), enter the `title` state and draw the title page — what `[title]` does. `start()` from there is a fresh game. |
-| `continueGame()` / `hasContinue()` | Resume from the autosave (the title page's Continue) / whether one exists. |
+| `continueGame()` / `hasContinue()` | Resume from the autosave (the title page's Continue) / whether one exists — both async (`await engine.hasContinue()`; the store is asynchronous). |
 | `auto` / `setAuto(on)`, `skip` / `setSkip(on)` | Auto mode (lines advance by themselves; a tap ends it) and skip mode (read lines — or everything per `skipMode` — pass at once; ends at the first unread line and at every choice). Holding Ctrl skips while held. |
 | `autoDelay` / `setAutoDelay(sec)`, `skipMode` / `setSkipMode(mode)` | Auto's pause and skip's reach — player settings, persisted. |
 | `getVolume(ch)` / `setVolume(ch, v)`, `dialogOpacity` / `setDialogOpacity(v)`, `uiScale` / `setUiScale(v)`, `isFullscreen()` / `setFullscreen(on)` | The other player settings the panel drives (the two sliders write the `dialog-opacity` / `ui-scale` theme tokens). |
 | `saveSlot(n)` / `loadSlot(n)`, `quickSave()` / `quickLoad()`, `writeSave(key)` / `readSave(key)` / `loadSave(key)` / `deleteSave(key)` | The slot API the menu's screen sits on (`slot:<n>`, `quick`, `auto`). |
 | `openMenu(panel)` | Open one of the menu's panels — `saves` / `load` / `backlog` / `replays` / `settings`. |
+| `refreshMenu()` | Rebuild the system menu from the current `menuConfig` / `settingsConfig` / `messages` / `keysConfig` (what `applyConfig` does after a `loadConfig`); creates or removes it when `[menu] enabled` changed. Plugin menu entries survive. |
 | `t(id, params?)` | A chrome string in the work's language (overrides, then the engine catalog). |
 | `setPluginConfig(id, patch, { player? })` / `pluginConfigValue(id, key)` / `pluginConfigAll(id)` / `onPluginConfigChange(id, fn)` | A plugin's settings: the author's layer, or the player's with `player: true` (persisted); what `ctx.config` reads. |
 | `actorField(actorId, pluginId, key)` | A plugin-declared actor field (`contributes.actorFields`), e.g. voicefx's `voice`. |
@@ -95,7 +97,18 @@ actors, languages and plugin set.
 | `session` / `ending` / `onSessionChange(fn)` | Where the session is, which ending was reached, and the subscription (see [Session](#session)). |
 | `destroy()` | Stop everything, release listeners, timers, audio, plugins and the stage DOM. The instance is dead afterwards. |
 | `wait(sec)` / `sleep(ms)` | Delays that resolve early if the session is reset. |
-| `vars` | Script variables (`[set]` writes them; `[if]` and choice conditions read them). |
+| `vars` | Session variables (`[set]` writes them; `[if]`, choice conditions and `{$var}` read them). Part of a save. |
+| `globals` / `setGlobal(name, value)` / `declarePersist(name, default)` / `isPersistent(name)` | Persistent variables: declared by `[persist]` / the `[persist]` section / `[input persist=true]` (or `declarePersist`), plus the reserved `sys.*` names. Kept in the save store's `globals` key, never in a `SaveState`; `setVar` routes a persistent name here. |
+| `getVar(name)` / `scope()` | One variable (persistent first), and the merged table expressions evaluate against. |
+| `fill(text)` | `{$var}` / `{@key}` placeholders filled with current values — what dialogue, choices, actor names and config strings go through. |
+| `promptInput(name, { prompt, default, maxlength, pattern, persist })` | The `[input]` command: an in-engine text box; resolves to the value written. |
+| `choicesConfig` / `inputConfig` | The `[choices]` / `[input]` sections as applied (chosen style, timer; position, labels). |
+| `loadScripts(urls)` / `scripts` | Play several `.nvn` files as chunks (`[game] scripts`): global labels, list-order fall-through, saves addressing the file. `[include]` lines are spliced in (also by `loadScript`). |
+| `call(label)` / `returnFromCall()` | `[call]` / `[return]`: the return stack rides in `SaveState.calls`. |
+| `ui` | The declarative panels (`[ui.<id>]`): `show(id)` / `hide(id)` / `toggle(id)` / `isShown(id)` / `has(id)` / `refresh()`. |
+| `runInline(commands, source?)` / `chromeString(s)` | Run script commands from a click (a panel button, a hotspot, a sprite) in the current session; a config string with `@key` / `{$var}` resolved. |
+| `armTransition(kind, opts)` / `commitTransition()` | `[trans …]`: freeze the picture, reveal it later with the effect (the next line commits by itself). |
+| `preload(refs, { screen })` / `preloadConfig` | Warm assets (images decoded, the rest fetched) on the loading page; `prepare()` does it once per loaded content from the `[preload]` section. `onPreload` fires per asset. |
 | `actors` | The actor table. |
 | `textSpeed` | Typewriter speed; changing it applies mid-line. |
 | `resolve(path)` | Resolve a resource path: aliases, then the asset table, then `baseUrl`. |
@@ -169,8 +182,10 @@ button, follows a language switch, and draws with the theme's `panel-*` /
 
 `engine.saveStore` is where the engine's own persistence goes: the slots
 (`slot:<n>`), the quick save (`quick`), the autosave (`auto`), the player
-settings (`settings`), the read-line set behind skip mode (`read`) and the
-replay unlocks (`unlocks`) — key constants are exported. The default is
+settings (`settings`), the read-line set behind skip mode (`read`), the
+replay unlocks (`unlocks`) and the persistent variables (`globals`, a
+`GlobalsPayload` `{ v: 1, vars }` holding every persistent value the work ever
+wrote) — key constants are exported. The default is
 `localStorage` under `nilvn:<saveKey>:<key>` (`LocalStorageSaveStore`;
 `MemorySaveStore` for hosts without storage); a shell passes its own `SaveStore`
 (`get` / `set` / `remove` / `keys`, all async, JSON values). A save is a
@@ -186,10 +201,14 @@ const save = engine.saveState()          // SaveState, JSON-serializable
 const ok = await engine.restoreState(save)
 ```
 
+A layered character saves its layer values (`stage.chars[].layers`) and is
+rebuilt from the actor's templates on load.
+
 `SaveState` (`v: 2`) holds the playhead as a `{ label, offset }` address (stable
 across re-exports that keep the labels), the variables, a stage snapshot, the text
-speed, the language, the playing music and ambience tracks, and `ext` — one slice
-per plugin that declared `save.slice`. `restoreState` returns `false` without
+speed, the language, the playing music and ambience tracks, the pending
+`[call]` returns (`calls`), the panels' show decisions (`ui`), and `ext` — one slice per plugin that declared
+`save.slice`. `restoreState` returns `false` without
 touching anything when the save is incompatible (wrong version, a label that no
 longer exists, an out-of-range offset). A slice whose plugin is not active is
 carried through to the next save untouched.
@@ -224,10 +243,11 @@ anyway, so typos surface without breaking the page.
 |---|---|---|
 | `font` | PingFang SC, Hiragino Sans GB, Microsoft YaHei, system-ui | The stage font. |
 | `ui-scale` | `1` | Multiplies every chrome font size (`text-size`, `name-size`, `choice-size`) — the one knob for small screens. |
-| `accent` | `#7c5cff` | The accent colour; `name-bg` defaults to it. |
+| `accent` | `#7c5cff` | The accent colour. Reach: the default of `name-bg` and `button-on-bg`, the sliders' thumbs, the backlog's ▶ buttons, the title / ending pages' primary button through `button-on-bg`. |
 | `text` | `#f4f5fa` | Base text colour of the stage; `text-color` defaults to it. |
 | `dialog-bg` | dark gradient | Dialogue box background (any CSS background). |
 | `dialog-skin` | `none` | An image stretched over the box (`url(…)`), above `dialog-bg`. |
+| `dialog-skin-slice` | `none` | A nine-sliced skin instead: a full CSS `border-image` value (`[window] slice` builds it — `url(…) 40 fill / 40px stretch`). |
 | `dialog-border` | `1px solid rgba(255,255,255,.14)` | Box border (`none` to drop it). |
 | `dialog-radius` | `1.8cqh` | Corner radius. |
 | `dialog-opacity` | `1` | Opacity of the default chrome (background + skin), not of the text. |
@@ -241,9 +261,22 @@ anyway, so typos surface without breaking the page.
 | `name-size` / `name-offset` | `2.7cqh` / `2.4cqw` | Name-tag font size and left offset. |
 | `indicator-color` / `indicator-size` | `rgba(255,255,255,.85)` / `1.4cqh` | The click-to-continue triangle. |
 | `choices-backdrop` | `rgba(5,6,12,.35)` | The veil behind a choices prompt. |
+| `choices-gap` / `choice-width` | `2.6cqh` / `38cqw` | Space between the buttons; each button's minimum width. |
+| `choice-skin` / `choice-skin-slice` | `none` | An image on every button, stretched or nine-sliced (`[choices] skin` / `slice` build them). |
+| `choice-chosen-bg` / `choice-chosen-color` | dimmer gradient / `rgba(255,255,255,.6)` | An option taken in an earlier run (`[choices] chosenStyle = "dim"`). |
+| `choice-disabled-bg` / `choice-disabled-color` | | A `disabled=` option. |
+| `choice-timer-bg` / `choice-timer-color` | | The time-left bar of a timed prompt. |
+| `progress-bg` / `progress-color` | | The loading page's progress bar. |
+| `hud-bg` / `hud-border` / `hud-color` / `hud-radius` / `hud-padding` / `hud-size` | | A `[ui.<id>]` HUD. |
+| `window-bg` / `window-border` / `window-color` / `window-radius` / `window-padding` / `window-width` | the `panel-*` values | A `[ui.<id>]` window. |
+| `bar-bg` / `bar-color` / `bar-height` | | The `bar` widget. |
 | `choice-bg` / `choice-color` / `choice-border` / `choice-hover` / `choice-radius` / `choice-size` | | Choice buttons. |
 | `panel-bg` / `panel-border` / `panel-color` | | Menus, screens and plugin panels. |
 | `button-bg` / `button-color` / `button-border` / `button-hover` | | Buttons on those panels. |
+| `button-on-bg` / `button-on-color` | `var(--nilvn-accent)` / `var(--nilvn-button-color)` | The selected / primary state: an active auto / skip item, the chosen option in a settings row, the current slot page, the title and ending pages' primary button. Set both when your `accent` is light, so the selected text keeps its contrast. |
+| `input-box-bg` / `input-box-border` / `input-box-radius` | the `panel-*` values / `1.4cqh` | The `[input]` box. |
+| `input-box-skin` / `input-box-skin-slice` | `none` | An image behind the `[input]` box, stretched or nine-sliced (`[input] skin` / `slice` build them). |
+| `input-bg` / `input-color` / `input-border` / `input-radius` / `input-size` | | The `[input]` text field. |
 
 Sizes use container units (`cqh` / `cqw` = 1 % of the stage height / width) so
 they scale with the stage, not the viewport. The stage itself is a fixed 16:9 box
@@ -295,7 +328,7 @@ stylesheet that read it, but the engine no longer reads it; use `name-bg`.
 | `lang`, `defaultLang`, `languages` | Current content language, fallback, and the switchable set. |
 | `catalogs` | Content text by language and key. |
 | `resolveText(key)` | A key in the current language, then the default language, then `''`. |
-| `setLanguage(lang)` | Switch content and chrome language and repaint the line or choices on screen in place; playback state is untouched. Ignored for a language with no catalog. Async, because chunked play may need to fetch that language's text slice first. |
+| `setLanguage(lang)` | Switch content and chrome language and repaint the line or choices on screen in place (a line parked at a `{p}` page repaints that page); playback state is untouched. Ignored for a language with no catalog. Async, because chunked play may need to fetch that language's text slice first. |
 | `onLanguageChange(fn)` | Subscribe to switches; returns an unsubscribe function. |
 
 Chrome strings: the engine's own pages carry theirs (`en` base, `zh`, `ja`;
@@ -420,10 +453,18 @@ build on the stage directly.
 | `LocalStorageSaveStore`, `MemorySaveStore`, `AUTOSAVE_KEY`, `isSlotPayload` | The persistence seam's bundled stores and the autosave's key / payload guard (see [Saves and persistence](#saves-and-persistence)). |
 | `titleModel(cfg, host)`, `endingModel(id, cfg, host)`, `screenBackground`, `TITLE_BUTTONS_DEFAULT`, `CHROME_STRING_IDS` | The built-in pages' model builders and the chrome string ids. |
 | `THEME_TOKENS`, `THEME_PREFIX`, `isThemeToken(key)`, `themeVar(key)`, `windowTheme(win, resolve)` | The theme contract: the token table with defaults, the `--nilvn-` prefix, and the `[window]` → tokens mapping (see [Theming](#theming)). |
+| `KEYS_DEFAULT`, `matchKey(binding, event)`, `parseBinding(binding)`, `MENU_ITEMS_DEFAULT`, `SETTINGS_ROWS_DEFAULT`, `TEXT_SPEED_RANGE_DEFAULT` | The keyboard defaults and matcher (`[keys]`), the menu's default items, the settings panel's default rows and the text-speed slider's default range. |
 | `parseScript(text)` | `{ nodes, labels, diagnostics }` — the node stream a script becomes. |
 | `parseSegments(text)` | Inline markup → text / pause / break segments. |
 | `parseTag(inner, line)` | One `[…]` tag → a node (macros expand through it). |
-| `evalExpr(src, vars)` / `truthy(value)` | The `[set]` / `[if]` expression evaluator. |
+| `Renderer.showHotspot(spec)` / `hideHotspot(id)` / `clearHotspots()` / `objectClick` | Clickable regions (`HotspotSpec`, saved in `StageState.hotspots`) and the callback the engine installs to run an object's `onclick`; `SpriteSpec.onclick` makes a sprite clickable. |
+| `Renderer.beginTransition()` / `endTransition(kind, opts)` / `transitionPending()` / `charLayers(id)` | The scene-transition seam (a frozen snapshot of the camera, revealed with one of the kinds or a rule mask) and a layered character's current values; `transitionScreen` takes `mask` too. |
+| `evalExpr(src, vars)` / `truthy(value)` / `EXPR_FUNCTIONS` | The `[set]` / `[if]` expression evaluator and its function whitelist (`has`, `rand`, `min`, `max`, `floor`, `len`). |
+| `interpolateText(text, host)` / `interpolateSegments(segments, host)` / `displayValue(v)` | The `{$var}` / `{@key}` filling behind `engine.fill()`, for tooling that renders script text outside an engine. |
+| `CONFIG_SCHEMA` / `checkConfig(cfg, { skip })` | The config file's schema (plain data, a JSON-Schema subset) and the checker `applyConfig` runs: unknown sections / keys, wrong types, values off their lists become `load` diagnostics (`config: <path>: …`). |
+| `inputTheme(input, resolve)` / `choicesTheme(cfg, resolve)` | The `[input]` → `input-*` and `[choices]` → `choice-*` tokens mappings. |
+| `buildFileManifest(files, lang)` / `FileScriptLoader` / `expandIncludes(text, url, host)` / `scanLabels` / `scriptId` | The multi-file machinery: script files as a chunk manifest, the in-memory loader, `[include]` splicing. |
+| `scanAssetRefs(nodes, actors)` / `isImageUrl(url)` | What a script references (built-in commands, face sprites) — behind `[preload] auto`. |
 | `decodeTracks`, `sampleContinuous`, `sampleContinuousCarry`, `discreteAt`, `easeFn` | The keyframe wire codec and the interpolation the engine plays with (shared with tooling that scrubs the same animations). |
 
 ## Packages

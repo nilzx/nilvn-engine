@@ -23,6 +23,8 @@ export interface ChromeHost {
   hasContinue: boolean
   /** Buttons plugins contributed (`titleItems`), appended after the configured ones. */
   extraButtons?: ScreenButton[]
+  /** A button for an id the model does not know (`ui:<panel>`), or undefined. */
+  customButton?(id: string): ScreenButton | undefined
   actions: {
     newGame(): void
     continueGame(): void
@@ -63,8 +65,11 @@ export function titleModel(cfg: TitleConfig, host: ChromeHost): { model: ScreenM
           buttons.push({ id, label: host.t(`ui.title.${id}`), onSelect: () => open(id === 'load' ? 'saves' : 'settings') })
         }
         break
-      default:
-        unknownButtons.push(id)
+      default: {
+        const custom = host.customButton?.(id)
+        if (custom) buttons.push(custom)
+        else unknownButtons.push(id)
+      }
     }
   }
   for (const b of host.extraButtons ?? []) buttons.push(b)
@@ -72,6 +77,7 @@ export function titleModel(cfg: TitleConfig, host: ChromeHost): { model: ScreenM
     heading: host.text(cfg.heading) ?? host.workTitle,
     subtitle: host.text(cfg.subtitle),
     logo: cfg.logo ? host.resolve(cfg.logo) : undefined,
+    logoWidth: typeof cfg.logoWidth === 'number' ? `${cfg.logoWidth}px` : cfg.logoWidth,
     background: screenBackground(cfg.background, host.resolve),
     layout: cfg.layout ?? 'center',
     buttons,

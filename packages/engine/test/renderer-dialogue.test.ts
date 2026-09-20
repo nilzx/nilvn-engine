@@ -70,7 +70,7 @@ describe('Renderer.typeLine', () => {
 describe('Renderer.showChoices', () => {
   it('one button per item, sealed handles, a click resolves the index', async () => {
     const r = renderer()
-    const prompt = r.showChoices([parseSegments('A'), parseSegments('B')])
+    const prompt = r.showChoices([{ segments: parseSegments('A') }, { segments: parseSegments('B') }])
     expect(prompt.handles.map((h) => h.index)).toEqual([0, 1])
     prompt.handles[1]!.addClass('cfx')
     prompt.handles[1]!.setVar('--cfx-delay', '0.12s')
@@ -88,7 +88,7 @@ describe('Renderer.showChoices', () => {
 
   it('cancel() resolves null; relabel repaints one button', async () => {
     const r = renderer()
-    const prompt = r.showChoices([parseSegments('A')])
+    const prompt = r.showChoices([{ segments: parseSegments('A') }])
     prompt.relabel(0, parseSegments('甲'))
     expect(r.choicesEl.querySelector('.nilvn-choice')!.textContent).toBe('甲')
     prompt.cancel()

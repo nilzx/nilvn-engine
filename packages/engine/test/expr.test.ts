@@ -47,6 +47,47 @@ describe('evalExpr', () => {
   })
 })
 
+describe('functions and dotted names', () => {
+  it('reads dotted variable names as one identifier', () => {
+    expect(evalExpr('sys.runs + 1', { 'sys.runs': 2 })).toBe(3)
+    expect(evalExpr('1.5 + 1', {})).toBe(2.5) // a number's dot is still a number's
+  })
+
+  it('has() reads a list or a string, loosely', () => {
+    expect(evalExpr("has(sys.endings, 'true')", { 'sys.endings': ['true', 'bad'] })).toBe(true)
+    expect(evalExpr("has(sys.endings, 'x')", { 'sys.endings': ['true'] })).toBe(false)
+    expect(evalExpr('has(route, "a")', { route: 'a' })).toBe(true)
+    expect(evalExpr('has(nothing, "a")', {})).toBe(false)
+  })
+
+  it('min / max / floor / len', () => {
+    expect(evalExpr('min(3, 1, 2)', {})).toBe(1)
+    expect(evalExpr('max(hp, 10)', { hp: 42 })).toBe(42)
+    expect(evalExpr('floor(7 / 2)', {})).toBe(3)
+    expect(evalExpr('len(name)', { name: 'Rin' })).toBe(3)
+    expect(evalExpr('len(list)', { list: [1, 2] })).toBe(2)
+    expect(evalExpr('len(n)', { n: 5 })).toBe(0)
+  })
+
+  it('rand(n) / rand(a, b) / rand() stay in range', () => {
+    for (let i = 0; i < 50; i++) {
+      const n = evalExpr('rand(3)', {}) as number
+      expect([0, 1, 2]).toContain(n)
+      const r = evalExpr('rand(5, 6)', {}) as number
+      expect([5, 6]).toContain(r)
+      const f = evalExpr('rand()', {}) as number
+      expect(f >= 0 && f < 1).toBe(true)
+    }
+  })
+
+  it('nests calls and rejects anything off the whitelist', () => {
+    expect(evalExpr('max(min(5, 9), floor(2.7))', {})).toBe(5)
+    expect(() => evalExpr('eval("x")', {})).toThrow(/Unknown function "eval"/)
+    expect(() => evalExpr('constructor(1)', {})).toThrow(/Unknown function/)
+    expect(() => evalExpr('min(1,', {})).toThrow()
+  })
+})
+
 describe('truthy', () => {
   it('mirrors JS boolean coercion', () => {
     expect(truthy(0)).toBe(false)

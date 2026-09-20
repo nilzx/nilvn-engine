@@ -35,6 +35,15 @@ describe('parseScript', () => {
 })
 
 describe('parseTag', () => {
+  it('reads a choice condition from the raw text, so it may hold spaces, commas and quotes', () => {
+    const node = parseTag('choice Secret path -> secret if=has(sys.endings, "true") && trust >= 1', 1)
+    expect(node.type === 'choices' && node.items[0]).toEqual({ text: 'Secret path', textKey: undefined, target: 'secret', cond: 'has(sys.endings, "true") && trust >= 1' })
+    const bare = parseTag('choice Go -> go if=trust>=1', 1)
+    expect(bare.type === 'choices' && bare.items[0]!.cond).toBe('trust>=1')
+    const none = parseTag('choice Go -> go', 1)
+    expect(none.type === 'choices' && none.items[0]!.cond).toBeUndefined()
+  })
+
   it('splits a command into name / positional args / named params', () => {
     expect(parseTag('bg room fade=300', 1)).toMatchObject({
       type: 'command',
@@ -73,6 +82,16 @@ describe('parseSegments', () => {
 
   it('captures an inline effect as an effect-tagged text segment', () => {
     expect(parseSegments('{shake:boom}')).toEqual([{ kind: 'text', text: 'boom', effect: 'shake' }])
+  })
+
+  it('leaves {$var} / {@key} placeholders as text, whole, even inside an effect', () => {
+    expect(parseSegments('Hi {$player}!')).toEqual([{ kind: 'text', text: 'Hi {$player}!' }])
+    expect(parseSegments('{wave:{$player}} and {pop:@k.x}')).toEqual([
+      { kind: 'text', text: '{$player}', effect: 'wave' },
+      { kind: 'text', text: ' and ' },
+      { kind: 'text', text: '@k.x', effect: 'pop' },
+    ])
+    expect(parseSegments('{wave:a {@k} b}')).toEqual([{ kind: 'text', text: 'a {@k} b', effect: 'wave' }])
   })
 
   it('unescapes a backslashed brace to a literal', () => {

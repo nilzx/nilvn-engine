@@ -46,6 +46,15 @@ export interface CharOptions {
    *  characters shown by raw `src=` (no template); then `setFace` only records the
    *  name, can't swap art. */
   faceUrl?: (face: string) => string | undefined
+  /** Layered sprite: the images composed over `canvas`, bottom to top. When
+   *  given, `url` is ignored; a later call replaces the set (a layer whose url
+   *  changed cross-fades, a layer no longer listed goes). */
+  layers?: CharLayer[]
+  /** The layers' shared canvas in image pixels (`[width, height]`). */
+  canvas?: [number, number]
+  /** Resolve a layer's value to a URL, so a `face` channel change re-paints the
+   *  `face` layer (the engine owns path resolution). */
+  layerUrl?: (layer: string, value: string) => string | undefined
 }
 
 /** A sprite-frame animation: a single-row spritesheet played as a frame loop.
@@ -78,6 +87,20 @@ export interface SpriteSpec {
   scale?: number
   /** Birth rotation in degrees — seeds the resting transform's rotation channel. */
   rotation?: number
+  /** Script commands (one per line) the engine runs when the sprite is clicked;
+   *  the sprite takes pointer events only when set. */
+  onclick?: string
+}
+
+/** A clickable region of the stage (`[hotspot]`), in percent of the stage. */
+export interface HotspotSpec {
+  id: string
+  x: number
+  y: number
+  w: number
+  h: number
+  /** Script commands (one per line) run on click. */
+  onclick: string
 }
 
 // ---- object transform model ----
@@ -166,6 +189,37 @@ export interface TransitionOpts {
   shape?: TransitionShape
   dir?: TransitionDir
   color?: string
+  /** A rule image URL (a luminance ramp): dark pixels change first. Replaces `shape`. */
+  mask?: string
+  /** Edge softness of a rule mask, 0..1 (default 0.1). */
+  softness?: number
+}
+
+/** How the old picture gives way to the new one (`Renderer.endTransition`). */
+export type TransitionKind = 'fade' | 'crossfade' | 'wipe' | 'slide' | 'circle' | 'blinds' | 'rule'
+export interface SceneTransitionOpts {
+  /** Seconds (default 0.6). */
+  duration?: number
+  /** `wipe` / `slide`: which way the edge (or the old picture) travels. */
+  dir?: TransitionDir
+  /** `fade`: the colour passed through (default `#000`). */
+  color?: string
+  /** A rule image URL (a luminance ramp): dark pixels change first. Kind `rule`
+   *  needs one; any kind with a mask becomes a rule transition. */
+  mask?: string
+  /** Edge softness of a rule mask, 0..1 (default 0.1). */
+  softness?: number
+}
+
+/** One layer of a layered character sprite as the renderer draws it. */
+export interface CharLayer {
+  name: string
+  value: string
+  url: string
+  /** The unresolved path (saved instead of the URL). */
+  ref?: string
+  /** Where a cropped layer sits on the canvas, in canvas pixels. */
+  offset?: [number, number]
 }
 
 /** A serializable picture of the visible stage, used by save/load.
@@ -190,10 +244,14 @@ export interface StageState {
   chars: {
     id: string
     /** The sprite ref when the character was shown from a script path (re-
-     *  resolved on load), else the resolved URL (older saves, editor stages). */
+     *  resolved on load), else the resolved URL (older saves, editor stages).
+     *  Empty for a layered sprite (`layers` carries it). */
     src: string
     at: number
     face?: string
+    /** Layered sprite: each layer's value (the engine rebuilds the images from
+     *  the actor's layer templates on load). */
+    layers?: Record<string, string>
     band?: ObjectBand
     y?: number
     scale?: number
@@ -217,6 +275,8 @@ export interface StageState {
     loop: boolean
     at: number
     height?: number
+    /** Click commands (`[sprite … onclick=]`). */
+    onclick?: string
     band?: ObjectBand
     y?: number
     scale?: number
@@ -246,6 +306,8 @@ export interface StageState {
      *  whole-image stretch). Absent = default gradient + border. */
     skin?: string
   }[]
+  /** Clickable regions on stage (`[hotspot]`); absent = none. */
+  hotspots?: HotspotSpec[]
   /** Camera resting transform (pan offsets in px, zoom factor, rotation in deg) —
    *  what event-frame camera tracks / `[scale target=screen]` settled on. Each
    *  channel (and the whole field) is omitted at identity, so older saves and
@@ -303,6 +365,8 @@ export interface ScreenModel {
   subtitle?: string
   /** An image URL shown above the heading. */
   logo?: string
+  /** Its CSS width (the renderer's default caps it at 70% of the stage). */
+  logoWidth?: string
   /** A CSS background (colour, gradient or `url(…)`); the stage shows through when absent. */
   background?: string
   layout?: 'center' | 'left' | 'right' | 'bottom'
@@ -317,10 +381,12 @@ export interface ScreenModel {
   version?: string
   /** The ending's id (an ending screen). */
   endingId?: string
+  /** A progress bar (0..1) — the loading page; `setProgress` moves it. */
+  progress?: number
 }
 
 /** A chrome screen id: the built-in ones, or a plugin's (`ui.screen`). */
-export type ScreenId = 'title' | 'ending' | 'menu' | 'settings' | 'saves' | 'backlog' | (string & {})
+export type ScreenId = 'title' | 'ending' | 'loading' | 'menu' | 'settings' | 'saves' | 'backlog' | (string & {})
 
 /** The screen layer over the stage: full-stage chrome the engine's session
  *  state machine shows and hides (a title page, an ending page, the menus).
@@ -333,6 +399,8 @@ export interface ChromeRenderer {
   hideScreen(id?: ScreenId): void
   /** The screen up now, or null. */
   currentScreen(): ScreenId | null
+  /** Move the current screen's progress bar (0..1); a no-op without one. */
+  setProgress(ratio: number): void
   /** A host container in the chrome layer for the engine's own DOM chrome (the
    *  system menu and its panels — like a plugin's `ui.layer`, above the pages).
    *  Removed by `destroy()`. */
@@ -340,8 +408,29 @@ export interface ChromeRenderer {
   /** An in-engine confirm box (never the browser's): resolves true on OK. No
    *  `cancel` label = an alert with a single OK. */
   confirm(message: string, labels: { ok: string; cancel?: string }): Promise<boolean>
+  /** An in-engine one-line text box (the `[input]` command). `result` is the
+   *  trimmed text on OK, `null` on cancel or `cancel()`; the field is empty and
+   *  shows `default` as its placeholder. */
+  prompt(message: string, opts: PromptOptions): PromptHandle
   /** A transient message over the stage. */
   toast(message: string): void
+}
+
+export interface PromptOptions {
+  ok: string
+  cancel: string
+  /** Placeholder (the value the caller falls back to). */
+  default?: string
+  maxlength?: number
+  /** A regular expression source the whole value must match for OK to enable. */
+  pattern?: string
+  position?: 'center' | 'top' | 'bottom'
+}
+
+export interface PromptHandle {
+  result: Promise<string | null>
+  /** Dismiss the box as a cancel (a load / restart during the prompt). */
+  cancel(): void
 }
 
 /**
@@ -362,7 +451,37 @@ export interface TypeLineOptions {
   alive(): boolean
   /** Called as each character is revealed, with the inline effect name it carries. */
   onReveal?(span: TextSpan, effect: string | undefined): void
+  /** Called at a page break — a `{p}`, or the text overflowing the box in
+   *  `page` mode — with the page fully revealed; resolve to go on (the box
+   *  clears and the next page types). */
+  onPage?(): Promise<void>
 }
+
+/** One option of a choices prompt as the renderer draws it. */
+export interface ChoiceView {
+  segments: Segment[]
+  /** Drawn greyed and not pickable (`[choice … disabled=cond]`). */
+  disabled?: boolean
+  /** Drawn as taken in an earlier run (`[choices] chosenStyle`). */
+  chosen?: boolean
+}
+
+export interface ChoicesPromptOptions {
+  /** Seconds until the prompt picks `timeoutIndex` by itself (a bar shows the time left). */
+  timer?: number
+  /** The option a timeout picks (0-based); the first enabled one when absent, disabled or out of range. */
+  timeoutIndex?: number
+}
+
+/** How the choices overlay lays its buttons out (`[choices]` section). */
+export interface ChoicesLayout {
+  position?: 'center' | 'top' | 'bottom' | 'left' | 'right'
+  layout?: 'column' | 'grid'
+  columns?: number
+}
+
+/** What a line does when it does not fit the dialogue box. */
+export type OverflowMode = 'grow' | 'page' | 'shrink'
 
 /** A choice button as plugins see it (`EngineHooks.onChoices`): enough to style
  *  and stagger an entrance, never the element (the same
@@ -481,15 +600,24 @@ export interface Renderer {
   showIndicator(on: boolean): void
   /** Type a dialogue line into the text box (typewriter); resolves when every
    *  character is revealed or the line was aborted (`alive()` false). */
-  typeLine(segments: Segment[], opts: TypeLineOptions): Promise<void>
+  /** Resolves true when a repaint while parked at a page (`repaintLine`) left
+   *  nothing after that page, so the tap that turned it ended the line. */
+  typeLine(segments: Segment[], opts: TypeLineOptions): Promise<boolean>
+  /** Re-render the line the player is parked INSIDE (at a `{p}` page break)
+   *  after a language switch; false when no line is parked mid-way. */
+  repaintLine(segments: Segment[], onSpan?: (span: TextSpan, effect: string | undefined) => void): boolean
   /** Replace the text box contents, fully revealed (a language switch repaints
    *  the parked line this way). */
   setLine(segments: Segment[], onSpan?: (span: TextSpan, effect: string | undefined) => void): void
   /** Show a choices prompt over the stage. One button per item; `onSpan` runs
    *  per rendered label character (inline text effects). */
-  showChoices(items: Segment[][], onSpan?: (span: TextSpan, effect: string | undefined) => void): ChoicePrompt
+  showChoices(items: ChoiceView[], onSpan?: (span: TextSpan, effect: string | undefined) => void, opts?: ChoicesPromptOptions): ChoicePrompt
   /** Remove the choices prompt (after a pick). */
   hideChoices(): void
+  /** What a line does when it does not fit the box (`[window] overflow`). */
+  setOverflow(mode: OverflowMode): void
+  /** Where and how the choices prompt lays out (`[choices]` section). */
+  setChoicesLayout(layout: ChoicesLayout): void
   /** Reskin a UI window (`window:dialog`): `url` replaces the default chrome with
    *  the image (v1: whole-image stretch — `background-size:100% 100%`; nine-slice
    *  `border-image` is a reserved extension), undefined restores the default.
@@ -504,6 +632,24 @@ export interface Renderer {
    *  clear it); a reveal drops the fader first and plays the shape backwards. Backs
    *  the `transout` / `transin` effects on the `screen` kind. */
   transitionScreen(to: 0 | 1, sec: number, opts?: TransitionOpts): Promise<void>
+  /** Freeze the current picture in a snapshot layer over the scene; change the
+   *  scene underneath, then `endTransition` reveals it. A second call replaces
+   *  the snapshot. */
+  beginTransition(): void
+  /** Reveal the scene under the snapshot `beginTransition` took, with `kind`;
+   *  resolves when the old picture is gone. A no-op without a snapshot. */
+  endTransition(kind: TransitionKind, opts?: SceneTransitionOpts): Promise<void>
+  /** Whether a snapshot is up (a transition is armed). */
+  transitionPending(): boolean
+  /** A layered character's current layer values, or undefined. */
+  charLayers(id: string): Record<string, string> | undefined
+  /** Put a clickable region on the stage (replacing one with the same id). */
+  showHotspot(spec: HotspotSpec): void
+  hideHotspot(id: string): void
+  clearHotspots(): void
+  /** What a click on a clickable object does: the engine sets this to run the
+   *  object's `onclick` commands. `objId` is `hotspot:<id>` or `sprite:<id>`. */
+  objectClick?: (objId: string, onclick: string) => void
 
   // ---- screen primitive ----
   /** Full-screen color flash that fades out. A transient overlay (not a transform

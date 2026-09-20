@@ -2,17 +2,23 @@ import { builtins } from './builtins.js'
 import { applyConfig, fetchConfig, mergeDefaults } from './config.js'
 import { isThemeToken, THEME_TOKEN_RE } from './theme.js'
 import { tUI, uiLangName } from './i18n.js'
-import { AUTOSAVE_KEY, QUICKSAVE_KEY, READ_KEY, SETTINGS_KEY, UNLOCKS_KEY, PLUGIN_SETTINGS_KEY, LocalStorageSaveStore, isSlotPayload, slotKey, type SaveStore, type SlotPayload, type SettingsPayload } from './save-store.js'
+import { AUTOSAVE_KEY, QUICKSAVE_KEY, READ_KEY, SETTINGS_KEY, UNLOCKS_KEY, PLUGIN_SETTINGS_KEY, GLOBALS_KEY, LocalStorageSaveStore, isSlotPayload, slotKey, type SaveStore, type SlotPayload, type SettingsPayload, type GlobalsPayload } from './save-store.js'
 import type { ConfigFieldSchema } from '@nilvn/core'
 import type { ScreenButton } from './renderer/types.js'
 import { endingModel, titleModel, type ChromeHost } from './chrome.js'
 import { SystemMenu } from './system-menu.js'
-import type { TitleConfig, EndingConfig, MenuConfig, SavesConfig, SettingsConfig, SettingKey } from './types.js'
+import type { TitleConfig, EndingConfig, MenuConfig, SavesConfig, SettingsConfig, SettingKey, KeysConfig, KeyAction, InputConfig, ChoicesConfig, PreloadConfig } from './types.js'
+import { interpolateSegments, interpolateText, displayValue, type InterpolateHost } from './text.js'
+import { buildFileManifest, expandIncludes, FileScriptLoader, scriptId, type ScriptFile } from './scripts.js'
+import { isImageUrl, scanAssetRefs } from './preload.js'
+import { UiPanels } from './ui.js'
+import { screenBackground } from './chrome.js'
+import { bindingOf, matchKey, isEditableTarget } from './keys.js'
 import { FIRST_PARTY_ID_PREFIX } from './plugin-manifest.js'
 import type { SessionState, VolumeChannel } from './types.js'
 
 /** Actor keys the engine owns (never moved into a plugin's `ext`). */
-const STANDARD_ACTOR_KEYS = new Set(['name', 'nameKey', 'color', 'textColor', 'sprites', 'defaultFace', 'ext'])
+const STANDARD_ACTOR_KEYS = new Set(['name', 'nameKey', 'color', 'textColor', 'sprites', 'defaultFace', 'canvas', 'layers', 'ext'])
 
 /** Coerce a raw config value to its field's declared type (TOML and the studio
  *  hand typed values; a string from elsewhere still lands right). */
@@ -44,9 +50,9 @@ export const VOLUME_FIELD: Record<VolumeChannel, 'bgmVolume' | 'ambienceVolume' 
 }
 import { evalExpr, truthy } from './expr.js'
 import { parseScript, parseSegments, parseTag } from './parser.js'
-import { animate, DomRenderer } from './stage.js'
+import { animate, DomRenderer, preloadImage } from './stage.js'
 import type { EditStage, StageState } from './stage.js'
-import type { ChoicePrompt } from './renderer/types.js'
+import type { ChoicePrompt, ChoiceView, CharLayer, CharOptions, SceneTransitionOpts, TransitionKind } from './renderer/types.js'
 import { BUILTIN_KINDS, kindOf, ObjectHandle } from './object.js'
 import { PluginHost } from './plugin-host.js'
 import { decodeChannelSet, decodeFrames, decodeTracks, type DecodedFrame, type DecodedTrack } from './keyframes.js'
@@ -125,6 +131,11 @@ export interface SaveState {
    *  level. Read on restore for old saves; new saves carry them in
    *  `ext.animstudio` instead, and never write this field. */
   activeLoops?: SavedLoop[]
+  /** The `[call]` stack — where each pending `[return]` goes back to, innermost
+   *  last. Absent = none, so older saves / loaders are unaffected. */
+  calls?: SaveAddress[]
+  /** `[ui show|hide]` decisions on the declarative panels. Absent = none. */
+  ui?: Record<string, boolean>
   /** Per-plugin state slices, keyed by plugin id (EnginePlugin.saveState /
    *  restoreState; pre-batch-B saves used the bundled short names, which still
    *  resolve). A slice whose plugin is not active at load time is carried through
@@ -148,6 +159,51 @@ export class Engine {
   readonly stage: DomRenderer
   /** Script variables, written by [set] and read by [if] / choice conditions */
   vars: Record<string, unknown> = {}
+  /** Persistent variables (`[persist]`, `[input persist=true]`, the `sys.*`
+   *  namespace): they outlive the session — kept in the save store's `globals`
+   *  key, never in a `SaveState` — and read through the same expressions and
+   *  `{$var}` placeholders as `vars`. Write with `setVar` / `setGlobal`. The
+   *  engine's own `sys.endings` / `sys.chosen` lists start empty. */
+  readonly globals: Record<string, unknown> = { 'sys.endings': [], 'sys.chosen': [] }
+  private readonly persistNames = new Set<string>()
+  /** Everything the store held under `globals`, declared today or not: written
+   *  back merged, so a declaration a work drops for a while loses nothing. */
+  private storedGlobals: Record<string, unknown> = {}
+  private globalsLoaded = false
+  private globalsDirty = false
+  /** `[input]` config (the `[input]` section): position and button labels. */
+  readonly inputConfig: InputConfig = {}
+  /** `[choices]` config: chosen style and timer (layout and tokens go to the stage). */
+  readonly choicesConfig: ChoicesConfig = {}
+  /** `[choices timer= default=]`: overrides for the next prompt only. */
+  private nextChoices: { timer?: number; timerDefault?: number } | null = null
+  /** `[game] scripts` — files played in order as chunks (see `loadScripts`). */
+  scripts: string[] = []
+  /** `[preload]` config: what `prepare()` warms and how the loading page looks. */
+  readonly preloadConfig: PreloadConfig = {}
+  /** Return addresses of the pending `[call]`s, innermost last. */
+  private callStack: SaveAddress[] = []
+  /** An armed scene transition (`[trans …]` / `trans=`), revealed at the next line. */
+  private pendingTrans: { kind: TransitionKind; opts: SceneTransitionOpts } | null = null
+  /** The declarative panels (`[ui.<id>]`). */
+  readonly ui: UiPanels = new UiPanels(this)
+  /** `prepare()` warmed the preload set for the loaded content. */
+  private warmed = false
+  /** Dismisses a pending `[input]` box (a load / restart during the prompt). */
+  private promptCancel: (() => void) | null = null
+  /** `{$var}` / `{@key}` filling for everything the engine shows. */
+  private readonly textHost: InterpolateHost = {
+    getVar: (name) => this.getVar(name),
+    resolveKey: (key) => this.resolveText(key),
+    missing: (name) => this.report({ phase: 'exec', message: `variable "${name}" is not defined — shown as empty` }, true),
+  }
+  /** The same, but an undefined variable is simply empty: panels draw as soon
+   *  as play starts, before the script's first `[set]`. */
+  private readonly quietTextHost: InterpolateHost = {
+    getVar: (name) => this.getVar(name),
+    resolveKey: (key) => this.resolveText(key),
+    missing: () => {},
+  }
   actors: Record<string, ActorDef> = {}
   /** Current content language; dialogue/choice/name keys resolve from
    *  catalogs[lang] first, then catalogs[defaultLang]. */
@@ -287,12 +343,14 @@ export class Engine {
   autosave: 'label' | 'line' | false = 'label'
   /** Chrome string overrides by language (`messages` option / `[strings]`). */
   readonly messages: Record<string, Record<string, string>> = {}
-  private screensOn: { title: boolean; ending: boolean; menu: boolean } = { title: true, ending: true, menu: true }
+  private screensOn: { title: boolean; ending: boolean; menu: boolean; loading: boolean } = { title: true, ending: true, menu: true, loading: true }
   private customStore: SaveStore | undefined
   /** `[menu]`, `[saves]`, `[settings]`. */
   readonly menuConfig: MenuConfig = {}
   readonly savesConfig: SavesConfig = {}
   readonly settingsConfig: SettingsConfig = {}
+  /** `[keys]` — bindings that override {@link KEYS_DEFAULT} (`false` unbinds). */
+  readonly keysConfig: KeysConfig = {}
   /** The in-game system menu (undefined when `screens.menu` / `[menu] enabled` is off). */
   private menu: SystemMenu | undefined
   // ---- auto / skip (inc 4): engine mechanisms the menu only toggles ----
@@ -311,6 +369,9 @@ export class Engine {
   /** Replay segments passed in normal play (the gallery's unlock set). */
   private unlocks = new Set<string>()
   private persistTimer: number | undefined
+  /** Whether a player setting changed since the last store write (the read set
+   *  and the persistent variables have their own flags: each writes only itself). */
+  private settingsDirty = false
   private persistedLoaded = false
   private loadingSettings = false
   // ---- plugin platform v3 (inc 4b): settings, actor fields, chrome contributions ----
@@ -327,33 +388,59 @@ export class Engine {
   /** What's parked on screen right now (an awaited dialogue line or a choices
    *  prompt), so a language switch can re-render it in place without disturbing
    *  playback. Cleared once the player advances past it. */
-  private shown: { kind: 'dialogue'; node: DialogueNode } | { kind: 'choices'; node: ChoicesNode; prompt: ChoicePrompt } | null = null
+  private shown: { kind: 'dialogue'; node: DialogueNode; paged?: boolean } | { kind: 'choices'; node: ChoicesNode; prompt: ChoicePrompt } | null = null
   private keyHandler = (e: KeyboardEvent) => {
-    if (e.key === 'Escape') {
+    if (isEditableTarget(e.target)) return
+    const hit = (a: KeyAction): boolean => matchKey(bindingOf(this.keysConfig, a), e)
+    if (hit('menu')) {
       if (this.pluginScreen) this.closePluginScreen()
       else this.menu?.onEscape()
       return
     }
-    if (e.key === 'Control' && !e.repeat) {
+    if (hit('skipHold')) {
+      if (e.repeat) return
       this.skipHeld = true // hold Ctrl = skip while held (read text, or everything per skipMode)
       if (this.typing) this.skipTyping = true
       else if (this.advanceResolve && this.skipActive(this.parkedReadKey)) this.tapAdvance()
       return
     }
     if (!this.running || this.menu?.isOpen()) return
-    if (e.key === ' ' || e.key === 'Enter') {
+    if (hit('advance')) {
       e.preventDefault()
       this.tap()
+      return
+    }
+    // The rest are the system menu's actions: bound only while the menu exists
+    // (a host that draws its own chrome binds its own keys) and while playing.
+    const menu = this.menu
+    if (!menu || this.session !== 'playing') return
+    const actions: [KeyAction, () => void][] = [
+      ['auto', () => menu.toggleMode('auto')],
+      ['skip', () => menu.toggleMode('skip')],
+      ['quicksave', () => menu.quickSave()],
+      ['quickload', () => menu.quickLoad()],
+      ['backlog', () => menu.open('backlog')],
+      ['save', () => menu.open('saves')],
+      ['load', () => menu.open('load')],
+      ['settings', () => menu.open('settings')],
+      ['fullscreen', () => void this.setFullscreen(!this.isFullscreen())],
+    ]
+    for (const [action, run] of actions) {
+      if (!hit(action)) continue
+      e.preventDefault() // F5 must not reload the page, Tab must not move focus
+      run()
+      return
     }
   }
   private keyUpHandler = (e: KeyboardEvent) => {
-    if (e.key === 'Control') this.skipHeld = false
+    if (matchKey(bindingOf(this.keysConfig, 'skipHold'), e)) this.skipHeld = false
   }
 
   private autoUse: string[]
 
   constructor(opts: EngineOptions) {
     this.stage = new DomRenderer(opts.container)
+    this.stage.onAssetError = (what, url) => this.report({ phase: 'exec', message: `${what}: image failed to load — ${url}` }, true)
     this._textSpeed = opts.textSpeed ?? 40 // direct: no hooks before the plugin host exists
     this.baseUrl = opts.baseUrl ?? document.baseURI
     this.onEndCb = opts.onEnd
@@ -411,8 +498,8 @@ export class Engine {
     for (const [id, e] of Object.entries(opts.endings ?? {})) this.endingConfig[id] = { ...e }
     if (opts.saves?.autosave !== undefined) this.autosave = opts.saves.autosave
     for (const [lang, table] of Object.entries(opts.messages ?? {})) this.messages[lang] = { ...table }
-    if (opts.screens === false) this.screensOn = { title: false, ending: false, menu: false }
-    else if (opts.screens) this.screensOn = { title: opts.screens.title ?? true, ending: opts.screens.ending ?? true, menu: opts.screens.menu ?? true }
+    if (opts.screens === false) this.screensOn = { title: false, ending: false, menu: false, loading: false }
+    else if (opts.screens) this.screensOn = { title: opts.screens.title ?? true, ending: opts.screens.ending ?? true, menu: opts.screens.menu ?? true, loading: opts.screens.loading ?? true }
     this.customStore = opts.saveStore
     if (opts.saves) Object.assign(this.savesConfig, opts.saves)
     if (opts.menu) Object.assign(this.menuConfig, opts.menu)
@@ -421,6 +508,7 @@ export class Engine {
       if (typeof opts.settings.autoDelay === 'number') this._autoDelay = opts.settings.autoDelay
       if (opts.settings.skipMode) this._skipMode = opts.settings.skipMode
     }
+    if (opts.keys) Object.assign(this.keysConfig, opts.keys)
     this.onSegmentSeen((id) => {
       if (this.unlocks.has(id)) return
       this.unlocks.add(id)
@@ -441,6 +529,7 @@ export class Engine {
     for (const p of opts.plugins ?? []) this.install(p)
 
     this.stage.root.addEventListener('click', () => this.tap())
+    this.stage.objectClick = (objId, onclick) => void this.runInline(onclick, objId)
     window.addEventListener('keydown', this.keyHandler)
     window.addEventListener('keyup', this.keyUpHandler)
   }
@@ -491,9 +580,59 @@ export class Engine {
   async loadScript(url: string): Promise<void> {
     const abs = this.resolve(url)
     this.baseUrl = abs.slice(0, abs.lastIndexOf('/') + 1)
+    const text = await this.fetchScriptText(abs, url)
+    this.loadSource(await this.withIncludes(text, abs))
+  }
+
+  /** Play several `.nvn` files in order as chunks (`[game] scripts`): labels
+   *  are global — a jump or call reaches any file, and a file's stem names its
+   *  first line — the files fall through in list order, and a save's address
+   *  names the file's chunk. A label defined in two files is reported (the
+   *  first wins). `[include]` lines are spliced in first. Assets and includes
+   *  resolve against the first file's directory (`baseUrl`). */
+  async loadScripts(urls: string[]): Promise<void> {
+    if (!urls.length) throw new Error('loadScripts() needs at least one file')
+    // baseUrl stays where loadConfig() put it: assets and aliases resolve from the
+    // config file's directory whatever folder the script files live in (an
+    // [include] resolves relative to the including file separately).
+    const files: ScriptFile[] = await Promise.all(
+      urls.map(async (u) => {
+        const abs = this.resolve(u)
+        return { id: scriptId(u), url: abs, body: await this.withIncludes(await this.fetchScriptText(abs, u), abs) }
+      }),
+    )
+    if (this.destroyed) return
+    const ids = new Set<string>()
+    for (const f of files) {
+      if (ids.has(f.id)) this.report({ phase: 'load', message: `two script files are both named "${f.id}" — give them different names` })
+      ids.add(f.id)
+    }
+    const { manifest, duplicates } = buildFileManifest(files, this.defaultLang)
+    for (const d of duplicates) this.report({ phase: 'load', message: `label "${d.label}" is defined in both "${d.first}" and "${d.second}" — the first wins`, chunk: d.second })
+    this.nodes = []
+    this.labels = {}
+    this.residency.reset()
+    this.residency.attach(manifest, new FileScriptLoader(files, (ref) => this.resolve(ref)))
+    this.warmed = false
+  }
+
+  private async fetchScriptText(abs: string, shown: string): Promise<string> {
     const res = await fetch(abs)
-    if (!res.ok) throw new Error(`Failed to load script ${url}: ${res.status}`)
-    this.loadSource(await res.text())
+    if (!res.ok) throw new Error(`Failed to load script ${shown}: ${res.status}`)
+    return res.text()
+  }
+
+  /** Splice `[include path]` lines into a script file's text. */
+  private withIncludes(text: string, fileUrl: string): Promise<string> {
+    return expandIncludes(text, fileUrl, {
+      fetchText: async (url) => {
+        const res = await fetch(url)
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        return res.text()
+      },
+      resolve: (path, from) => (path.startsWith('@') ? this.resolve(path) : new URL(path, from).href),
+      report: (message, error) => this.report({ phase: 'load', message, error }),
+    })
   }
 
   /** Adopt an opened package: its actors / languages / text speed / save key /
@@ -507,6 +646,7 @@ export class Engine {
     // A package replaces whatever was resident.
     this.nodes = []
     this.labels = {}
+    this.warmed = false
     this.residency.reset()
     this.residency.attach(m.chunks, pkg.loader)
     Object.assign(this.actors, m.actors)
@@ -544,6 +684,7 @@ export class Engine {
 
   loadSource(source: string): void {
     const parsed = parseScript(source)
+    this.warmed = false
     this.nodes = parsed.nodes
     this.labels = parsed.labels
     this.reportParse(parsed.diagnostics)
@@ -698,7 +839,19 @@ export class Engine {
   private actorName(actor: ActorDef | undefined, speaker: string | undefined): string | undefined {
     if (!speaker) return undefined
     const fromKey = actor?.nameKey ? this.resolveText(actor.nameKey) : ''
-    return fromKey || actor?.name || speaker
+    return this.fill(fromKey || actor?.name || speaker)
+  }
+
+  /** Fill `{$var}` / `{@key}` placeholders in a string with the current values
+   *  (what dialogue, choices, actor names and config strings go through). */
+  fill(text: string, quiet = false): string {
+    return interpolateText(text, quiet ? this.quietTextHost : this.textHost)
+  }
+
+  /** What a line shows now: key-backed text resolved in the current language,
+   *  placeholders filled. */
+  private displaySegments(segments: Segment[], textKey?: string): Segment[] {
+    return interpolateSegments(textKey ? parseSegments(this.resolveText(textKey)) : segments, this.textHost)
   }
 
   /** A choice's display text in the current language. */
@@ -718,6 +871,7 @@ export class Engine {
     if (lang !== this.defaultLang && !this.catalogs[lang]) return
     this.lang = lang
     this.repaintShown()
+    this.ui.refresh()
     for (const fn of this.langListeners) fn(lang)
     this.settingChanged('lang', lang)
     void this.repaintScreen()
@@ -750,10 +904,12 @@ export class Engine {
       const node = s.node
       const actor = node.speaker ? this.actors[node.speaker] : undefined
       this.stage.setName(this.actorName(actor, node.speaker), actor?.color, actor?.textColor)
-      this.stage.setLine(node.textKey ? parseSegments(this.resolveText(node.textKey)) : node.segments, onSpan)
+      const segments = this.displaySegments(node.segments, node.textKey)
+      if (s.paged && this.stage.repaintLine(segments, onSpan)) return
+      this.stage.setLine(segments, onSpan)
     } else {
-      const visible = s.node.items.filter((it) => !it.cond || truthy(evalExpr(it.cond, this.vars)))
-      visible.forEach((item, i) => s.prompt.relabel(i, parseSegments(this.choiceText(item)), onSpan))
+      const visible = s.node.items.filter((it) => !it.cond || truthy(evalExpr(it.cond, this.scope())))
+      visible.forEach((item, i) => s.prompt.relabel(i, this.displaySegments(parseSegments(this.choiceText(item))), onSpan))
     }
   }
 
@@ -971,11 +1127,22 @@ export class Engine {
   async showActor(
     id: string,
     face?: string,
-    opts: { at?: string; fade?: number; src?: string; y?: number; scale?: number; rotation?: number } = {},
+    opts: { at?: string; fade?: number; src?: string; y?: number; scale?: number; rotation?: number; layers?: Record<string, string> } = {},
     onlyIfVisible = false,
   ): Promise<void> {
     if (onlyIfVisible && !this.stage.hasChar(id)) return
     const actor = this.actors[id]
+    if (actor?.layers && !opts.src) {
+      // Layered sprite: this command's values over what is on stage (or the
+      // defaults), every layer rebuilt from its template.
+      const values: Record<string, string> = { ...this.stage.charLayers(id) }
+      for (const [k, v] of Object.entries(opts.layers ?? {})) if (k in actor.layers) values[k] = v
+      if (face !== undefined) values.face = face
+      else if (values.face === undefined && this.stage.charFace(id)) values.face = this.stage.charFace(id)!
+      const built = this.buildLayers(id, actor, values)
+      await this.stage.showChar(id, '', { at: opts.at, fade: opts.fade, face: built.face, ...built, y: opts.y, scale: opts.scale, rotation: opts.rotation })
+      return
+    }
     const tmpl = actor?.sprites
     const resolvedFace = face ?? this.stage.charFace(id) ?? actor?.defaultFace ?? 'default'
     let src = opts.src
@@ -1001,6 +1168,84 @@ export class Engine {
       scale: opts.scale,
       rotation: opts.rotation,
     })
+  }
+
+  /** A layered actor's images for `values` (a layer without a value takes its
+   *  default; an optional one without either is left out). Throws when a
+   *  required layer has nothing to show. */
+  private buildLayers(id: string, actor: ActorDef, values: Record<string, string>): { layers: CharLayer[]; canvas?: [number, number]; layerUrl: CharOptions['layerUrl']; face?: string } {
+    const defs = actor.layers ?? {}
+    const layers: CharLayer[] = []
+    for (const [name, def] of Object.entries(defs)) {
+      const value = values[name] ?? def.default ?? (name === 'face' ? actor.defaultFace : undefined)
+      if (value === undefined || value === '' || value === 'none') {
+        if (def.optional) continue
+        throw new Error(`layer "${name}" of "${id}" has no value — give it a default in [actors.${id}.layers] or pass ${name}=`)
+      }
+      const ref = def.src.replaceAll(`{${name}}`, value)
+      layers.push({ name, value, url: this.resolve(ref), ref, offset: def.offset })
+    }
+    return {
+      layers,
+      canvas: actor.canvas,
+      layerUrl: (layer, v) => {
+        const d = defs[layer]
+        return d ? this.resolve(d.src.replaceAll(`{${layer}}`, v)) : undefined
+      },
+      face: layers.find((l) => l.name === 'face')?.value,
+    }
+  }
+
+  // ---- scene transitions ----
+
+  /** Arm a scene transition: the picture freezes now; the scene changes that
+   *  follow happen underneath; the next dialogue line / choices prompt (or
+   *  `commitTransition`) reveals the result with `kind`. */
+  armTransition(kind: TransitionKind, opts: SceneTransitionOpts = {}): void {
+    this.stage.beginTransition()
+    this.pendingTrans = { kind, opts }
+  }
+
+  /** Reveal the scene under an armed transition; a no-op without one. */
+  async commitTransition(): Promise<void> {
+    const p = this.pendingTrans
+    if (!p) return
+    this.pendingTrans = null
+    await this.stage.endTransition(p.kind, p.opts)
+  }
+
+  // ---- events: script commands from the UI (panel buttons, hotspots, sprites) ----
+
+  /** Run script commands (one per line, with or without brackets) in the
+   *  current session — what a `[ui.<id>]` button's `onclick`, a `[hotspot]`
+   *  and a clickable sprite do. Only while a story runs; a bad line reports.
+   *  When the commands move the playhead (`[jump]`, `[call]`), the parked
+   *  line or prompt is released so play goes on from there. */
+  async runInline(text: string, source = 'ui'): Promise<void> {
+    if (!this.running || this.destroyed) return
+    const gen = this.generation
+    const before = this.pos
+    const lines = text
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l && !l.startsWith(';') && !l.startsWith('//'))
+    for (const line of lines) {
+      if (gen !== this.generation) return
+      const inner = line.startsWith('[') && line.endsWith(']') ? line.slice(1, -1).trim() : line
+      let node: ScriptNode
+      try {
+        node = parseTag(inner, 0)
+      } catch (err) {
+        this.report({ phase: 'exec', message: `${source}: ${errMsg(err)}`, error: err }, true)
+        continue
+      }
+      if (node.type !== 'command') {
+        this.report({ phase: 'exec', message: `${source}: only commands can run from a click ("${line}")` }, true)
+        continue
+      }
+      await this.execCommand(node)
+    }
+    if (gen === this.generation && this.pos !== before) this.unblock()
   }
 
   // ---- audio (see AudioBus) ----
@@ -1059,9 +1304,9 @@ export class Engine {
    *  displayed segments; their plain text is stored (inline effects / pauses
    *  stripped, `br` → newline) so the menu lists clean text. `offset` is the voice
    *  clip's leading-silence trim, kept so replay seeks exactly as live play. */
-  private recordBacklog(speaker: string, segments: Segment[], voiceRef?: string, offset?: number): void {
+  private recordBacklog(speaker: string, segments: Segment[], voiceRef?: string, offset?: number, actor?: string): void {
     const text = segments.map((s) => (s.kind === 'text' ? s.text : s.kind === 'br' ? '\n' : '')).join('')
-    this.backlog.push({ speaker, text, voiceRef, offset: voiceRef ? offset : undefined, lang: this.lang })
+    this.backlog.push({ speaker, actor, text, voiceRef, offset: voiceRef ? offset : undefined, lang: this.lang })
     // Per-line autosave rides on the backlog entry so its preview is this line.
     if (this.autosave === 'line') void this.writeAutosave()
     const over = this.backlog.length - Engine.BACKLOG_CAP
@@ -1128,6 +1373,7 @@ export class Engine {
     this._session = state
     if (state !== 'ending') this._ending = undefined
     for (const el of this.hudEls) el.style.display = state === 'playing' ? '' : 'none'
+    this.ui.refresh()
     if (state !== 'playing' && this.pluginScreen) this.closePluginScreen()
     this.fire('onSessionChange', state, prev)
     for (const fn of this.sessionListeners) fn(state, prev)
@@ -1142,7 +1388,10 @@ export class Engine {
    *  still throws for the programming error of having loaded nothing at all. */
   async prepare(label?: string): Promise<boolean> {
     if (this.destroyed) return false
-    if (!this.nodes.length && this.entry && !this.manifest) await this.loadScript(this.entry)
+    if (!this.nodes.length && !this.manifest) {
+      if (this.scripts.length) await this.loadScripts(this.scripts)
+      else if (this.entry) await this.loadScript(this.entry)
+    }
     if (this.destroyed) return false
     // Chunked play (lazy): make only the ENTRY chunk (the one defining the
     // start label, or the manifest entry) resident before the "no script" check —
@@ -1184,6 +1433,16 @@ export class Engine {
       await this.loadPersisted()
       if (this.destroyed) return false
     }
+    // Warm the opening assets once per loaded content, on the loading page.
+    if (!this.warmed) {
+      this.warmed = true
+      const cfg = this.preloadConfig
+      const refs = [...(cfg.assets ?? []), ...(cfg.auto ? this.autoPreloadRefs() : [])]
+      if (refs.length) {
+        await this.preload(refs)
+        if (this.destroyed) return false
+      }
+    }
     if (!this.prepared) {
       this.prepared = true
       this.fire('onReady')
@@ -1202,7 +1461,7 @@ export class Engine {
     // Content and plugins first (a title item a plugin contributes, the config's
     // title music path): the same step start() takes. Nothing loadable = a host
     // that only wants the state; the page still shows.
-    if (this.nodes.length || this.entry || this.manifest) {
+    if (this.nodes.length || this.entry || this.scripts.length || this.manifest) {
       await this.prepare()
       if (this.destroyed) return
     }
@@ -1214,6 +1473,9 @@ export class Engine {
     this.pendingVoice = null
     this.unblock()
     this.vars = {}
+    this.callStack = []
+    this.pendingTrans = null
+    this.ui.reset()
     this.unclaimedExt = {}
     this.replay.segment = null
     this.audio.stopAllTracks(0)
@@ -1236,11 +1498,18 @@ export class Engine {
     return params ? own.replace(/\{(\w+)\}/g, (_, k: string) => (k in params ? String(params[k]) : `{${k}}`)) : own
   }
 
-  /** A config string: `@key` through the content catalogs, else literal. */
-  private chromeText(s: string | undefined): string | undefined {
+  /** A config string: `@key` through the content catalogs, else literal, with
+   *  `{$var}` / `{@key}` filled (what the pages, menus and panels show). */
+  chromeString(s: string | undefined, quiet = false): string | undefined {
+    return this.chromeText(s, quiet)
+  }
+
+  /** A config string: `@key` through the content catalogs, else literal.
+   *  `quiet` = an undefined `{$var}` is empty without a diagnostic. */
+  private chromeText(s: string | undefined, quiet = false): string | undefined {
     if (s === undefined) return undefined
-    if (s.startsWith('@') && s.length > 1) return this.resolveText(s.slice(1)) || s
-    return s
+    if (s.startsWith('@') && s.length > 1) return this.fill(this.resolveText(s.slice(1)) || s, quiet)
+    return this.fill(s, quiet)
   }
 
   /** Where saves and settings persist: the host's store, else `localStorage`
@@ -1283,6 +1552,11 @@ export class Engine {
       buildInfo: this.buildInfo,
       hasContinue,
       extraButtons: [...this.titleExtras.values()],
+      customButton: (id) => {
+        if (!id.startsWith('ui:') || !this.ui.has(id.slice(3))) return undefined
+        const pid = id.slice(3)
+        return { id, label: this.ui.label(pid), onSelect: () => this.ui.toggle(pid) }
+      },
       actions: {
         newGame: () => void this.start(),
         continueGame: () => void this.continueGame(),
@@ -1405,12 +1679,12 @@ export class Engine {
   }
 
   /** Park on a shown line: a tap, or — in skip / auto mode — the engine's own clock. */
-  private async waitAdvanceOrAuto(readKey: string, textLen: number): Promise<void> {
+  private async waitAdvanceOrAuto(readKey: string, textLen: number, stopVoice = true): Promise<void> {
     const gen = this.generation
     if (this.skipActive(readKey)) {
       await this.sleep(this.skipHeld ? 30 : 60) // a beat per line keeps the page responsive
       if (gen !== this.generation) return
-      this.audio.stopVoice()
+      if (stopVoice) this.audio.stopVoice()
       return
     }
     if (this._skip && !this.skipHeld) this.setSkip(false) // unread text: skip mode ends here
@@ -1431,7 +1705,7 @@ export class Engine {
     if (gen !== this.generation) return
     if (!tapped) {
       this.advanceResolve = null
-      this.audio.stopVoice()
+      if (stopVoice) this.audio.stopVoice()
     }
   }
 
@@ -1439,7 +1713,9 @@ export class Engine {
 
   private settingChanged(key: SettingKey, value: number | string): void {
     this.fire('onSettingsChange', key, value)
-    if (!this.loadingSettings) this.schedulePersist()
+    if (this.loadingSettings) return
+    this.settingsDirty = true
+    this.schedulePersist()
   }
   private schedulePersist(): void {
     if (this.persistTimer !== undefined) clearTimeout(this.persistTimer)
@@ -1458,11 +1734,22 @@ export class Engine {
       uiScale: this._uiScale,
     }
     try {
-      await this.saveStore.set(SETTINGS_KEY, settings)
-      if (Object.keys(this.playerPluginConfig).length) await this.saveStore.set(PLUGIN_SETTINGS_KEY, this.playerPluginConfig)
+      if (this.settingsDirty) {
+        this.settingsDirty = false
+        await this.saveStore.set(SETTINGS_KEY, settings)
+        if (Object.keys(this.playerPluginConfig).length) await this.saveStore.set(PLUGIN_SETTINGS_KEY, this.playerPluginConfig)
+      }
       if (this.readDirty) {
         this.readDirty = false
         await this.saveStore.set(READ_KEY, [...this.readSet])
+      }
+      // Only once the stored table is known — writing before that would replace
+      // the player's persistent variables with this run's seeds.
+      if (this.globalsDirty && this.globalsLoaded) {
+        this.globalsDirty = false
+        this.storedGlobals = { ...this.storedGlobals, ...structuredClone(this.globals) }
+        const payload: GlobalsPayload = { v: 1, vars: this.storedGlobals }
+        await this.saveStore.set(GLOBALS_KEY, payload)
       }
     } catch {
       /* storage unavailable — settings just don't persist */
@@ -1497,6 +1784,13 @@ export class Engine {
       if (Array.isArray(read)) for (const k of read) if (typeof k === 'string') this.readSet.add(k)
       const unlocks = await store.get(UNLOCKS_KEY)
       if (Array.isArray(unlocks)) for (const k of unlocks) if (typeof k === 'string') this.unlocks.add(k)
+      const g = (await store.get(GLOBALS_KEY)) as GlobalsPayload | undefined
+      if (g && typeof g === 'object' && g.v === 1 && g.vars && typeof g.vars === 'object') {
+        this.storedGlobals = { ...g.vars }
+        // The store wins over the declared defaults; undeclared entries wait in
+        // `storedGlobals` for a later declaration (or a `[set]` on a `sys.*` name).
+        for (const [k, v] of Object.entries(this.storedGlobals)) if (this.isPersistent(k)) this.globals[k] = structuredClone(v)
+      }
       const pc = await store.get(PLUGIN_SETTINGS_KEY)
       if (pc && typeof pc === 'object') {
         for (const [pid, table] of Object.entries(pc as Record<string, unknown>)) {
@@ -1507,6 +1801,8 @@ export class Engine {
       /* unavailable — defaults */
     } finally {
       this.loadingSettings = false
+      this.globalsLoaded = true
+      if (this.globalsDirty) this.schedulePersist()
     }
   }
 
@@ -1568,7 +1864,10 @@ export class Engine {
       else table[k] = v
       for (const fn of this.pluginConfigListeners.get(pid) ?? []) fn(k, this.pluginConfigValue(pid, k))
     }
-    if (opts.player && opts.persist !== false) this.schedulePersist()
+    if (opts.player && opts.persist !== false) {
+      this.settingsDirty = true
+      this.schedulePersist()
+    }
     this.menuPluginRowsChanged()
   }
 
@@ -1789,6 +2088,21 @@ export class Engine {
   openMenu(panel: 'saves' | 'load' | 'backlog' | 'replays' | 'settings'): void {
     this.menu?.open(panel)
   }
+  /** Rebuild the system menu from the current `[menu]` / `[settings]` /
+   *  `[strings]` (applyConfig calls this after a `loadConfig`): items, entry
+   *  position, gestures and labels follow the config; plugin menu entries survive.
+   *  Creates or removes the menu when `[menu] enabled` changed. */
+  refreshMenu(): void {
+    const want = this.screensOn.menu && this.menuConfig.enabled !== false
+    if (this.menu && want) this.menu.remount()
+    else if (this.menu) {
+      this.menu.destroy()
+      this.menu = undefined
+    } else if (want) {
+      this.menu = new SystemMenu(this)
+      this.menu.mount()
+    }
+  }
 
   private async showTitleScreen(): Promise<void> {
     if (!this.screensOn.title || this.titleConfig.enabled === false) return
@@ -1835,6 +2149,8 @@ export class Engine {
     this.loops.cancelRafAnims()
     this.loops.cancelLoops()
     this.resetBacklog() // a fresh session starts with an empty backlog
+    this.callStack = []
+    this.ui.reset()
     await this.runLoop(startPos)
   }
 
@@ -1900,6 +2216,23 @@ export class Engine {
         this.report({ phase: 'exec', message: `script error: ${errMsg(err)}`, line: node.line, node, error: err })
       } finally {
         if (this.current === node) this.current = null
+      }
+      // The last node of a chunk, left by natural advance: continue in the chunk's
+      // fall-through successor even when it is not the physically next one (a
+      // jump appended chunks out of story order — script files keep list order).
+      if (gen === this.generation && this.pos === idx + 1) {
+        const next = this.residency.fallThroughFrom(idx)
+        if (next !== undefined) {
+          try {
+            await this.residency.ensureChunk(next)
+          } catch (err) {
+            if (gen === this.generation) this.report({ phase: 'load', chunk: next, message: `could not load the next scene: ${errMsg(err)}`, error: err })
+            break
+          }
+          if (gen !== this.generation) return
+          const base = this.residency.baseOf(next)
+          if (base !== undefined) this.pos = base
+        }
       }
     }
     if (this.running && gen === this.generation) this.finish()
@@ -2002,6 +2335,8 @@ export class Engine {
       v: 2,
       at: this.addressOf(this.resumeIndex),
       vars: structuredClone(this.vars),
+      calls: this.callStack.length ? this.callStack.map((a) => ({ ...a })) : undefined,
+      ui: this.ui.state(),
       stage: this.stage.snapshot(),
       textSpeed: this.textSpeed,
       lang: this.lang,
@@ -2055,6 +2390,9 @@ export class Engine {
     this.replay.segment = null // a load is always a normal-play session
     this.resetBacklog() // the backlog isn't persisted — a load starts a fresh backlog
     this.vars = structuredClone(state.vars)
+    this.ui.restore(state.ui)
+    this.pendingTrans = null
+    this.callStack = Array.isArray(state.calls) ? state.calls.filter((a) => a && typeof a.label === 'string' && typeof a.offset === 'number').map((a) => ({ label: a.label, offset: a.offset })) : []
     if (typeof state.textSpeed === 'number') this.textSpeed = state.textSpeed
     // Resume in the saved language (if it still ships a catalog), keeping chrome
     // and the menu's language selection in sync.
@@ -2084,6 +2422,17 @@ export class Engine {
         return tmpl ? this.resolve(tmpl.replaceAll('{face}', face)) : undefined
       },
       (src) => this.resolve(src),
+      (charId, values) => {
+        const actor = this.actors[charId]
+        if (!actor?.layers) return undefined
+        try {
+          const built = this.buildLayers(charId, actor, values)
+          return { layers: built.layers, canvas: built.canvas, layerUrl: built.layerUrl }
+        } catch (err) {
+          this.report({ phase: 'load', message: `could not rebuild "${charId}"'s layers: ${errMsg(err)}`, error: err }, true)
+          return undefined
+        }
+      },
     )
     this.fireTheme() // the saved script theme layer is painted again
     // Plugin state slices run AFTER the stage is restored (e.g. animstudio
@@ -2119,6 +2468,9 @@ export class Engine {
     this.loops.cancelLoops()
     this.unclaimedExt = {} // a clean slate carries no other session's plugin state
     this.vars = {}
+    this.callStack = []
+    this.pendingTrans = null
+    this.ui.reset()
     this.skipTyping = true
     this.unblock()
     this.audio.stopAllTracks(0)
@@ -2160,6 +2512,109 @@ export class Engine {
     this.pos = idx
   }
 
+  /** `[call label]`: jump there, remembering the line after the call so
+   *  `[return]` comes back to it. An unknown label reports (as `jump` does) and
+   *  remembers nothing. */
+  async call(label: string): Promise<void> {
+    const gen = this.generation
+    const here = this.addressOf(this.pos)
+    await this.jump(label)
+    if (gen !== this.generation || this.labels[label] === undefined) return
+    this.callStack.push(here)
+  }
+
+  /** `[return]`: back to the line after the innermost pending `[call]`; without
+   *  one, a diagnostic and play goes on. */
+  async returnFromCall(): Promise<void> {
+    const to = this.callStack.pop()
+    const from = this.current ?? undefined
+    if (!to) {
+      this.report({ phase: 'exec', message: '[return] with no [call] to return to — ignored', line: from?.line, node: from }, true)
+      return
+    }
+    const gen = this.generation
+    if (this.manifest && to.label) {
+      try {
+        await this.residency.ensureLoaded(to.label)
+      } catch (err) {
+        if (gen === this.generation) this.report({ phase: 'load', chunk: this.manifest.labelIndex[to.label], message: `could not load the scene to return to ("${to.label}"): ${errMsg(err)}`, error: err })
+        return
+      }
+      if (gen !== this.generation) return
+    }
+    const idx = this.resolveAddress(to)
+    if (idx < 0 || idx > this.nodes.length) {
+      this.report({ phase: 'jump', message: `[return] target "${to.label}" +${to.offset} no longer exists — ignored`, line: from?.line, node: from })
+      return
+    }
+    this.pos = idx
+  }
+
+  /** Warm assets — images are decoded, everything else fetched into the HTTP
+   *  cache — `concurrency` at a time, with the loading page up meanwhile (unless
+   *  `screen: false`, `[preload] screen = false` or `screens.loading` says no).
+   *  Failures are diagnostics, never rejections; `onPreload` fires per asset. */
+  async preload(refs: string[], opts: { screen?: boolean } = {}): Promise<void> {
+    const list = [...new Set(refs.filter((r) => typeof r === 'string' && r))]
+    if (!list.length || this.destroyed) return
+    const cfg = this.preloadConfig
+    // The loading page never replaces a page that is up (the title, an ending):
+    // `showScreen` is one-at-a-time, and the page would be gone afterwards.
+    const screen = (opts.screen ?? cfg.screen !== false) && this.screensOn.loading && this.stage.chrome.currentScreen() === null
+    if (screen) this.showLoadingScreen(0)
+    const workers = Math.max(1, Math.min(cfg.concurrency ?? 4, list.length))
+    let next = 0
+    let done = 0
+    const run = async (): Promise<void> => {
+      while (next < list.length && !this.destroyed) {
+        const ref = list[next++]!
+        await this.warmAsset(ref)
+        done++
+        if (screen) this.stage.chrome.setProgress(done / list.length)
+        this.fire('onPreload', done, list.length, ref)
+      }
+    }
+    await Promise.all(Array.from({ length: workers }, run))
+    if (screen && !this.destroyed) this.stage.chrome.hideScreen('loading')
+  }
+
+  private async warmAsset(ref: string): Promise<void> {
+    try {
+      const url = this.loader ? await this.loader.assetUrl(ref) : this.resolve(ref)
+      if (isImageUrl(url)) await preloadImage(url)
+      else {
+        const res = await fetch(url)
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        await res.arrayBuffer()
+      }
+    } catch (err) {
+      this.report({ phase: 'load', message: `preload of "${ref}" failed: ${errMsg(err)}`, error: err }, true)
+    }
+  }
+
+  /** What `[preload] auto` warms: the resident nodes' assets — in chunked play
+   *  the entry chunk's and its fall-through successors' manifest lists. */
+  private autoPreloadRefs(): string[] {
+    const m = this.manifest
+    if (m && m.chunks.some((c) => c.assets.length)) {
+      const entry = m.labelIndex[m.entry.label]
+      const first = m.chunks.find((c) => c.id === entry) ?? m.chunks[0]
+      const ids = new Set<string>(first ? [first.id, ...first.next] : [])
+      return m.chunks.filter((c) => ids.has(c.id)).flatMap((c) => c.assets)
+    }
+    return scanAssetRefs(this.nodes, this.actors)
+  }
+
+  private showLoadingScreen(progress: number): void {
+    const cfg = this.preloadConfig
+    this.stage.chrome.showScreen('loading', {
+      heading: this.chromeText(cfg.heading) ?? this.t('ui.loading.title'),
+      background: screenBackground(cfg.background, (p) => this.resolve(p)),
+      buttons: [],
+      progress,
+    })
+  }
+
   /** End the run now. `endingId` names the ending reached (`[ending id]`);
    *  `[end]` and running off the end are the `default` ending. The session
    *  enters `ending` and the chrome shows that screen (once inc 3 lands). */
@@ -2169,6 +2624,7 @@ export class Engine {
     const id = endingId ?? this.pendingEnding ?? 'default'
     this.pendingEnding = undefined
     this._ending = id
+    this.addToGlobalSet('sys.endings', id)
     this.setSession('ending')
     this.showEndingScreen(id)
     this.fire('onEnd')
@@ -2178,8 +2634,104 @@ export class Engine {
   /** Write one script variable (what `[set]` and `vars.set` do): plugins hear
    *  `onVarChange`. */
   setVar(name: string, value: unknown): void {
+    if (this.isPersistent(name)) {
+      this.setGlobal(name, value)
+      return
+    }
     this.vars[name] = value
     this.fire('onVarChange', name, value)
+    this.ui.refresh()
+  }
+
+  /** A variable by name — persistent first, then the session's; `undefined`
+   *  when neither has it (expressions read it as 0, `{$var}` shows empty). */
+  getVar(name: string): unknown {
+    return Object.prototype.hasOwnProperty.call(this.globals, name) ? this.globals[name] : this.vars[name]
+  }
+
+  /** `[choices timer=8 default=2]`: the next prompt's timer (seconds; 0 = none)
+   *  and 1-based default, overriding the `[choices]` config for that prompt only. */
+  setNextChoices(over: { timer?: number; timerDefault?: number }): void {
+    this.nextChoices = { ...over }
+  }
+
+  /** The table expressions evaluate against: the session's variables under the
+   *  persistent ones (a fresh object each call — read, don't write). */
+  scope(): Record<string, unknown> {
+    return { ...this.vars, ...this.globals }
+  }
+
+  /** Whether `name` persists across sessions: declared with `[persist]` /
+   *  `declarePersist`, or in the reserved `sys.` namespace. */
+  isPersistent(name: string): boolean {
+    return this.persistNames.has(name) || name.startsWith('sys.')
+  }
+
+  /** Declare a persistent variable (`[persist]`, the `[persist]` config section,
+   *  `[input persist=true]`). The store's value wins; `def` seeds the first run. */
+  declarePersist(name: string, def: unknown): void {
+    this.persistNames.add(name)
+    if (Object.prototype.hasOwnProperty.call(this.globals, name)) return
+    this.globals[name] = Object.prototype.hasOwnProperty.call(this.storedGlobals, name) ? structuredClone(this.storedGlobals[name]) : def
+  }
+
+  /** Write a persistent variable (declaring it if needed) and schedule the
+   *  store write; plugins hear `onVarChange`. */
+  setGlobal(name: string, value: unknown): void {
+    this.persistNames.add(name)
+    this.globals[name] = value
+    this.globalsDirty = true
+    this.schedulePersist()
+    this.fire('onVarChange', name, value)
+    this.ui.refresh()
+  }
+
+  /** Add `value` to a persistent list once (`sys.endings`, `sys.chosen`). */
+  private addToGlobalSet(name: string, value: string): void {
+    const cur = this.globals[name]
+    const list = Array.isArray(cur) ? cur.slice() : []
+    if (list.includes(value)) return
+    list.push(value)
+    this.setGlobal(name, list)
+  }
+
+  /** Ask the player for a string — the `[input]` command's box (in-engine, never
+   *  the browser's). The fallback is the variable's current value when it has
+   *  one (a persisted name comes back on the next run, a second `[input]` offers
+   *  the first answer), else `default`: cancel, or OK on an empty field, yields
+   *  it. The value is written with `setVar` (persistent when `persist` or
+   *  declared so). Resolves to the value written. */
+  async promptInput(name: string, opts: { prompt?: string; default?: string; maxlength?: number; pattern?: string; persist?: boolean } = {}): Promise<string> {
+    const gen = this.generation
+    const seed = opts.default !== undefined ? this.fill(opts.default) : ''
+    if (opts.persist) this.declarePersist(name, seed)
+    const current = this.getVar(name)
+    const def = current !== undefined && current !== '' ? displayValue(current) : seed
+    let pattern = opts.pattern
+    if (pattern !== undefined) {
+      try {
+        new RegExp(`^(?:${pattern})$`, 'u')
+      } catch (err) {
+        this.report({ phase: 'exec', message: `[input] pattern "${pattern}" is not a valid regular expression — ignored: ${errMsg(err)}`, error: err }, true)
+        pattern = undefined
+      }
+    }
+    const cfg = this.inputConfig
+    const handle = this.stage.chrome.prompt(this.chromeText(opts.prompt) ?? '', {
+      ok: this.chromeText(cfg.ok) ?? this.t('ui.dialog.ok'),
+      cancel: this.chromeText(cfg.cancel) ?? this.t('ui.dialog.cancel'),
+      default: def,
+      maxlength: opts.maxlength,
+      pattern,
+      position: cfg.position,
+    })
+    this.promptCancel = handle.cancel
+    const typed = await handle.result
+    this.promptCancel = null
+    if (gen !== this.generation) return def
+    const value = typed === null || typed === '' ? def : typed
+    this.setVar(name, value)
+    return value
   }
 
   /** Set a channel's master volume (0..1), re-applied to what is playing;
@@ -2207,6 +2759,7 @@ export class Engine {
     window.removeEventListener('keyup', this.keyUpHandler)
     this.menu?.destroy()
     this.menu = undefined
+    this.ui.destroy()
     if (this.persistTimer !== undefined) {
       clearTimeout(this.persistTimer)
       void this.persistNow()
@@ -2252,6 +2805,9 @@ export class Engine {
     const ch = this.choiceResolve
     this.choiceResolve = null
     ch?.()
+    const pc = this.promptCancel
+    this.promptCancel = null
+    pc?.()
   }
 
   private tap(): void {
@@ -2383,6 +2939,10 @@ export class Engine {
 
   private async execDialogue(node: DialogueNode): Promise<void> {
     const gen = this.generation
+    if (this.pendingTrans) {
+      await this.commitTransition() // an armed [trans] reveals the scene before its line
+      if (gen !== this.generation) return
+    }
     this.audio.stopVoice() // a previous line's clip never bleeds into this one
     // Capture the queued voice ref + offset before startPendingVoice consumes them,
     // so the backlog can re-play the clip by ref (with the same silence trim) later.
@@ -2402,22 +2962,32 @@ export class Engine {
 
     // Resolve text at display time (not parse time) so a language switch can
     // re-render this line from the new catalog; literal lines keep their segments.
-    const segments = node.textKey ? parseSegments(this.resolveText(node.textKey)) : node.segments
-    await this.typeLine(segments, node.speaker)
+    const segments = this.displaySegments(node.segments, node.textKey)
+    const readKey = this.readKeyOf(this.resumeIndex)
+    const wasRead = this.readSet.has(readKey)
+    // An unread line never matches skip-mode's read set: the marker keeps it so.
+    const parkedKey = wasRead ? readKey : `\u0000${readKey}`
+    const textLen = segments.reduce((n, s) => n + (s.kind === 'text' ? s.text.length : 0), 0)
+    const pos = this.pos
+    const ended = await this.typeLine(segments, node.speaker, parkedKey, textLen, node)
     // A load() while this line was typing bumps the generation — bail before
     // parking on waitAdvance so we never steal the new loop's advance resolver.
     if (gen !== this.generation) return
+    // A click ran [jump] / [call] while the line was typing (runInline): play
+    // goes on from there, this line neither finishes nor parks.
+    if (this.pos !== pos) return
     // The line is fully shown in the CURRENT session (the guard above dropped stale
     // frames, so a mid-type load can't leak into a fresh, reset backlog) — record it.
-    this.recordBacklog(this.actorName(actor, node.speaker) ?? '', segments, voiceRef, voiceOffset)
-    const readKey = this.readKeyOf(this.resumeIndex)
-    const wasRead = this.readSet.has(readKey)
+    this.recordBacklog(this.actorName(actor, node.speaker) ?? '', segments, voiceRef, voiceOffset, actor ? node.speaker : undefined)
     this.markRead(this.resumeIndex)
+    this.fire('onDialogueDone', node)
+    this.parkedReadKey = parkedKey
+    // `ended`: a language switch on a {p} page shrank the line and the tap that
+    // turned the page already ended it — no second park.
+    if (ended) return
     this.stage.showIndicator(true)
     this.shown = { kind: 'dialogue', node } // park for in-place language switch
-    this.fire('onDialogueDone', node)
-    this.parkedReadKey = wasRead ? readKey : `\u0000${readKey}`
-    await this.waitAdvanceOrAuto(this.parkedReadKey, segments.reduce((n, s) => n + (s.kind === 'text' ? s.text.length : 0), 0))
+    await this.waitAdvanceOrAuto(this.parkedReadKey, textLen)
     this.shown = null
     this.stage.showIndicator(false)
   }
@@ -2434,21 +3004,36 @@ export class Engine {
 
   /** Type one line through the renderer, owning the pacing policy: the live text
    *  speed, the tap-to-skip flag, and the session guard. */
-  private async typeLine(segments: Segment[], speaker?: string): Promise<void> {
+  private async typeLine(segments: Segment[], speaker?: string, readKey = '', textLen = 0, node?: DialogueNode): Promise<boolean> {
     const gen = this.generation
+    const pos = this.pos
     this.typing = true
     this.skipTyping = false
-    await this.stage.typeLine(segments, {
+    const ended = await this.stage.typeLine(segments, {
       cps: () => this.textSpeed,
       // A tap, or skip mode over a line it may pass (read, or anything in `all`).
       skip: () => this.skipTyping || this.lineSkipActive(),
-      alive: () => this.running && gen === this.generation,
+      // …or a click (a hotspot, a panel button) moved the playhead meanwhile.
+      alive: () => this.running && gen === this.generation && this.pos === pos,
       onReveal: (span, effect) => {
         if (effect) this.applyTextEffect(effect, span)
         if (this.host.hasListeners('onReveal')) this.fire('onReveal', span.char, span.index, speaker)
       },
+      // A page break parks like the end of a line — tap, auto or skip turns the
+      // page — but the voice clip plays on across pages.
+      onPage: async () => {
+        this.typing = false
+        this.stage.showIndicator(true)
+        if (node) this.shown = { kind: 'dialogue', node, paged: true } // parked inside the line: a language switch repaints this page
+        await this.waitAdvanceOrAuto(readKey, textLen, false)
+        this.shown = null
+        this.stage.showIndicator(false)
+        this.typing = true
+        this.skipTyping = false
+      },
     })
     this.typing = false
+    return ended
   }
 
   /** Run one inline text effect on a revealed span. Unknown → one `exec`
@@ -2471,13 +3056,36 @@ export class Engine {
 
   private async execChoices(node: ChoicesNode): Promise<void> {
     const gen = this.generation
-    const items = node.items.filter((it) => !it.cond || truthy(evalExpr(it.cond, this.vars)))
+    if (this.pendingTrans) {
+      await this.commitTransition()
+      if (gen !== this.generation) return
+    }
+    const scope = this.scope()
+    const items = node.items.filter((it) => !it.cond || truthy(evalExpr(it.cond, scope)))
     if (!items.length) return
     this.stage.showIndicator(false)
     const onSpan = (span: TextSpan, effect: string | undefined): void => {
       if (effect) this.applyTextEffect(effect, span)
     }
-    const prompt = this.stage.showChoices(items.map((it) => parseSegments(this.choiceText(it))), onSpan)
+    const cfg = this.choicesConfig
+    const taken = cfg.chosenStyle === 'dim' ? this.globals['sys.chosen'] : undefined
+    const views: ChoiceView[] = items.map((it) => ({
+      segments: this.displaySegments(parseSegments(this.choiceText(it))),
+      disabled: it.disabled ? truthy(evalExpr(it.disabled, scope)) : false,
+      chosen: Array.isArray(taken) && taken.includes(choiceKey(it)),
+    }))
+    if (views.every((v) => v.disabled)) {
+      this.report({ phase: 'exec', message: 'every option of this prompt is disabled — shown enabled so the story can go on', line: node.line, node }, true)
+      for (const v of views) v.disabled = false
+    }
+    const over = this.nextChoices ?? {}
+    this.nextChoices = null
+    const timer = over.timer ?? cfg.timer
+    const timerDefault = over.timerDefault ?? cfg.timerDefault
+    const prompt = this.stage.showChoices(views, onSpan, {
+      timer: timer && timer > 0 ? timer : undefined,
+      timeoutIndex: timerDefault !== undefined ? timerDefault - 1 : undefined,
+    })
     // A load() during this prompt cancels it (null) to unwind this frame.
     this.choiceResolve = () => prompt.cancel()
     this.shown = { kind: 'choices', node, prompt } // park for in-place language switch
@@ -2489,9 +3097,17 @@ export class Engine {
     if (gen !== this.generation || picked === null) return
     this.stage.hideChoices()
     const item = items[picked]!
+    // `sys.chosen` remembers every option ever taken, by its target label (its
+    // text when it has none) — `has(sys.chosen, 'secret')` in a later run.
+    this.addToGlobalSet('sys.chosen', choiceKey(item))
     this.fire('onChoose', item, picked)
     if (item.target) await this.jump(item.target)
   }
+}
+
+/** What `sys.chosen` records for an option: its target label, else its key or text. */
+function choiceKey(item: ChoiceItem): string {
+  return item.target || item.textKey || item.text
 }
 
 export function createEngine(options: EngineOptions): Engine {

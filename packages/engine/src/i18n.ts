@@ -41,9 +41,8 @@ const en: Catalog = {
   'ui.menu.close': 'Close',
   'ui.menu.version': 'NilVN Studio v{ver}',
   'ui.settings.textSpeed': 'Text speed',
-  'ui.settings.speed.slow': 'Slow',
-  'ui.settings.speed.normal': 'Normal',
-  'ui.settings.speed.fast': 'Fast',
+  'ui.settings.speed.cps': '{n} cps',
+  'ui.settings.speed.instant': 'Instant',
   'ui.settings.autoDelay': 'Auto wait',
   'ui.settings.skipMode': 'Skip',
   'ui.settings.skip.read': 'Read text',
@@ -75,6 +74,7 @@ const en: Catalog = {
   'ui.msg.toTitleConfirm': 'Back to the title? Unsaved progress will be lost.',
   'ui.dialog.ok': 'OK',
   'ui.dialog.cancel': 'Cancel',
+  'ui.loading.title': 'Loading…',
 }
 const zh: Catalog = {
   'ui.title.new': '开始游戏',
@@ -101,9 +101,8 @@ const zh: Catalog = {
   'ui.menu.close': '关闭',
   'ui.menu.version': 'NilVN 工坊 v{ver}',
   'ui.settings.textSpeed': '文字速度',
-  'ui.settings.speed.slow': '慢',
-  'ui.settings.speed.normal': '中',
-  'ui.settings.speed.fast': '快',
+  'ui.settings.speed.cps': '{n} 字/秒',
+  'ui.settings.speed.instant': '瞬间显示',
   'ui.settings.autoDelay': '自动等待',
   'ui.settings.skipMode': '快进范围',
   'ui.settings.skip.read': '已读',
@@ -135,6 +134,7 @@ const zh: Catalog = {
   'ui.msg.toTitleConfirm': '回到标题？尚未保存的进度会丢失。',
   'ui.dialog.ok': '确定',
   'ui.dialog.cancel': '取消',
+  'ui.loading.title': '加载中…',
 }
 const ja: Catalog = {
   'ui.title.new': 'はじめから',
@@ -161,9 +161,8 @@ const ja: Catalog = {
   'ui.menu.close': '閉じる',
   'ui.menu.version': 'NilVN スタジオ v{ver}',
   'ui.settings.textSpeed': '文字速度',
-  'ui.settings.speed.slow': '遅い',
-  'ui.settings.speed.normal': '普通',
-  'ui.settings.speed.fast': '速い',
+  'ui.settings.speed.cps': '{n} 文字/秒',
+  'ui.settings.speed.instant': '一括表示',
   'ui.settings.autoDelay': 'オート待ち時間',
   'ui.settings.skipMode': 'スキップ範囲',
   'ui.settings.skip.read': '既読のみ',
@@ -195,6 +194,7 @@ const ja: Catalog = {
   'ui.msg.toTitleConfirm': 'タイトルに戻りますか？保存していない進行状況は失われます。',
   'ui.dialog.ok': 'OK',
   'ui.dialog.cancel': 'キャンセル',
+  'ui.loading.title': '読み込み中…',
 }
 
 /** The ids the engine's own chrome uses (a host override targets these). */

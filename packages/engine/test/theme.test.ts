@@ -210,6 +210,17 @@ describe('engine theme API', () => {
     expect(unknown).toEqual([])
   })
 
+  it('[window] slice turns the skin into a nine-slice border-image; slice without a skin is reported', () => {
+    const a = windowTheme({ skin: 'box.png', slice: 40 }, (p) => p)
+    expect(a.tokens['dialog-skin']).toBe('none')
+    expect(a.tokens['dialog-skin-slice']).toBe('url("box.png") 40 fill / 40px stretch')
+    expect(a.tokens['dialog-bg']).toBe('transparent')
+    const b = windowTheme({ skin: 'box.png', slice: '40 30', sliceWidth: '4cqh 3cqw' }, (p) => p)
+    expect(b.tokens['dialog-skin-slice']).toBe('url("box.png") 40 30 fill / 4cqh 3cqw stretch')
+    const c = windowTheme({ slice: 40 }, (p) => p)
+    expect(c.unknown).toEqual(['slice (needs skin)'])
+  })
+
   it('plugins read the theme through ctx.theme and hear changes until disposed', async () => {
     const seen: string[] = []
     let ctxRef: PluginContext | undefined

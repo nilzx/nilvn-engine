@@ -55,6 +55,7 @@ accent = "#ff7eb6"
 
 [window]                    # dialogue-box shorthand over the same tokens
 skin = "@ui/box.png"        # image under the text; clears the default gradient + border
+slice = 40                  # nine-slice the skin (edge inset in image px) instead of stretching it
 position = "bottom"         # or "top"
 offset = "3.5cqh"
 opacity = 0.9
@@ -90,13 +91,27 @@ items = ["save", "load", "quicksave", "quickload", "backlog", "auto", "skip", "s
 [settings]                  # the settings panel + player defaults
 autoDelay = 1.5
 skipMode = "read"
+textSpeedRange = [10, 100]  # the text-speed slider, chars per second; its top notch is "instant"
 show = ["textSpeed", "autoDelay", "skipMode", "volumes", "language", "fullscreen", "dialogOpacity", "uiScale"]
+
+[keys]                      # keyboard bindings (KeyboardEvent.key names; false unbinds)
+auto = "a"
+skip = "Tab"
+quicksave = "F5"
+quickload = "F9"
+backlog = "l"
 
 [strings.zh]                # chrome string overrides, per language
 "ui.title.new" = "开始"
 ```
 
 ## Sections
+
+A section or key the engine does not know is reported (`engine.diagnostics`,
+phase `load`, `config: <path>: unknown key`), as is a value of the wrong type
+or off its list — `CONFIG_SCHEMA` in `@nilvn/engine` is the schema
+(`checkConfig(cfg)` runs it).
+
 
 ### `[game]`
 
@@ -105,6 +120,11 @@ show = ["textSpeed", "autoDelay", "skipMode", "volumes", "language", "fullscreen
 | `title` | string | Sets `document.title`. |
 | `entry` | string | Script `start()` auto-loads when no script or package was loaded explicitly. Relative to the config file. |
 | `textSpeed` | number | Typewriter speed in characters per second (default 40). |
+
+`defaultLang` sets the fallback content language (as `createEngine({ defaultLang })`).
+`scripts = ["intro.nvn", "day1.nvn"]` plays several files in order as chunks —
+labels global, list-order fall-through, saves addressing the file (see
+[script-syntax.md](script-syntax.md#several-files)); it takes precedence over `entry`.
 
 ### `[plugins]`
 
@@ -148,8 +168,37 @@ A table of prefix → path. `"@bg" = "assets/bg"` lets a script write
 | `color` | string | Name-tag **background** colour. Absent = the theme's `name-bg`. |
 | `textColor` | string | Name-tag **text** colour. Absent = the theme's `name-color`. |
 | `sprites` | string | Sprite URL template; `{face}` is replaced by the current face. |
+| `canvas` | `[w, h]` | Layered sprite: the shared canvas the layers align on, in image pixels. |
+| `layers` | table | Layered sprite: `[actors.<id>.layers]`, see below. Wins over `sprites`. |
 | `face` | string | Default face (`defaultFace` in the runtime type). |
 | `voice` | number | The `voicefx` plugin's actor field: base pitch (Hz) of the synthesized typing blip. Any key a plugin declares under `contributes.actorFields` may sit here; the engine files it under the actor's `ext[pluginId]`. |
+
+#### `[actors.<id>.layers]`
+
+A character drawn from several images composed on one canvas — a body, a face,
+an optional extra — each swappable on its own:
+
+```toml
+[actors.yuki]
+canvas = [600, 1100]                 # the shared canvas (px); layers align on it
+[actors.yuki.layers]
+body  = { src = "@char/yuki/body-{body}.png",   default = "uniform" }
+face  = { src = "@char/yuki/face-{face}.png",   default = "happy", offset = [150, 280] }
+extra = { src = "@char/yuki/extra-{extra}.png", optional = true }
+```
+
+Layers compose bottom to top in declaration order. `src` is a template where
+`{<layer name>}` is replaced by the layer's value; `default` is the value used
+until a command sets one; `offset` places a cropped layer image on the canvas
+(a full-size image needs none); an `optional` layer is left out while it has no
+value. The `face` layer is what `[char id face]` and `speaker(face):` drive; the
+others change through `[char id body=casual extra=blush]`, and `extra=none`
+clears an optional one. The bare value after the id is **always the face**
+(`[char vera calm body=gown]`, never `[char vera gown]` — that would look for
+`face-gown`). A layer or sprite image that fails to load is reported as a
+diagnostic (`… image failed to load — <url>`). A save stores the layer values
+and rebuilds the images on load. `[preload] auto` warms every layer image a
+command implies.
 
 ### `[defaults]`
 
@@ -181,7 +230,9 @@ memorising token names.
 
 | Key | Type | Token(s) |
 |---|---|---|
-| `skin` | path | `dialog-skin` (whole-image stretch under the text); also sets `dialog-bg = transparent` and `dialog-border = none` unless `background` / `border` are given. |
+| `skin` | path | `dialog-skin` (whole-image stretch under the text, or nine-slice with `slice`); also sets `dialog-bg = transparent` and `dialog-border = none` unless `background` / `border` are given. |
+| `slice` | number, or up to four as in CSS `border-image-slice` | Nine-slice the skin: the inset of the slice lines in image pixels. Corners stay crisp, edges repeat by stretching, the centre fills the box. Sets `dialog-skin-slice` (a `border-image` value) and clears `dialog-skin`. |
+| `sliceWidth` | CSS length(s) | How wide the sliced edges draw on the stage (default: the slice inset in `px`; `4cqh` scales with the stage). |
 | `background` | CSS background | `dialog-bg` |
 | `border` | CSS border, or `none` | `dialog-border` |
 | `radius` | length | `dialog-radius` |
@@ -201,6 +252,12 @@ height / width) so a layout scales with the stage; plain `%`, `px`, `em` work to
 The script's `[window skin=…]` command still reskins the box mid-story on top of
 this base. Unknown keys are reported and ignored.
 
+`overflow` is behaviour rather than a token: `grow` (default) lets the box
+stretch with a long line; `page` fixes the box at `height` and breaks the line
+into pages where the text would run past the bottom (a tap turns the page; auto
+and skip turn it by themselves); `shrink` fixes the box and scales the text down
+(to half at most) until the line fits. `{p}` in a line pages in every mode.
+
 ### `[title]`
 
 The built-in title page — what a player sees before the story, drawn over the
@@ -214,6 +271,7 @@ the `[game] title` and a New-game button.
 | `heading` | string | Heading text (`@key` resolves through the catalogs). Default: `[game] title`. |
 | `subtitle` | string | Under the heading. |
 | `logo` | path | An image above the heading. |
+| `logoWidth` | CSS length | The logo's width (`"40cqw"`; a number = px). Without it the image keeps its size, capped at 70% of the stage's width and 34% of its height. |
 | `background` | path or CSS | An image path, or a colour / gradient (`"#0b1c2e"`, `"linear-gradient(…)"`). |
 | `bgm`, `bgmVolume` | path, 0..1 | Music while the page is up (stopped when the story starts). |
 | `buttons` | string[] | Ids in order: `new`, `continue` (shown only when an autosave exists); `load` / `settings` once those screens exist. Default `["new", "continue"]`. Unknown ids are reported. |
@@ -263,7 +321,10 @@ actions, each backed by a full-stage screen. It exists without any plugin.
 | `wheelBacklog` | boolean | Wheel-up over the stage opens the backlog (default true). |
 
 Back-to-title and Restart ask through the engine's own confirm box (never the
-browser's). The menu is hidden on the title and ending pages.
+browser's). The menu is hidden on the title and ending pages. The menu is built
+from whatever `[menu]` / `[settings]` / `[strings]` say at the time — a
+`loadConfig()` after `createEngine()` (the documented order) rebuilds it, so
+items, labels and the entry position always match the config.
 
 ### `[settings]`
 
@@ -275,14 +336,241 @@ persisted per work and restored on the next visit.
 | `autoDelay` | seconds | Auto mode's pause after each line (plus a little per character; never before a voice clip ends). Default 1.5. |
 | `skipMode` | `read` (default) \| `all` | What skip passes: lines seen before (skip ends at the first unread one) or everything. Holding **Ctrl** skips while held. Both modes stop at a choice. |
 | `show` | string[] | Rows in order: `textSpeed`, `autoDelay`, `skipMode`, `volumes` (music / ambience / SFX / voice), `language` (when the work ships more than one), `fullscreen`, `dialogOpacity`, `uiScale`. Default: all. |
+| `textSpeedRange` | `[min, max]` cps | The text-speed slider: linear in characters per second from `min` to `max` (default `[10, 100]`); the notch past `max` is **instant** (`textSpeed = 0`). |
+
+### `[keys]`
+
+The keyboard. Every value is a `KeyboardEvent.key` name — `a`, `F5`, `Escape`,
+`Space`, `Enter`, `Tab`, `Control` — optionally with `Ctrl+` / `Shift+` / `Alt+` /
+`Meta+` in front (`Ctrl+S`), an array to bind several keys, or `false` to unbind.
+Names compare case-insensitively.
+
+| Action | Default | Does |
+|---|---|---|
+| `advance` | `["Space", "Enter"]` | Advance the story (ends auto / skip). |
+| `menu` | `"Escape"` | Open / close the system menu (closes the topmost panel first). |
+| `skipHold` | `"Control"` | Skip while held. |
+| `skip` | `"Tab"` | Toggle skip mode. |
+| `auto` | `"a"` | Toggle auto mode. |
+| `quicksave` / `quickload` | `"F5"` / `"F9"` | The quick slot (a toast confirms). |
+| `backlog`, `save`, `load`, `settings` | unbound | Open that panel. |
+| `fullscreen` | unbound | Toggle fullscreen. |
+
+`advance`, `menu` and `skipHold` always work. The others are the system menu's
+own actions: they apply while the menu exists and the story is playing (a host
+that draws its own chrome — `[menu] enabled = false`, `screens.menu = false` —
+binds its own keys over the engine API). A bound key is consumed (`F5` does not
+reload the page, `Tab` does not move focus), and every binding is ignored while
+a text field has focus.
+
+### `[ui.<id>]`
+
+A panel the engine draws from data-bound widgets — no code. A `hud` is pinned
+to an anchor; a `window` is a titled box in the middle.
+
+```toml
+[ui.affection]
+kind = "hud"                          # hud | window
+anchor = "top-right"                  # top-left | top | top-right | left | center | right | bottom-left | bottom | bottom-right
+show = "playing"                      # playing (default) | always | manual
+widgets = [
+  { type = "bar",   var = "affection", max = 10, label = "@ui.affection" },
+  { type = "text",  text = "@ui.day" },                       # the catalog text may carry {$day}
+  { type = "text",  var = "mood" },                           # a variable's value
+  { type = "image", src = "@ui/heart.png", if = "affection >= 5" },
+]
+
+[ui.status]
+kind = "window"
+title = "@ui.status"                  # also the label of a `ui:status` menu item / title button
+show = "manual"                       # only after [ui show status]
+width = "40cqw"
+widgets = [
+  { type = "list",   var = "items", empty = "@ui.noItems" },
+  { type = "button", label = "@ui.close", onclick = "ui hide status" },
+]
+```
+
+| Widget | Keys | Shows |
+|---|---|---|
+| `text` | `text` (`@key` / literal with `{$var}`), or `var` | A line of text. |
+| `bar` | `var`, `max` (100), `min` (0), `label` | A progress bar; `max` / `min` may be numbers or expressions. |
+| `image` | `src`, `width` | An image (`src` resolves like an asset path). |
+| `list` | `var`, `empty` | One line per item of a list variable, or of a comma-separated string (so a string item cannot itself hold a comma — collect into a list variable for that); each string item is a config string (`@key` resolves through the catalogs, `{$var}` fills); `empty` (a config string) when there are none. |
+| `button` | `label`, `onclick` | A button; `onclick` is script commands, one per line (a TOML multi-line string for several). |
+
+Every widget takes `if` (an expression; false hides it). Panels re-render on
+every variable change, language switch and session change. A `playing` panel
+draws the moment play starts — before the script's first line — so a variable
+it reads may not exist yet: it shows as empty (no diagnostic) until a `[set]`
+gives it a value. Declare it in `[persist]` only when it really must survive
+runs. `[ui show id]` /
+`[ui hide id]` / `[ui toggle id]` override the `show` policy; the decisions ride
+in a save. `[menu] items` and `[title] buttons` accept `ui:<id>` entries that
+toggle a panel. Look: `hud-*`, `window-*` and `bar-*` theme tokens.
+
+### `[preload]`
+
+What `prepare()` warms before the title page (images decoded, everything else
+fetched into the cache), with the built-in loading page up meanwhile. Failures
+are diagnostics, never a stop.
+
+```toml
+[preload]
+auto = true                      # what the loaded script references (in chunked play: the opening chunk and its successors)
+assets = ["@ui/box.svg", "@bgm/daily.wav"]   # explicit refs (plugin commands' assets go here)
+concurrency = 3                  # parallel fetches (default 4)
+screen = true                    # the loading page (default true; a host can also pass screens.loading = false)
+heading = "@ui.loading"          # its heading (default: the chrome's "Loading…", ui.loading.title)
+background = "#000"              # a colour, gradient or image path
+```
+
+The page draws a bar over `progress-bg` / `progress-color`; plugins hear
+`onPreload(done, total, ref)`. `[preload …]` in a script warms mid-story.
+
+### `[choices]`
+
+The choices prompt. Layout and behaviour keys are read directly; the look keys
+map onto `choice-*` theme tokens (config.ts `choicesTheme`).
+
+```toml
+[choices]
+position = "bottom"        # center | top | bottom (clear of the dialogue box) | left | right
+layout = "grid"            # column | grid
+columns = 2                # per row, for grid
+width = "30cqw"            # choice-width (each button's minimum width)
+gap = "2cqh"               # choices-gap
+skin = "@ui/btn.png"       # choice-skin; with slice = 12 a nine-slice (choice-skin-slice)
+slice = 12
+chosenStyle = "dim"        # none | dim — options taken in an earlier run (sys.chosen)
+timer = 8                  # seconds before the prompt picks timerDefault by itself
+timerDefault = 1           # counted from 1 among the shown options (default: the first enabled one)
+```
+
+`[choices timer=15 default=2]` in the script overrides `timer` / `timerDefault`
+for the **next prompt only** (`timer=0` = no countdown for that prompt); the
+config values are the default for every other prompt.
+
+| Key | Token |
+|---|---|
+| `skin` (+ `slice`, `sliceWidth`) | `choice-skin` / `choice-skin-slice`; a skin also clears `choice-bg` and `choice-border` unless they are given. |
+| `background` / `border` / `radius` / `color` / `size` / `hover` | `choice-bg` / `choice-border` / `choice-radius` / `choice-color` / `choice-size` / `choice-hover` |
+| `width` / `gap` | `choice-width` / `choices-gap` |
+| `chosenBackground` / `chosenColor` | `choice-chosen-bg` / `choice-chosen-color` |
+| `disabledBackground` / `disabledColor` | `choice-disabled-bg` / `choice-disabled-color` |
+| `timerBackground` / `timerColor` | `choice-timer-bg` / `choice-timer-color` |
+
+### `[persist]`
+
+Persistent variables and their first-run defaults — the same declaration as the
+`[persist]` command (see [script-syntax.md](script-syntax.md#persistent-variables)).
+The store's value wins whenever there is one; the default seeds a first visit.
+
+```toml
+[persist]
+player = ""
+runs = 0
+seen_intro = false
+```
+
+### `[input]`
+
+The box the `[input]` command shows. The look keys map onto `input-*` theme
+tokens (the box defaults to the panel look); `position` and the labels are read
+directly.
+
+```toml
+[input]
+skin = "@ui/box.png"       # image behind the box; with slice = 24, a nine-slice
+slice = 24
+sliceWidth = "3.2cqh"
+position = "center"        # center | top | bottom
+ok = "@ui.input.ok"        # button labels (@key or literal); default: the chrome's OK / Cancel
+cancel = "@ui.input.cancel"
+fieldSize = "3.4cqh"       # the text field: fieldBackground / fieldColor / fieldBorder / fieldRadius / fieldSize
+```
+
+| Key | Token |
+|---|---|
+| `skin` (+ `slice`, `sliceWidth`) | `input-box-skin` / `input-box-skin-slice`; a skin also clears `input-box-bg` and `input-box-border` unless they are given. |
+| `background` / `border` / `radius` | `input-box-bg` / `input-box-border` / `input-box-radius` |
+| `fieldBackground` / `fieldColor` / `fieldBorder` / `fieldRadius` / `fieldSize` | `input-bg` / `input-color` / `input-border` / `input-radius` / `input-size` |
 
 ### `[strings.<lang>]`
 
-Chrome string overrides by language, keyed by the engine's ids
-(`ui.title.new`, `ui.title.continue`, `ui.ending.title`, `ui.ending.toTitle`,
-`ui.ending.restart`, … — `CHROME_STRING_IDS` lists them). The engine ships
-`en` (base), `zh` and `ja`; an override for the current language wins, then
-`en`, then the engine's catalog.
+Chrome string overrides by language — every piece of text the engine's own
+screens show, keyed by id. The engine ships `en` (base), `zh` and `ja`; an
+override for the current language wins, then `en`, then the engine's catalog.
+`{$var}` fills work in an override; `{ver}` / `{n}` are the engine's own slots.
+
+```toml
+[strings.en]
+"ui.menu.toTitle" = "Leave the case"
+"ui.msg.toTitleConfirm" = "Drop the case? Whatever you found stays found."
+```
+
+| Id | Engine's English |
+|---|---|
+| `ui.title.new` | New game |
+| `ui.title.continue` | Continue |
+| `ui.title.load` | Load |
+| `ui.title.settings` | Settings |
+| `ui.title.quit` | Quit |
+| `ui.ending.title` | The End |
+| `ui.ending.toTitle` | Back to title |
+| `ui.ending.restart` | Play again |
+| `ui.menu.title` | Menu (Esc) |
+| `ui.menu.save` | Save |
+| `ui.menu.load` | Load |
+| `ui.menu.quicksave` | Quick save |
+| `ui.menu.quickload` | Quick load |
+| `ui.menu.backlog` | Backlog |
+| `ui.menu.auto` | Auto |
+| `ui.menu.skip` | Skip |
+| `ui.menu.settings` | Settings |
+| `ui.menu.replays` | Replays |
+| `ui.menu.replayExit` | Back to story |
+| `ui.menu.toTitle` | Title |
+| `ui.menu.restart` | Restart |
+| `ui.menu.close` | Close |
+| `ui.menu.version` | NilVN Studio v{ver} |
+| `ui.settings.textSpeed` | Text speed |
+| `ui.settings.speed.cps` | {n} cps |
+| `ui.settings.speed.instant` | Instant |
+| `ui.settings.autoDelay` | Auto wait |
+| `ui.settings.skipMode` | Skip |
+| `ui.settings.skip.read` | Read text |
+| `ui.settings.skip.all` | Everything |
+| `ui.settings.vol.music` | Music |
+| `ui.settings.vol.ambience` | Ambience |
+| `ui.settings.vol.sfx` | SFX |
+| `ui.settings.vol.voice` | Voice |
+| `ui.settings.language` | Language |
+| `ui.settings.fullscreen` | Fullscreen |
+| `ui.settings.dialogOpacity` | Dialogue box |
+| `ui.settings.uiScale` | Text size |
+| `ui.settings.on` | On |
+| `ui.settings.off` | Off |
+| `ui.saves.autoSlot` | Auto |
+| `ui.saves.quickSlot` | Quick |
+| `ui.saves.empty` | Empty |
+| `ui.saves.delete` | Delete |
+| `ui.saves.msg.saved` | Saved |
+| `ui.saves.msg.overwrite` | Overwrite this save? |
+| `ui.saves.msg.delete` | Delete this save? |
+| `ui.saves.msg.failed` | Save failed (storage full) |
+| `ui.saves.msg.mismatch` | Save doesn't match this version |
+| `ui.saves.msg.noQuick` | No quick save yet |
+| `ui.backlog.empty` | No dialogue yet |
+| `ui.backlog.playVoice` | Play voice |
+| `ui.replays.locked` | Locked — reach this part of the story first |
+| `ui.msg.restartConfirm` | Restart? Unsaved progress will be lost. |
+| `ui.msg.toTitleConfirm` | Back to the title? Unsaved progress will be lost. |
+| `ui.dialog.ok` | OK |
+| `ui.dialog.cancel` | Cancel |
+| `ui.loading.title` | Loading… |
+
+(`CHROME_STRING_IDS`, exported by `@nilvn/engine`, is the same list at runtime.)
 
 ## Languages
 
