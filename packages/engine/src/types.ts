@@ -862,6 +862,8 @@ export interface TitleConfig {
   subtitle?: string
   /** An image shown above the heading. */
   logo?: string
+  /** Its width (a CSS length such as `"40cqw"`; a number = px). Default: at most 70% of the stage's width. */
+  logoWidth?: string | number
   /** An image path, or a CSS colour / gradient. */
   background?: string
   bgm?: string

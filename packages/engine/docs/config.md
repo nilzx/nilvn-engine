@@ -193,8 +193,12 @@ until a command sets one; `offset` places a cropped layer image on the canvas
 (a full-size image needs none); an `optional` layer is left out while it has no
 value. The `face` layer is what `[char id face]` and `speaker(face):` drive; the
 others change through `[char id body=casual extra=blush]`, and `extra=none`
-clears an optional one. A save stores the layer values and rebuilds the images
-on load. `[preload] auto` warms every layer image a command implies.
+clears an optional one. The bare value after the id is **always the face**
+(`[char vera calm body=gown]`, never `[char vera gown]` — that would look for
+`face-gown`). A layer or sprite image that fails to load is reported as a
+diagnostic (`… image failed to load — <url>`). A save stores the layer values
+and rebuilds the images on load. `[preload] auto` warms every layer image a
+command implies.
 
 ### `[defaults]`
 
@@ -267,6 +271,7 @@ the `[game] title` and a New-game button.
 | `heading` | string | Heading text (`@key` resolves through the catalogs). Default: `[game] title`. |
 | `subtitle` | string | Under the heading. |
 | `logo` | path | An image above the heading. |
+| `logoWidth` | CSS length | The logo's width (`"40cqw"`; a number = px). Without it the image keeps its size, capped at 70% of the stage's width and 34% of its height. |
 | `background` | path or CSS | An image path, or a colour / gradient (`"#0b1c2e"`, `"linear-gradient(…)"`). |
 | `bgm`, `bgmVolume` | path, 0..1 | Music while the page is up (stopped when the story starts). |
 | `buttons` | string[] | Ids in order: `new`, `continue` (shown only when an autosave exists); `load` / `settings` once those screens exist. Default `["new", "continue"]`. Unknown ids are reported. |
@@ -391,11 +396,15 @@ widgets = [
 | `text` | `text` (`@key` / literal with `{$var}`), or `var` | A line of text. |
 | `bar` | `var`, `max` (100), `min` (0), `label` | A progress bar; `max` / `min` may be numbers or expressions. |
 | `image` | `src`, `width` | An image (`src` resolves like an asset path). |
-| `list` | `var`, `empty` | One line per item of a list variable (or a comma-separated string); `empty` when there are none. |
+| `list` | `var`, `empty` | One line per item of a list variable, or of a comma-separated string (so a string item cannot itself hold a comma — collect into a list variable for that); each string item is a config string (`@key` resolves through the catalogs, `{$var}` fills); `empty` (a config string) when there are none. |
 | `button` | `label`, `onclick` | A button; `onclick` is script commands, one per line (a TOML multi-line string for several). |
 
 Every widget takes `if` (an expression; false hides it). Panels re-render on
-every variable change, language switch and session change. `[ui show id]` /
+every variable change, language switch and session change. A `playing` panel
+draws the moment play starts — before the script's first line — so a variable
+it reads may not exist yet: it shows as empty (no diagnostic) until a `[set]`
+gives it a value. Declare it in `[persist]` only when it really must survive
+runs. `[ui show id]` /
 `[ui hide id]` / `[ui toggle id]` override the `show` policy; the decisions ride
 in a save. `[menu] items` and `[title] buttons` accept `ui:<id>` entries that
 toggle a panel. Look: `hud-*`, `window-*` and `bar-*` theme tokens.
@@ -437,6 +446,10 @@ chosenStyle = "dim"        # none | dim — options taken in an earlier run (sys
 timer = 8                  # seconds before the prompt picks timerDefault by itself
 timerDefault = 1           # counted from 1 among the shown options (default: the first enabled one)
 ```
+
+`[choices timer=15 default=2]` in the script overrides `timer` / `timerDefault`
+for the **next prompt only** (`timer=0` = no countdown for that prompt); the
+config values are the default for every other prompt.
 
 | Key | Token |
 |---|---|
@@ -485,11 +498,79 @@ fieldSize = "3.4cqh"       # the text field: fieldBackground / fieldColor / fiel
 
 ### `[strings.<lang>]`
 
-Chrome string overrides by language, keyed by the engine's ids
-(`ui.title.new`, `ui.title.continue`, `ui.ending.title`, `ui.ending.toTitle`,
-`ui.ending.restart`, … — `CHROME_STRING_IDS` lists them). The engine ships
-`en` (base), `zh` and `ja`; an override for the current language wins, then
-`en`, then the engine's catalog.
+Chrome string overrides by language — every piece of text the engine's own
+screens show, keyed by id. The engine ships `en` (base), `zh` and `ja`; an
+override for the current language wins, then `en`, then the engine's catalog.
+`{$var}` fills work in an override; `{ver}` / `{n}` are the engine's own slots.
+
+```toml
+[strings.en]
+"ui.menu.toTitle" = "Leave the case"
+"ui.msg.toTitleConfirm" = "Drop the case? Whatever you found stays found."
+```
+
+| Id | Engine's English |
+|---|---|
+| `ui.title.new` | New game |
+| `ui.title.continue` | Continue |
+| `ui.title.load` | Load |
+| `ui.title.settings` | Settings |
+| `ui.title.quit` | Quit |
+| `ui.ending.title` | The End |
+| `ui.ending.toTitle` | Back to title |
+| `ui.ending.restart` | Play again |
+| `ui.menu.title` | Menu (Esc) |
+| `ui.menu.save` | Save |
+| `ui.menu.load` | Load |
+| `ui.menu.quicksave` | Quick save |
+| `ui.menu.quickload` | Quick load |
+| `ui.menu.backlog` | Backlog |
+| `ui.menu.auto` | Auto |
+| `ui.menu.skip` | Skip |
+| `ui.menu.settings` | Settings |
+| `ui.menu.replays` | Replays |
+| `ui.menu.replayExit` | Back to story |
+| `ui.menu.toTitle` | Title |
+| `ui.menu.restart` | Restart |
+| `ui.menu.close` | Close |
+| `ui.menu.version` | NilVN Studio v{ver} |
+| `ui.settings.textSpeed` | Text speed |
+| `ui.settings.speed.cps` | {n} cps |
+| `ui.settings.speed.instant` | Instant |
+| `ui.settings.autoDelay` | Auto wait |
+| `ui.settings.skipMode` | Skip |
+| `ui.settings.skip.read` | Read text |
+| `ui.settings.skip.all` | Everything |
+| `ui.settings.vol.music` | Music |
+| `ui.settings.vol.ambience` | Ambience |
+| `ui.settings.vol.sfx` | SFX |
+| `ui.settings.vol.voice` | Voice |
+| `ui.settings.language` | Language |
+| `ui.settings.fullscreen` | Fullscreen |
+| `ui.settings.dialogOpacity` | Dialogue box |
+| `ui.settings.uiScale` | Text size |
+| `ui.settings.on` | On |
+| `ui.settings.off` | Off |
+| `ui.saves.autoSlot` | Auto |
+| `ui.saves.quickSlot` | Quick |
+| `ui.saves.empty` | Empty |
+| `ui.saves.delete` | Delete |
+| `ui.saves.msg.saved` | Saved |
+| `ui.saves.msg.overwrite` | Overwrite this save? |
+| `ui.saves.msg.delete` | Delete this save? |
+| `ui.saves.msg.failed` | Save failed (storage full) |
+| `ui.saves.msg.mismatch` | Save doesn't match this version |
+| `ui.saves.msg.noQuick` | No quick save yet |
+| `ui.backlog.empty` | No dialogue yet |
+| `ui.backlog.playVoice` | Play voice |
+| `ui.replays.locked` | Locked — reach this part of the story first |
+| `ui.msg.restartConfirm` | Restart? Unsaved progress will be lost. |
+| `ui.msg.toTitleConfirm` | Back to the title? Unsaved progress will be lost. |
+| `ui.dialog.ok` | OK |
+| `ui.dialog.cancel` | Cancel |
+| `ui.loading.title` | Loading… |
+
+(`CHROME_STRING_IDS`, exported by `@nilvn/engine`, is the same list at runtime.)
 
 ## Languages
 

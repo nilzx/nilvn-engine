@@ -19,7 +19,7 @@ const TOKEN_RE =
 export const EXPR_FUNCTIONS: Record<string, (...args: unknown[]) => unknown> = {
   has: (set, x) => {
     if (Array.isArray(set)) return set.some((v) => v == x)
-    if (typeof set === 'string') return set === String(x)
+    if (typeof set === 'string') return set.includes(String(x))
     return false
   },
   rand: (a, b) => {

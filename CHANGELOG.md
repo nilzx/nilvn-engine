@@ -5,6 +5,39 @@ three packages share one version and one `engine-v*` tag. Entries before the
 repository was split out of the NilVN monorepo (September 2026) are condensed
 from its history.
 
+## 0.16.2 — 2026-09-21
+
+The first published build of the 0.16 line: the 0.16.0 and 0.16.1 tags
+failed in this repository's publish step (a test read a sample that only the
+private monorepo has) and never reached npm. Content: 0.16.0 + 0.16.1, plus
+that test now skipping where the sample is absent.
+
+## 0.16.1 — 2026-09-21
+
+Fixes from a docs-only author round (a sample written against the public
+documentation alone).
+
+### Fixed
+
+- `[game] scripts` no longer moves `baseUrl` to the script files' folder: assets, aliases and plugin packages resolve from the config file's directory, so scripts may live in a subfolder.
+- `has(str, x)` on a string means "contains" (a comma-joined string works), as documented.
+- `[hotspot] if=` runs to the end of the tag, spaces and all, like a `[choice]`'s.
+- A language switch while the player is parked at a `{p}` page repaints that page (the tap ends the line when the new text has no page after it).
+- `[window] overflow = "page"` clips the text box, not the dialogue box: the name plate is no longer cut.
+- `list` widget items go through the catalogs (`@key`, `{$var}`); panels drawn before the script's first `[set]` show an undefined variable as empty without a diagnostic.
+- A sprite, layer or logo image that fails to load is reported as a diagnostic.
+- The typewriter wraps Latin words as words (CJK still per character).
+- A click (hotspot, panel button, sprite) that runs `[jump]` / `[call]` while a line is still typing takes effect at once instead of after the next tap.
+
+### Added
+
+- `[choices timer= default=]`: a per-prompt override of the `[choices]` countdown and default (`timer=0` turns it off for that prompt).
+- `[title] logoWidth`.
+
+### Docs
+
+- `[strings.<lang>]` lists every chrome string id; `hasContinue()` is async; the bare value in `[char id value]` is always the face layer; the map-screen example loops back; `skin=none` semantics and how to show a plain box for a scene.
+
 ## 0.16.0 — 2026-09-21
 
 Batch I "core completion": text and variables, dialogue paging and the

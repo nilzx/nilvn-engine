@@ -36,7 +36,8 @@ Always available; they live in the engine itself.
 | `[include path]` | Paste another script file in here — resolved when the file loads, before parsing (see [script-syntax.md](script-syntax.md#several-files)). |
 | `[preload ref …]` | `wait=false` | Warm assets ahead of a heavy scene; `wait=true` shows the loading page until they are in. |
 | `[ui show\|hide\|toggle id]` | | Show, hide or toggle a `[ui.<id>]` panel (see [config.md](config.md#uiid)). |
-| `[hotspot id x= y= w= h= onclick= if=]` | | A clickable region of the stage (percent of the stage, in the world so it pans with the camera) whose click runs `onclick` (script commands, one per line). `if=` false leaves it out. `[hotspot remove id]` / `[hotspot clear]`. Saved with the stage. |
+| `[choices timer= default=]` | | The next prompt's countdown (seconds; `0` = none) and 1-based default, overriding the `[choices]` config for that prompt only. |
+| `[hotspot id x= y= w= h= onclick= if=]` | | A clickable region of the stage (percent of the stage, in the world so it pans with the camera) whose click runs `onclick` (script commands, one per line). `if=` runs to the end of the tag (spaces allowed — put it last); false leaves the hotspot out. `[hotspot remove id]` / `[hotspot clear]`. Saved with the stage. |
 
 ### Stage
 
@@ -49,7 +50,7 @@ Always available; they live in the engine itself.
 | `[hide id]` | `fade=0.3` | Hide one character. |
 | `[clear]` | `fade=0.3` | Hide every character. |
 | `[dialog show\|hide]` | | Show or hide the dialogue box (default `show`). |
-| `[window skin=image]` | `target=dialog` | Reskin a UI window with an image (stretched) for the rest of the scene; `skin=none` restores the chrome the work's theme / `[window]` config defines. Today the only window is the dialogue box. |
+| `[window skin=image]` | `target=dialog` | Reskin a UI window with an image (stretched) for the rest of the scene; `skin=none` goes back to what the work's theme / `[window]` config defines (a config skin comes back with it; to show a plain box for a scene, `[theme dialog-skin=none dialog-skin-slice=none]`). Today the only window is the dialogue box. |
 | `[theme token=value …]` | any [theme token](api.md#theming) | Override theme tokens for the rest of the scene (saved with the stage, cleared by a restart): `[theme name-bg=#0b1c2e text-size=4cqh]`. `[theme reset]` clears them. |
 | `[textspeed cps]` | | Typewriter speed; `0` reveals instantly. Default 40. |
 | `[fadeout sec]` | `color=#000` | Cover the screen. Default 0.6 s; `duration=` is the named form. |

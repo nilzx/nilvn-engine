@@ -175,6 +175,8 @@ export class Engine {
   readonly inputConfig: InputConfig = {}
   /** `[choices]` config: chosen style and timer (layout and tokens go to the stage). */
   readonly choicesConfig: ChoicesConfig = {}
+  /** `[choices timer= default=]`: overrides for the next prompt only. */
+  private nextChoices: { timer?: number; timerDefault?: number } | null = null
   /** `[game] scripts` — files played in order as chunks (see `loadScripts`). */
   scripts: string[] = []
   /** `[preload]` config: what `prepare()` warms and how the loading page looks. */
@@ -194,6 +196,13 @@ export class Engine {
     getVar: (name) => this.getVar(name),
     resolveKey: (key) => this.resolveText(key),
     missing: (name) => this.report({ phase: 'exec', message: `variable "${name}" is not defined — shown as empty` }, true),
+  }
+  /** The same, but an undefined variable is simply empty: panels draw as soon
+   *  as play starts, before the script's first `[set]`. */
+  private readonly quietTextHost: InterpolateHost = {
+    getVar: (name) => this.getVar(name),
+    resolveKey: (key) => this.resolveText(key),
+    missing: () => {},
   }
   actors: Record<string, ActorDef> = {}
   /** Current content language; dialogue/choice/name keys resolve from
@@ -379,7 +388,7 @@ export class Engine {
   /** What's parked on screen right now (an awaited dialogue line or a choices
    *  prompt), so a language switch can re-render it in place without disturbing
    *  playback. Cleared once the player advances past it. */
-  private shown: { kind: 'dialogue'; node: DialogueNode } | { kind: 'choices'; node: ChoicesNode; prompt: ChoicePrompt } | null = null
+  private shown: { kind: 'dialogue'; node: DialogueNode; paged?: boolean } | { kind: 'choices'; node: ChoicesNode; prompt: ChoicePrompt } | null = null
   private keyHandler = (e: KeyboardEvent) => {
     if (isEditableTarget(e.target)) return
     const hit = (a: KeyAction): boolean => matchKey(bindingOf(this.keysConfig, a), e)
@@ -431,6 +440,7 @@ export class Engine {
 
   constructor(opts: EngineOptions) {
     this.stage = new DomRenderer(opts.container)
+    this.stage.onAssetError = (what, url) => this.report({ phase: 'exec', message: `${what}: image failed to load — ${url}` }, true)
     this._textSpeed = opts.textSpeed ?? 40 // direct: no hooks before the plugin host exists
     this.baseUrl = opts.baseUrl ?? document.baseURI
     this.onEndCb = opts.onEnd
@@ -582,8 +592,9 @@ export class Engine {
    *  resolve against the first file's directory (`baseUrl`). */
   async loadScripts(urls: string[]): Promise<void> {
     if (!urls.length) throw new Error('loadScripts() needs at least one file')
-    const first = this.resolve(urls[0]!)
-    this.baseUrl = first.slice(0, first.lastIndexOf('/') + 1)
+    // baseUrl stays where loadConfig() put it: assets and aliases resolve from the
+    // config file's directory whatever folder the script files live in (an
+    // [include] resolves relative to the including file separately).
     const files: ScriptFile[] = await Promise.all(
       urls.map(async (u) => {
         const abs = this.resolve(u)
@@ -833,8 +844,8 @@ export class Engine {
 
   /** Fill `{$var}` / `{@key}` placeholders in a string with the current values
    *  (what dialogue, choices, actor names and config strings go through). */
-  fill(text: string): string {
-    return interpolateText(text, this.textHost)
+  fill(text: string, quiet = false): string {
+    return interpolateText(text, quiet ? this.quietTextHost : this.textHost)
   }
 
   /** What a line shows now: key-backed text resolved in the current language,
@@ -893,7 +904,9 @@ export class Engine {
       const node = s.node
       const actor = node.speaker ? this.actors[node.speaker] : undefined
       this.stage.setName(this.actorName(actor, node.speaker), actor?.color, actor?.textColor)
-      this.stage.setLine(this.displaySegments(node.segments, node.textKey), onSpan)
+      const segments = this.displaySegments(node.segments, node.textKey)
+      if (s.paged && this.stage.repaintLine(segments, onSpan)) return
+      this.stage.setLine(segments, onSpan)
     } else {
       const visible = s.node.items.filter((it) => !it.cond || truthy(evalExpr(it.cond, this.scope())))
       visible.forEach((item, i) => s.prompt.relabel(i, this.displaySegments(parseSegments(this.choiceText(item))), onSpan))
@@ -1487,15 +1500,16 @@ export class Engine {
 
   /** A config string: `@key` through the content catalogs, else literal, with
    *  `{$var}` / `{@key}` filled (what the pages, menus and panels show). */
-  chromeString(s: string | undefined): string | undefined {
-    return this.chromeText(s)
+  chromeString(s: string | undefined, quiet = false): string | undefined {
+    return this.chromeText(s, quiet)
   }
 
-  /** A config string: `@key` through the content catalogs, else literal. */
-  private chromeText(s: string | undefined): string | undefined {
+  /** A config string: `@key` through the content catalogs, else literal.
+   *  `quiet` = an undefined `{$var}` is empty without a diagnostic. */
+  private chromeText(s: string | undefined, quiet = false): string | undefined {
     if (s === undefined) return undefined
-    if (s.startsWith('@') && s.length > 1) return this.fill(this.resolveText(s.slice(1)) || s)
-    return this.fill(s)
+    if (s.startsWith('@') && s.length > 1) return this.fill(this.resolveText(s.slice(1)) || s, quiet)
+    return this.fill(s, quiet)
   }
 
   /** Where saves and settings persist: the host's store, else `localStorage`
@@ -2635,6 +2649,12 @@ export class Engine {
     return Object.prototype.hasOwnProperty.call(this.globals, name) ? this.globals[name] : this.vars[name]
   }
 
+  /** `[choices timer=8 default=2]`: the next prompt's timer (seconds; 0 = none)
+   *  and 1-based default, overriding the `[choices]` config for that prompt only. */
+  setNextChoices(over: { timer?: number; timerDefault?: number }): void {
+    this.nextChoices = { ...over }
+  }
+
   /** The table expressions evaluate against: the session's variables under the
    *  persistent ones (a fresh object each call — read, don't write). */
   scope(): Record<string, unknown> {
@@ -2948,18 +2968,25 @@ export class Engine {
     // An unread line never matches skip-mode's read set: the marker keeps it so.
     const parkedKey = wasRead ? readKey : `\u0000${readKey}`
     const textLen = segments.reduce((n, s) => n + (s.kind === 'text' ? s.text.length : 0), 0)
-    await this.typeLine(segments, node.speaker, parkedKey, textLen)
+    const pos = this.pos
+    const ended = await this.typeLine(segments, node.speaker, parkedKey, textLen, node)
     // A load() while this line was typing bumps the generation — bail before
     // parking on waitAdvance so we never steal the new loop's advance resolver.
     if (gen !== this.generation) return
+    // A click ran [jump] / [call] while the line was typing (runInline): play
+    // goes on from there, this line neither finishes nor parks.
+    if (this.pos !== pos) return
     // The line is fully shown in the CURRENT session (the guard above dropped stale
     // frames, so a mid-type load can't leak into a fresh, reset backlog) — record it.
     this.recordBacklog(this.actorName(actor, node.speaker) ?? '', segments, voiceRef, voiceOffset, actor ? node.speaker : undefined)
     this.markRead(this.resumeIndex)
-    this.stage.showIndicator(true)
-    this.shown = { kind: 'dialogue', node } // park for in-place language switch
     this.fire('onDialogueDone', node)
     this.parkedReadKey = parkedKey
+    // `ended`: a language switch on a {p} page shrank the line and the tap that
+    // turned the page already ended it — no second park.
+    if (ended) return
+    this.stage.showIndicator(true)
+    this.shown = { kind: 'dialogue', node } // park for in-place language switch
     await this.waitAdvanceOrAuto(this.parkedReadKey, textLen)
     this.shown = null
     this.stage.showIndicator(false)
@@ -2977,15 +3004,17 @@ export class Engine {
 
   /** Type one line through the renderer, owning the pacing policy: the live text
    *  speed, the tap-to-skip flag, and the session guard. */
-  private async typeLine(segments: Segment[], speaker?: string, readKey = '', textLen = 0): Promise<void> {
+  private async typeLine(segments: Segment[], speaker?: string, readKey = '', textLen = 0, node?: DialogueNode): Promise<boolean> {
     const gen = this.generation
+    const pos = this.pos
     this.typing = true
     this.skipTyping = false
-    await this.stage.typeLine(segments, {
+    const ended = await this.stage.typeLine(segments, {
       cps: () => this.textSpeed,
       // A tap, or skip mode over a line it may pass (read, or anything in `all`).
       skip: () => this.skipTyping || this.lineSkipActive(),
-      alive: () => this.running && gen === this.generation,
+      // …or a click (a hotspot, a panel button) moved the playhead meanwhile.
+      alive: () => this.running && gen === this.generation && this.pos === pos,
       onReveal: (span, effect) => {
         if (effect) this.applyTextEffect(effect, span)
         if (this.host.hasListeners('onReveal')) this.fire('onReveal', span.char, span.index, speaker)
@@ -2995,13 +3024,16 @@ export class Engine {
       onPage: async () => {
         this.typing = false
         this.stage.showIndicator(true)
+        if (node) this.shown = { kind: 'dialogue', node, paged: true } // parked inside the line: a language switch repaints this page
         await this.waitAdvanceOrAuto(readKey, textLen, false)
+        this.shown = null
         this.stage.showIndicator(false)
         this.typing = true
         this.skipTyping = false
       },
     })
     this.typing = false
+    return ended
   }
 
   /** Run one inline text effect on a revealed span. Unknown → one `exec`
@@ -3046,9 +3078,13 @@ export class Engine {
       this.report({ phase: 'exec', message: 'every option of this prompt is disabled — shown enabled so the story can go on', line: node.line, node }, true)
       for (const v of views) v.disabled = false
     }
+    const over = this.nextChoices ?? {}
+    this.nextChoices = null
+    const timer = over.timer ?? cfg.timer
+    const timerDefault = over.timerDefault ?? cfg.timerDefault
     const prompt = this.stage.showChoices(views, onSpan, {
-      timer: cfg.timer,
-      timeoutIndex: cfg.timerDefault !== undefined ? cfg.timerDefault - 1 : undefined,
+      timer: timer && timer > 0 ? timer : undefined,
+      timeoutIndex: timerDefault !== undefined ? timerDefault - 1 : undefined,
     })
     // A load() during this prompt cancels it (null) to unwind this frame.
     this.choiceResolve = () => prompt.cancel()

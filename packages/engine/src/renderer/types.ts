@@ -365,6 +365,8 @@ export interface ScreenModel {
   subtitle?: string
   /** An image URL shown above the heading. */
   logo?: string
+  /** Its CSS width (the renderer's default caps it at 70% of the stage). */
+  logoWidth?: string
   /** A CSS background (colour, gradient or `url(…)`); the stage shows through when absent. */
   background?: string
   layout?: 'center' | 'left' | 'right' | 'bottom'
@@ -598,7 +600,12 @@ export interface Renderer {
   showIndicator(on: boolean): void
   /** Type a dialogue line into the text box (typewriter); resolves when every
    *  character is revealed or the line was aborted (`alive()` false). */
-  typeLine(segments: Segment[], opts: TypeLineOptions): Promise<void>
+  /** Resolves true when a repaint while parked at a page (`repaintLine`) left
+   *  nothing after that page, so the tap that turned it ended the line. */
+  typeLine(segments: Segment[], opts: TypeLineOptions): Promise<boolean>
+  /** Re-render the line the player is parked INSIDE (at a `{p}` page break)
+   *  after a language switch; false when no line is parked mid-way. */
+  repaintLine(segments: Segment[], onSpan?: (span: TextSpan, effect: string | undefined) => void): boolean
   /** Replace the text box contents, fully revealed (a language switch repaints
    *  the parked line this way). */
   setLine(segments: Segment[], onSpan?: (span: TextSpan, effect: string | undefined) => void): void
