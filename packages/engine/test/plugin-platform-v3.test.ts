@@ -214,7 +214,14 @@ describe('actor fields', () => {
       container: document.createElement('div'),
       saveStore: new MemorySaveStore(),
       actors: { yuki: { name: 'Yuki', voice: 360 } },
-      registry: [{ id: 'app.nilvn.voicefx', activate: (c) => (ctx = c) }],
+      registry: [
+        {
+          id: 'app.nilvn.voicefx',
+          activate: (c) => {
+            ctx = c
+          },
+        },
+      ],
       manifests: [voicefxManifest],
       use: ['voicefx'],
     })

@@ -208,7 +208,14 @@ describe('strings, screens off, language', () => {
     const engine = createEngine({
       container: box(),
       messages: { en: { 'ui.title.continue': 'Resume' } },
-      plugins: [{ id: 'test.t', activate: (ctx) => (seen = `${ctx.t('ui.title.new')}/${ctx.t('ui.title.continue')}`) }],
+      plugins: [
+        {
+          id: 'test.t',
+          activate: (ctx) => {
+            seen = `${ctx.t('ui.title.new')}/${ctx.t('ui.title.continue')}`
+          },
+        },
+      ],
     })
     expect(seen).toBe('New game/Resume')
     engine.destroy()
