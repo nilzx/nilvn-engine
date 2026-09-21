@@ -37,7 +37,7 @@ Always available; they live in the engine itself.
 | `[preload ref …]` | `wait=false` | Warm assets ahead of a heavy scene; `wait=true` shows the loading page until they are in. |
 | `[ui show\|hide\|toggle id]` | | Show, hide or toggle a `[ui.<id>]` panel (see [config.md](config.md#uiid)). |
 | `[choices timer= default=]` | | The next prompt's countdown (seconds; `0` = none) and 1-based default, overriding the `[choices]` config for that prompt only. |
-| `[hotspot id x= y= w= h= onclick= if=]` | | A clickable region of the stage (percent of the stage, in the world so it pans with the camera) whose click runs `onclick` (script commands, one per line). `if=` runs to the end of the tag (spaces allowed — put it last); false leaves the hotspot out. `[hotspot remove id]` / `[hotspot clear]`. Saved with the stage. |
+| `[hotspot id x= y= w= h= onclick= if=]` | | A clickable region of the stage (percent of the stage, in the world so it pans with the camera) whose click runs `onclick` (script commands, one per line). `if=` runs to the end of the tag (spaces allowed — put it last); false leaves the hotspot out. `[hotspot remove id]` / `[hotspot clear]`. Saved with the stage. A region whose centre the dialogue box, a panel or the HUD covers is reported as a diagnostic — see [script-syntax.md](script-syntax.md#events). |
 
 ### Stage
 

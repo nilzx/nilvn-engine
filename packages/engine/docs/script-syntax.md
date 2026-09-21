@@ -96,7 +96,10 @@ Three built-ins are structural rather than stage commands:
 - `[jump label]` moves the playhead there.
 - `[choice text -> label if=condition disabled=condition]` offers the player a
   branch. The `if=` condition hides the option when it is false; `disabled=`
-  shows it greyed and unpickable when true. Both run to the end of the tag.
+  shows it greyed and unpickable when true. Either may stand alone or both may
+  appear together; each condition runs to the end of **its own** value — up to
+  the next `if=` / `disabled=` or the closing bracket — so it may contain spaces
+  and commas (`disabled=has(clues, "tape")`).
 
 ## Variables and conditions
 
@@ -155,10 +158,12 @@ has none). Read them with `has()`.
 me: Nice to meet you, {$player}.
 ```
 
-`prompt` is the message (an `@key` or literal); `default` is the fallback when
-the player cancels or leaves the field empty — unless the variable already has a
-value, which is offered back instead (a persisted name on the next run, the first
-answer on a second ask). `maxlength` caps the length; `pattern` is a regular
+`prompt` is the message (an `@key` or literal); `default` is the fallback taken
+when the player cancels or presses OK on an empty field. It is shown as the
+field's **placeholder**, never as pre-filled text: the box always opens empty, so
+accepting the default is one keypress rather than a select-all. When the variable
+already holds a value (a persisted name on the next run, the first answer on a
+second ask) that value becomes the placeholder, and the fallback, instead. `maxlength` caps the length; `pattern` is a regular
 expression the whole value must match before OK enables; `persist=true` declares
 the variable persistent. The box's look and button labels come from the
 `[input]` section of the config file (see [config.md](config.md#input)).
@@ -231,6 +236,15 @@ The parked line is an ordinary line: a tap ends it and play goes on below, so
 a map loops back to itself (the `[jump map]`) until a hotspot moves the
 playhead. A `[hotspot]`'s `if=` runs to the end of the tag, as a `[choice]`'s
 does.
+
+**Keep clickable regions clear of the chrome.** The dialogue box, a `[ui.<id>]`
+panel and the HUD are drawn over the stage and take the click, so a hotspot
+reaching under one is unreachable however right its coordinates look — and a
+test that drives the page with `element.click()` will never notice, because that
+bypasses hit testing. The engine probes each region's centre where it is
+declared and reports `hotspot "id": "…" covers its centre` when something else
+answers there. Check your own by hit-testing the point a player would aim at
+(`document.elementFromPoint`), not by clicking the element.
 
 ## Transitions
 

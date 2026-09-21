@@ -649,6 +649,9 @@ export class DomRenderer implements Renderer, EditStage {
   /** An image the stage was told to show failed to load (a wrong path). The
    *  engine turns it into a diagnostic. */
   onAssetError?: (what: string, url: string) => void
+  /** A hotspot was declared where a click cannot reach it — something else is
+   *  drawn over its centre. The engine turns it into a diagnostic. */
+  onObstructed?: (id: string, by: string) => void
   /** Screen-space band hosting objects promoted over the dialogue (band='front').
    *  Sits above dialogue/choices, below the transition fader; empty by default. */
   readonly frontLayer: HTMLDivElement
@@ -1109,8 +1112,9 @@ export class DomRenderer implements Renderer, EditStage {
 
   // ---- hotspots: clickable regions in the world (they pan with the camera) ----
 
-  showHotspot(spec: HotspotSpec): void {
+  showHotspot(spec: HotspotSpec, probe = true): void {
     let h = this.hotspots.get(spec.id)
+    const moved = !h || h.spec.x !== spec.x || h.spec.y !== spec.y || h.spec.w !== spec.w || h.spec.h !== spec.h
     if (!h) {
       const el = div('nilvn-hotspot')
       el.dataset.id = spec.id
@@ -1129,6 +1133,28 @@ export class DomRenderer implements Renderer, EditStage {
     h.el.style.top = `${spec.y}%`
     h.el.style.width = `${spec.w}%`
     h.el.style.height = `${spec.h}%`
+    if (probe && moved) this.checkReachable(h.el, spec.id)
+  }
+
+  /** A clickable region the player cannot reach is the one content bug the author
+   *  cannot see: the dialogue box, a panel or the HUD is drawn over it and takes
+   *  the click, while the coordinates still read fine in the script. Probe the
+   *  region's own centre — `elementFromPoint` skips `pointer-events: none`, so it
+   *  answers exactly what a real click would hit, which `element.click()` in a
+   *  test never does. Two things it deliberately does not do: without layout (a
+   *  detached stage, jsdom) there is nothing to measure and nothing is said, and
+   *  only the moment of declaration is judged, so a box shown afterwards over a
+   *  standing hotspot goes unreported. */
+  private checkReachable(el: HTMLElement, id: string): void {
+    if (!this.onObstructed) return
+    const doc = el.ownerDocument
+    if (typeof doc.elementFromPoint !== 'function') return // a DOM without hit testing
+    const r = el.getBoundingClientRect()
+    if (r.width < 2 || r.height < 2) return
+    const top = doc.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)
+    if (!top || top === el || el.contains(top)) return
+    const named = top.closest('[class*="nilvn-"]') ?? top
+    this.onObstructed(id, named.className || named.tagName.toLowerCase())
   }
 
   hideHotspot(id: string): void {
@@ -1485,7 +1511,12 @@ export class DomRenderer implements Renderer, EditStage {
         const closed = { right: 'inset(0 0 0 100%)', left: 'inset(0 100% 0 0)', down: 'inset(100% 0 0 0)', up: 'inset(0 0 100% 0)' }[dir]
         await animate(snap, [{ clipPath: 'inset(0 0 0 0)' }, { clipPath: closed }], { duration: dur, easing: 'ease-in-out' })
       } else if (kind === 'slide') {
-        const base = snap.style.transform
+        // A camera at rest carries the literal `none` in its inline transform
+        // (composeTransform's fallback), and `translateX(-100%) none` is not a
+        // transform list: the browser drops that keyframe and the slide plays as
+        // a cut. `none` means "no transform", so treat it as the empty base.
+        const rest = snap.style.transform
+        const base = rest === 'none' ? '' : rest
         const away = { left: 'translateX(-100%)', right: 'translateX(100%)', up: 'translateY(-100%)', down: 'translateY(100%)' }[dir]
         await animate(snap, [{ transform: base || 'none' }, { transform: `${away} ${base}`.trim() }], { duration: dur, easing: 'ease-in-out' })
       } else if (kind === 'circle') {
@@ -2137,7 +2168,9 @@ export class DomRenderer implements Renderer, EditStage {
       if (s.band && s.band !== 'world') this.setBand(`sprite:${s.id}`, s.band)
     }
     this.clearHotspots()
-    for (const h of state.hotspots ?? []) if (h && typeof h.id === 'string' && typeof h.onclick === 'string') this.showHotspot(h)
+    // No probing here: a restore rebuilds the stage in pieces, so what covers what
+    // mid-rebuild says nothing about the script the author wrote.
+    for (const h of state.hotspots ?? []) if (h && typeof h.id === 'string' && typeof h.onclick === 'string') this.showHotspot(h, false)
     // Camera resting transform: always reset to identity first (a restore to a
     // point before any camera work must not keep a later pan/zoom), then layer
     // the saved channels on. Fixes the pre-camera-support gap where a load /

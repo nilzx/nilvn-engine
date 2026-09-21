@@ -33,6 +33,71 @@ async function run(script: string, opts: Parameters<typeof newEngine>[0] = {}) {
   return e
 }
 
+describe('clickable regions', () => {
+  // jsdom has no layout, so the probe's two inputs are stubbed: a rect to measure
+  // and an answer for "what is drawn at this point". The logic under test is what
+  // the engine does with that answer.
+  const withStubs = async (answer: () => Element | null, fn: () => Promise<void>): Promise<void> => {
+    const proto = Element.prototype as unknown as { getBoundingClientRect: () => DOMRect }
+    const realRect = proto.getBoundingClientRect
+    const realFrom = document.elementFromPoint // jsdom may not define it at all
+    proto.getBoundingClientRect = () =>
+      ({ left: 10, top: 10, width: 100, height: 100, right: 110, bottom: 110, x: 10, y: 10, toJSON: () => ({}) }) as DOMRect
+    document.elementFromPoint = answer as typeof document.elementFromPoint
+    try {
+      await fn()
+    } finally {
+      proto.getBoundingClientRect = realRect
+      if (realFrom) document.elementFromPoint = realFrom
+      else delete (document as Partial<Document>).elementFromPoint
+    }
+  }
+
+  it('reports a hotspot the dialogue box covers — the coordinates read fine, the click never lands', async () => {
+    const box = document.createElement('div')
+    box.className = 'nilvn-text'
+    document.body.append(box)
+    await withStubs(
+      () => box,
+      async () => {
+        const e = await run('[hotspot door x=40 y=88 w=20 h=12 onclick="jump club_after"]\n[set a = 1]')
+        expect(e.diagnostics.map((d) => d.message)).toEqual([expect.stringContaining('hotspot "door": "nilvn-text" covers its centre')])
+        e.destroy()
+      },
+    )
+    box.remove()
+  })
+
+  it('stays quiet when the region itself answers at its centre', async () => {
+    await withStubs(
+      () => [...document.querySelectorAll('.nilvn-hotspot')].pop() ?? null,
+      async () => {
+        const e = await run('[hotspot door x=40 y=10 w=20 h=12 onclick="jump club_after"]\n[set a = 1]')
+        expect(e.diagnostics).toEqual([])
+        e.destroy()
+      },
+    )
+  })
+})
+
+describe('asset paths', () => {
+  it('names an @prefix no [path] entry or [alias] declares, instead of letting it travel on as a URL segment', async () => {
+    const e = await run('[bg @nope/room.png]\n[set a = 1]', { baseUrl: 'http://g.test/' })
+    expect(e.diagnostics).toEqual([
+      { phase: 'load', message: expect.stringContaining('unknown path alias "@nope"') as unknown as string },
+    ])
+    expect(e.resolve('@nope/room.png')).toBe('http://g.test/@nope/room.png') // still degrades, never throws
+    e.destroy()
+  })
+
+  it('stays quiet once the prefix is declared', async () => {
+    const e = await run('[alias @ok art]\n[bg @ok/room.png]\n[set a = 1]', { baseUrl: 'http://g.test/' })
+    expect(e.diagnostics).toEqual([])
+    expect(e.resolve('@ok/room.png')).toBe('http://g.test/art/room.png')
+    e.destroy()
+  })
+})
+
 describe('parser leniency', () => {
   it('skips a malformed [choice] line with a diagnostic and keeps parsing', () => {
     const { nodes, labels, diagnostics } = parseScript('[label a]\n[choice no arrow here]\n[set x = 1]')

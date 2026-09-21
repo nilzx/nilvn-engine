@@ -77,6 +77,34 @@ describe('scene transitions', () => {
     e.destroy()
   })
 
+  it('a slide keeps the camera\'s resting `none` out of its keyframes (it is not a transform list)', async () => {
+    const e = engineWith()
+    const frames: Record<string, string>[][] = []
+    const proto = Element.prototype as unknown as { animate: (kf: Record<string, string>[]) => unknown }
+    const real = proto.animate
+    proto.animate = function (this: Element, kf: Record<string, string>[]) {
+      if (this.classList.contains('nilvn-snapshot')) frames.push(kf)
+      return { finished: Promise.resolve(), finish() {} }
+    }
+    try {
+      e.loadSource('[bg #111111]\n[set ready = 1]\n[wait 0.2]\n[trans slide dir=left duration=0]\n[bg #222222]\n[trans end]\n[set done = 1]')
+      void e.start()
+      await until(() => e.vars.ready === 1)
+      // Writing the camera's resting pose — what loading a save does — leaves the
+      // literal `none` in its inline transform (composeTransform's fallback).
+      // `translateX(-100%) none` is not a transform list, so the browser would
+      // drop that keyframe and play the slide as a cut.
+      e.stage.restore(e.stage.snapshot())
+      await until(() => e.stage.root.querySelector<HTMLElement>('.nilvn-camera')!.style.transform === 'none')
+      await until(() => e.vars.done === 1)
+    } finally {
+      proto.animate = real
+    }
+    expect(frames).toHaveLength(1)
+    expect(frames[0]!.map((f) => f.transform)).toEqual(['none', 'translateX(-100%)'])
+    e.destroy()
+  })
+
   it('a rule mask falls back to a fade when the image cannot be read (no canvas here); restore drops an armed snapshot', async () => {
     const e = engineWith()
     e.loadSource('[trans wipe mask=@fx/rule.png duration=0]\n[bg #666666]\n[trans end]\n[set a = 1]\n[trans circle]\n[bg #777777]\n[set armed = 1]\n[wait 0.08]\nnarr: x\n')

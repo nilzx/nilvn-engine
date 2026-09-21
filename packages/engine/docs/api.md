@@ -94,6 +94,12 @@ actors, languages and plugin set.
 | `setPluginConfig(id, patch, { player? })` / `pluginConfigValue(id, key)` / `pluginConfigAll(id)` / `onPluginConfigChange(id, fn)` | A plugin's settings: the author's layer, or the player's with `player: true` (persisted); what `ctx.config` reads. |
 | `actorField(actorId, pluginId, key)` | A plugin-declared actor field (`contributes.actorFields`), e.g. voicefx's `voice`. |
 | `finish(endingId?)` | End the run now into an ending (`default` when unnamed): the session enters `ending`, `onEnd` fires. |
+
+**A hidden page has no clock.** Browsers freeze `requestAnimationFrame` and Web
+Animations while a tab is in the background, so a transition, a `[wait]` or a
+`[preload wait=true]` does not settle until the tab is shown again — the playhead
+stops where it was and resumes on its own. Nothing is lost, but an automated run
+has to keep the page visible (or finish the finite animations itself).
 | `session` / `ending` / `onSessionChange(fn)` | Where the session is, which ending was reached, and the subscription (see [Session](#session)). |
 | `destroy()` | Stop everything, release listeners, timers, audio, plugins and the stage DOM. The instance is dead afterwards. |
 | `wait(sec)` / `sleep(ms)` | Delays that resolve early if the session is reset. |
@@ -232,7 +238,7 @@ declares the defaults; you only ever override. Token names are a public contract
 |---|---|---|
 | `createEngine({ theme })`, `engine.setTheme(patch)` | base | The work — survives `restart()` and loads; not in a save. |
 | `[theme]` / `[window]` in the config file | base | Same (applied by `loadConfig`). |
-| `[theme name-bg=#0b1c2e]` in the script | script | The scene — saved with the stage, cleared by `restart()` / `[theme reset]`. |
+| `[theme name-bg=#0b1c2e]` in the script | script | The scene — saved with the stage, cleared by `restart()` / `[theme reset]`. It reaches the ending page too, so an ending can be coloured from the line before `[ending]`, and goes when the session resets. |
 
 `engine.theme` is the effective override map (base then script), `THEME_TOKENS`
 the defaults. A `''` value removes a token from its layer. An unknown token is a
@@ -445,6 +451,12 @@ build on the stage directly.
 | `isReplaying()` | The segment id being replayed, or null. |
 | `onSegmentSeen(fn)` | Subscribe to "normal play passed a segment's end" — the unlock signal. |
 | `onReplayEnd` | Orchestrator callback when a replay reaches its end (the menu restores the interrupted session here). |
+
+A `[replaydef]` is registered when **its chunk is parsed**, and a load may start
+in any chunk, so declare every segment in the **entry** chunk — a preamble at the
+top of the first script, which is the shape NilVN Studio emits. A declaration
+left in a later file is missing from the gallery until play reaches that file,
+which a loaded save can skip past.
 
 ## Parsing and evaluation
 

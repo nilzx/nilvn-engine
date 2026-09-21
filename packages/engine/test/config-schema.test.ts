@@ -48,8 +48,8 @@ describe('checkConfig', () => {
   })
 
   // The kitchen-sink sample lives in the private monorepo only (vitest runs
-  // from its root); the public engine repository has no apps/ and skips it.
-  const sample = resolve(process.cwd(), 'apps/e2e-game/public/nilvn.config.toml') // public-ok: guarded by skipIf below
+  // from its root); the public engine repository has no demo/ and skips it.
+  const sample = resolve(process.cwd(), 'demo/six-forty/public/nilvn.config.toml') // public-ok: guarded by skipIf below
   it.skipIf(!existsSync(sample))('the kitchen-sink sample config passes clean', () => {
     expect(problems(parse(readFileSync(sample, 'utf8')))).toEqual([])
   })

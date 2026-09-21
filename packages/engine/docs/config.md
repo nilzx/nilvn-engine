@@ -295,6 +295,12 @@ with no table still gets a page (the chrome's "The End" and the two buttons).
 | `after` | `none` \| `title` \| `restart` | What happens when the roll ends. Default `none` (the buttons wait). |
 | `buttons` | boolean | `false` hides Back-to-title / Play-again. |
 
+The page draws with the panel tokens, so a light `background` needs a text
+colour to go with it. There is no key for that here — set it from the script on
+the line before the ending (`[theme panel-color=#20160c button-color=#20160c]`).
+It goes with the rest of the script layer when the session resets, so
+`after = "title"` does not carry the ending's colours onto the title page.
+
 ### `[saves]`
 
 | Key | Type | Effect |
@@ -396,7 +402,7 @@ widgets = [
 | `text` | `text` (`@key` / literal with `{$var}`), or `var` | A line of text. |
 | `bar` | `var`, `max` (100), `min` (0), `label` | A progress bar; `max` / `min` may be numbers or expressions. |
 | `image` | `src`, `width` | An image (`src` resolves like an asset path). |
-| `list` | `var`, `empty` | One line per item of a list variable, or of a comma-separated string (so a string item cannot itself hold a comma — collect into a list variable for that); each string item is a config string (`@key` resolves through the catalogs, `{$var}` fills); `empty` (a config string) when there are none. |
+| `list` | `var`, `empty` | One line per item of a list variable, or of a comma-separated string (so a string item cannot itself hold a comma — collect into a list variable for that, or store `@key`s, which never contain one and whose translated line may); each string item is a config string (`@key` resolves through the catalogs, `{$var}` fills); `empty` (a config string) when there are none. |
 | `button` | `label`, `onclick` | A button; `onclick` is script commands, one per line (a TOML multi-line string for several). |
 
 Every widget takes `if` (an expression; false hides it). Panels re-render on
@@ -495,6 +501,9 @@ fieldSize = "3.4cqh"       # the text field: fieldBackground / fieldColor / fiel
 | `skin` (+ `slice`, `sliceWidth`) | `input-box-skin` / `input-box-skin-slice`; a skin also clears `input-box-bg` and `input-box-border` unless they are given. |
 | `background` / `border` / `radius` | `input-box-bg` / `input-box-border` / `input-box-radius` |
 | `fieldBackground` / `fieldColor` / `fieldBorder` / `fieldRadius` / `fieldSize` | `input-bg` / `input-color` / `input-border` / `input-radius` / `input-size` |
+
+The two buttons sit in one row, **Cancel first, then OK**; OK stays disabled
+while `pattern` does not match what is typed.
 
 ### `[strings.<lang>]`
 

@@ -5,6 +5,26 @@ three packages share one version and one `engine-v*` tag. Entries before the
 repository was split out of the NilVN monorepo (September 2026) are condensed
 from its history.
 
+## 0.16.3 — 2026-09-21
+
+Fixes and documentation from finishing the two sample works into complete short
+visual novels, and from the acceptance round that played them with real clicks.
+
+### Fixed
+
+- `[trans slide]` no longer degrades to a cut: a camera at rest carries the literal `none` in its inline transform, and pasting that after the displacement made an invalid keyframe the browser dropped.
+- A `[hotspot]` declared where a click cannot reach it — the dialogue box, a panel or the HUD is drawn over its centre — is now an `exec` diagnostic naming what covers it. The coordinates read fine in the script, and a test that drives the page with `element.click()` bypasses hit testing entirely, so this had no other way of surfacing. The probe runs where the region is declared or moved (not on a restore, which rebuilds the stage in pieces) and says nothing where there is no layout to measure.
+- A resource path whose `@prefix` no `[path]` entry and no `[alias]` declares is now a `load` diagnostic. It used to travel on as a literal URL segment and surface far away — a 404 image, or an audio element reporting `MediaError` into the console — so a run with an empty `diagnostics` could still have a whole channel of sound silently broken.
+
+### Documentation
+
+- `[replaydef]` is registered when its chunk is parsed, so in a multi-file work every declaration belongs in the entry script (`api.md`, and the plugins README): a save loaded into a later chunk would otherwise open an incomplete replay gallery.
+- `[input] default` is the field's **placeholder** and the fallback, never pre-filled text; the buttons read Cancel then OK (`script-syntax.md`, `config.md`).
+- A `[choice]` may carry `if=` and `disabled=` together, each running to the end of its own value (`script-syntax.md`).
+- An ending page has no text-colour key: colour it with a script-layer `[theme]` on the line before `[ending]`, which the session reset then clears (`config.md`, `api.md`).
+- `list` widget items may hold `@key`s, whose translated text is free to contain commas (`config.md`).
+- A hidden tab freezes rAF and Web Animations, so transitions, `[wait]` and `[preload wait=true]` settle only when the page is shown again (`api.md`).
+
 ## 0.16.2 — 2026-09-21
 
 The first published build of the 0.16 line: the 0.16.0 and 0.16.1 tags

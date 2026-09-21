@@ -441,6 +441,8 @@ export class Engine {
   constructor(opts: EngineOptions) {
     this.stage = new DomRenderer(opts.container)
     this.stage.onAssetError = (what, url) => this.report({ phase: 'exec', message: `${what}: image failed to load — ${url}` }, true)
+    this.stage.onObstructed = (id, by) =>
+      this.report({ phase: 'exec', message: `hotspot "${id}": "${by}" covers its centre — a click there never reaches it` }, true)
     this._textSpeed = opts.textSpeed ?? 40 // direct: no hooks before the plugin host exists
     this.baseUrl = opts.baseUrl ?? document.baseURI
     this.onEndCb = opts.onEnd
@@ -927,6 +929,12 @@ export class Engine {
     }
     const inline = this.assets[path] ?? this.assets[path.replace(/^\.\//, '')]
     if (inline) return inline
+    // An `@prefix` no `[path]` entry and no `[alias]` declares would otherwise
+    // travel on as a literal URL segment and fail far from its cause — a 404
+    // image, or an audio element reporting MediaError into the console, neither
+    // of which is a diagnostic. Name the prefix here, where it is still visible.
+    if (path.startsWith('@'))
+      this.report({ phase: 'load', message: `unknown path alias "${path.split('/')[0]}" in "${path}" — no [path] entry or [alias] declares it` }, true)
     return new URL(path, this.baseUrl).href
   }
 
