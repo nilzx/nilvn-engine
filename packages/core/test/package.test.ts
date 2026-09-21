@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { buildScriptPackage, fillPackageAssets, isPackageManifest, PACKAGE_FORMAT, packageActors, packageLanguages } from '../src/index'
 import { makeProject } from './fixtures'
+import { commandRegistry } from '../src/plugins'
+import type { PluginManifest } from '../src/plugin-manifest'
 
 // The script package (.nvs) producer — nilvn.json over the chunked script side.
 describe('buildScriptPackage', () => {
@@ -21,6 +23,35 @@ describe('buildScriptPackage', () => {
     expect(files.map((f) => f.path)).toContain('chunks/scene/s1.json')
     expect(assetRefs).toContain('bg/room.png')
     expect(isPackageManifest(manifest)).toBe(true)
+  })
+
+  it('forwards the command registry so plugin commands keep their positional args', () => {
+    const p = makeProject()
+    p.scenes[0]!.nodes.push({ id: 'mv', kind: 'command', cmd: 'move', params: { id: 'yuki', to: 'left' } })
+    const charfx: PluginManifest = {
+      id: 'app.nilvn.charfx',
+      name: 'charfx',
+      version: '1.0.0',
+      contributes: {
+        commands: [
+          {
+            name: 'move',
+            label: 'move',
+            category: 'stage',
+            params: [
+              { key: 'id', label: 'id', type: 'actor', required: true, positional: 0 },
+              { key: 'to', label: 'to', type: 'enum', default: 'center', options: [] },
+            ],
+          },
+        ],
+      },
+    }
+    const { files } = buildScriptPackage(p, { engine: '0.16.2', commands: commandRegistry([charfx]) })
+    const scene = JSON.parse(files.find((f) => f.path === 'chunks/scene/s1.json')!.text) as { body: string }
+    expect(scene.body).toContain('[move yuki to=left]')
+    // Without the registry the positional degrades to a named arg (the bug this guards).
+    const bare = buildScriptPackage(p, { engine: '0.16.2' })
+    expect((JSON.parse(bare.files.find((f) => f.path === 'chunks/scene/s1.json')!.text) as { body: string }).body).toContain('[move id=yuki to=left]')
   })
 
   it('merges every scene into one chunk when asked (single-file / asset-ZIP shape)', () => {

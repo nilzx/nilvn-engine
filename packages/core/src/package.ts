@@ -146,7 +146,10 @@ export function packageActors(project: Project): Record<string, PackageActor> {
  *  single-file / asset-ZIP shape) plus the manifest fields the shells used to bake
  *  into their bootstraps. Pure, zero-I/O. */
 export function buildScriptPackage(project: Project, opts: BuildPackageOptions): ScriptPackagePlan {
-  const plan = buildChunkedExport(project, { engine: opts.engine, groups: opts.groups })
+  // Forward the command registry: without it the chunks serialize plugin commands
+  // against the built-ins alone, and a positional argument (`[move yuki …]`)
+  // degrades to `id=yuki`, which the plugin never reads.
+  const plan = buildChunkedExport(project, { engine: opts.engine, groups: opts.groups, ...(opts.commands ? { commands: opts.commands } : {}) })
   const title = opts.title ?? (project.meta.title || 'NilVN')
   const lang = (opts.lang ?? project.meta.defaultLang) as Lang
   const manifest: PackageManifest = {
