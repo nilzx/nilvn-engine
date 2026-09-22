@@ -39,6 +39,9 @@ describe('parseTag', () => {
     const node = parseTag('choice Secret path -> secret if=has(sys.endings, "true") && trust >= 1', 1)
     expect(node.type === 'choices' && node.items[0]).toEqual({ text: 'Secret path', textKey: undefined, target: 'secret', cond: 'has(sys.endings, "true") && trust >= 1' })
     const bare = parseTag('choice Go -> go if=trust>=1', 1)
+    // A serializer quotes a value with spaces; the quotes are not part of the condition.
+    const quoted = parseTag('choice Go -> go if="trust >= 1" disabled="seen == true"', 1) as { items: { cond?: string; disabled?: string }[] }
+    expect(quoted.items[0]).toMatchObject({ cond: 'trust >= 1', disabled: 'seen == true' })
     expect(bare.type === 'choices' && bare.items[0]!.cond).toBe('trust>=1')
     const none = parseTag('choice Go -> go', 1)
     expect(none.type === 'choices' && none.items[0]!.cond).toBeUndefined()

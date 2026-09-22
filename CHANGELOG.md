@@ -5,6 +5,18 @@ three packages share one version and one `engine-v*` tag. Entries before the
 repository was split out of the NilVN monorepo (September 2026) are condensed
 from its history.
 
+## 0.17.1 — 2026-09-22
+
+### Added
+
+- `ObjectBand` (the band `setBand()` takes: `world` / `back` / `front`) is exported from `@nilvn/engine`; it was already part of the public renderer signatures.
+
+- core: `PackageActor` carries what `ActorDef` does — `textColor`, `canvas` + `layers` (a layered sprite; `PackageActorLayer`) and `ext` (plugin actor fields). The engine already read these from the actor table; they were only missing from the package's type and its documentation. `voice` stays as a deprecated alias.
+
+### Fixed
+
+- A quoted choice guard — `[choice Go -> x if="day > 1"]`, what a serializer writes for a condition with spaces — was evaluated with its quotes and so was always true (a string literal). The quotes are stripped, as `[hotspot … if=]` already did.
+
 ## 0.17.0 — 2026-09-22
 
 The work's configuration travels with the script package.

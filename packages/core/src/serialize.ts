@@ -22,7 +22,7 @@ import type {
   Project,
   SceneNode,
 } from './ir.js'
-import type { CommandSchema } from './schema.js'
+import type { CommandSchema, ParamSchema } from './schema.js'
 import { BUILTIN_COMMAND_MAP } from './commands.js'
 
 export interface SerializeOptions {
@@ -257,13 +257,26 @@ function serializeNode(
     }
     case 'narrate':
       return `|${text(node.textKey)}`
-    case 'choice':
-      return node.options
-        .map((o) => {
-          const cond = o.condition ? ` if=${token(o.condition)}` : ''
-          return `[choice ${token(text(o.labelKey))} -> ${dest(o.target, scope)}${cond}]`
-        })
-        .join('\n')
+    case 'choice': {
+      // `if=` / `disabled=` are read to the tag's end and unquoted by the engine
+      // (they carry spaces), so they go last and raw. A timer rides a `[choices]`
+      // line right before the prompt.
+      const lines = node.options.map((o) => {
+        const guards = [o.condition ? `if=${o.condition}` : '', o.disabled ? `disabled=${o.disabled}` : ''].filter(Boolean)
+        return `[choice ${token(text(o.labelKey))} -> ${dest(o.target, scope)}${guards.length ? ' ' + guards.join(' ') : ''}]`
+      })
+      if (node.timer !== undefined || node.timerDefault !== undefined) {
+        const parts = ['choices']
+        if (node.timer !== undefined) parts.push(`timer=${node.timer}`)
+        if (node.timerDefault !== undefined) parts.push(`default=${node.timerDefault}`)
+        lines.unshift(`[${parts.join(' ')}]`)
+      }
+      return lines.join('\n')
+    }
+    case 'call':
+      return `[call ${dest(node.target, scope)}]`
+    case 'return':
+      return '[return]'
     case 'jump':
       // v1 DSL expresses a conditional jump as [if cond -> label].
       return node.condition
@@ -276,7 +289,7 @@ function serializeNode(
       // gallery is built from the IR directly, not from the runtime script.
       return `; recall ${node.recallId}`
     case 'command':
-      return serializeCommand(node, commands[node.cmd])
+      return serializeCommand(node, commands[node.cmd], text)
     case 'anim':
       return serializeAnim(node)
     case 'eventframe':
@@ -292,10 +305,17 @@ function serializeNode(
   }
 }
 
-function serializeCommand(node: CommandNode, schema?: CommandSchema): string {
+function serializeCommand(node: CommandNode, schema?: CommandSchema, text?: (key: string) => string): string {
   const parts = [node.cmd]
   const params = node.params
   const used = new Set<string>()
+  // A `key` param holds a catalog `@key`; under keepKeys the engine resolves it,
+  // otherwise the literal text goes out like a dialogue line's.
+  const value = (p: ParamSchema, v: string | number | boolean): string | number | boolean => {
+    if (p.type === 'key' && text && typeof v === 'string' && v.startsWith('@')) return text(v.slice(1))
+    return v
+  }
+  const raw: string[] = []
 
   if (schema) {
     const positionals = schema.params
@@ -311,7 +331,9 @@ function serializeCommand(node: CommandNode, schema?: CommandSchema): string {
     for (let i = 0; i <= last; i++) {
       const p = positionals[i]!
       used.add(p.key)
-      parts.push(token(params[p.key] ?? p.default ?? ''))
+      const v = value(p, params[p.key] ?? p.default ?? '')
+      if (p.list) for (const item of String(v).split(/\s+/).filter(Boolean)) parts.push(token(item))
+      else parts.push(token(v))
     }
 
     for (const p of schema.params) {
@@ -320,7 +342,9 @@ function serializeCommand(node: CommandNode, schema?: CommandSchema): string {
       const val = params[p.key]
       if (val === undefined) continue
       if (p.default !== undefined && val === p.default) continue
-      parts.push(`${p.key}=${token(val)}`)
+      // A condition is read to the tag's end unquoted: it goes last, raw.
+      if (p.type === 'expr') raw.push(`${p.key}=${String(val)}`)
+      else parts.push(`${p.key}=${token(value(p, val))}`)
     }
   }
 
@@ -330,7 +354,7 @@ function serializeCommand(node: CommandNode, schema?: CommandSchema): string {
     parts.push(`${k}=${token(v)}`)
   }
 
-  return `[${parts.join(' ')}]`
+  return `[${[...parts, ...raw].join(' ')}]`
 }
 
 // A recorded keyframe animation (AnimNode) serializes to an `[anim …]` command the

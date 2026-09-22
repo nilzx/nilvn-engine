@@ -5,7 +5,13 @@ import type { CommandSchema } from './schema.js'
 //
 // Excluded on purpose:
 //  - use / alias / actor  -> project setup (Project.plugins / alias / actors), not nodes
-//  - jump / if / set      -> first-class node kinds (JumpNode / JumpNode+condition / SetNode)
+//  - jump / if / set / call / return -> first-class node kinds (JumpNode / JumpNode+condition / SetNode / CallNode / ReturnNode)
+//  - choices / persist    -> fields of ChoiceNode / VariableDef (serialize.ts emits them)
+
+/** The scene transitions `[trans]` and `[bg trans=]` know (the engine's TransitionKind). */
+const TRANSITION_OPTIONS = ['fade', 'crossfade', 'wipe', 'slide', 'circle', 'blinds', 'rule'].map((value) => ({ value, label: `cmd.trans.kind.${value}` }))
+const DIR_OPTIONS = ['left', 'right', 'up', 'down'].map((value) => ({ value, label: `cmd.trans.dir.${value}` }))
+
 export const BUILTIN_COMMANDS: CommandSchema[] = [
   {
     name: 'bg',
@@ -17,6 +23,93 @@ export const BUILTIN_COMMANDS: CommandSchema[] = [
       { key: 'bg', label: 'cmd.bg.bg', type: 'asset:bg', positional: 0 },
       { key: 'color', label: 'cmd.bg.color', type: 'color' },
       { key: 'fade', label: 'cmd.bg.fade', type: 'number', default: 0 },
+      // `trans=` swaps through a scene transition instead of a cross-fade.
+      { key: 'trans', label: 'cmd.bg.trans', type: 'enum', options: TRANSITION_OPTIONS, advanced: true },
+      { key: 'dir', label: 'cmd.trans.dir', type: 'enum', options: DIR_OPTIONS, advanced: true },
+      { key: 'duration', label: 'cmd.trans.duration', type: 'number', advanced: true },
+      { key: 'mask', label: 'cmd.trans.mask', type: 'asset:bg', advanced: true },
+    ],
+  },
+  {
+    name: 'trans',
+    label: 'cmd.trans.label',
+    category: 'fx',
+    icon: '🎞',
+    hint: 'cmd.trans.hint',
+    params: [
+      { key: 'kind', label: 'cmd.trans.kind', type: 'enum', required: true, positional: 0, default: 'fade', options: [...TRANSITION_OPTIONS, { value: 'end', label: 'cmd.trans.kind.end' }] },
+      { key: 'duration', label: 'cmd.trans.duration', type: 'number', default: 0.6 },
+      { key: 'dir', label: 'cmd.trans.dir', type: 'enum', options: DIR_OPTIONS },
+      { key: 'color', label: 'cmd.trans.color', type: 'color', advanced: true },
+      { key: 'mask', label: 'cmd.trans.mask', type: 'asset:bg', advanced: true },
+      { key: 'softness', label: 'cmd.trans.softness', type: 'number', default: 0.1, advanced: true },
+    ],
+  },
+  {
+    name: 'preload',
+    label: 'cmd.preload.label',
+    category: 'stage',
+    icon: '⏳',
+    hint: 'cmd.preload.hint',
+    params: [
+      { key: 'assets', label: 'cmd.preload.assets', type: 'string', required: true, positional: 0, list: true },
+      { key: 'wait', label: 'cmd.preload.wait', type: 'boolean', default: false },
+    ],
+  },
+  {
+    name: 'ui',
+    label: 'cmd.ui.label',
+    category: 'stage',
+    icon: '🪟',
+    hint: 'cmd.ui.hint',
+    params: [
+      {
+        key: 'op',
+        label: 'cmd.ui.op',
+        type: 'enum',
+        required: true,
+        positional: 0,
+        default: 'show',
+        options: [
+          { value: 'show', label: 'cmd.ui.op.show' },
+          { value: 'hide', label: 'cmd.ui.op.hide' },
+          { value: 'toggle', label: 'cmd.ui.op.toggle' },
+        ],
+      },
+      { key: 'id', label: 'cmd.ui.id', type: 'panel', required: true, positional: 1 },
+    ],
+  },
+  {
+    name: 'hotspot',
+    label: 'cmd.hotspot.label',
+    category: 'stage',
+    icon: '🎯',
+    hint: 'cmd.hotspot.hint',
+    params: [
+      // `[hotspot clear]` / `[hotspot remove <id>]` reuse the id slot with a keyword.
+      { key: 'id', label: 'cmd.hotspot.id', type: 'string', required: true, positional: 0 },
+      { key: 'target', label: 'cmd.hotspot.target', type: 'string', positional: 1, advanced: true },
+      { key: 'x', label: 'cmd.hotspot.x', type: 'number', default: 0 },
+      { key: 'y', label: 'cmd.hotspot.y', type: 'number', default: 0 },
+      { key: 'w', label: 'cmd.hotspot.w', type: 'number', default: 10 },
+      { key: 'h', label: 'cmd.hotspot.h', type: 'number', default: 10 },
+      { key: 'onclick', label: 'cmd.hotspot.onclick', type: 'script' },
+      { key: 'if', label: 'cmd.hotspot.if', type: 'expr' },
+    ],
+  },
+  {
+    name: 'input',
+    label: 'cmd.input.label',
+    category: 'flow',
+    icon: '⌨️',
+    hint: 'cmd.input.hint',
+    params: [
+      { key: 'var', label: 'cmd.input.var', type: 'variable', required: true, positional: 0 },
+      { key: 'prompt', label: 'cmd.input.prompt', type: 'key' },
+      { key: 'default', label: 'cmd.input.default', type: 'string' },
+      { key: 'persist', label: 'cmd.input.persist', type: 'boolean', default: false },
+      { key: 'maxlength', label: 'cmd.input.maxlength', type: 'number', advanced: true },
+      { key: 'pattern', label: 'cmd.input.pattern', type: 'string', advanced: true },
     ],
   },
   {

@@ -45,6 +45,7 @@ export type {
   SceneTransitionOpts,
   CharLayer,
   HotspotSpec,
+  ObjectBand,
 } from './renderer/types.js'
 export { UiPanels } from './ui.js'
 export { ObjectHandle, kindOf, BUILTIN_KINDS, STANDARD_CHANNELS, resolveKind } from './object.js'

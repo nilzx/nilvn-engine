@@ -1,7 +1,7 @@
 {
   "specVersion": 3,
   "pluginApiVersion": 2,
-  "irSchemaVersion": 12,
+  "irSchemaVersion": 13,
   "generatedBy": "@nilvn/plugin-sdk spec:gen (packages/plugin-sdk/src/spec.ts)",
   "references": {
     "guide": "packages/plugin-sdk/README.md",
@@ -1113,7 +1113,7 @@
       "name": "plugin.neon.name",
       "description": "plugin.neon.desc",
       "version": "1.0.0",
-      "engine": ">=0.16 <1",
+      "engine": ">=0.17 <1",
       "entries": {
         "engine": "./engine.js"
       },

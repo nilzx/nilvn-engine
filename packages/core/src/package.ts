@@ -9,7 +9,7 @@
 // exports (single-file HTML / asset ZIP / chunked ZIP / .nvpk) are this package
 // plus a shell; the engine's `load()` is its one consumer.
 
-import type { Lang, Project, WorkConfig } from './ir.js'
+import type { Actor, Lang, Project, WorkConfig } from './ir.js'
 import { isAssetRef } from './serialize.js'
 import { isChunkManifest, type ChunkManifest, type ManifestAsset } from './chunk.js'
 import { buildChunkedExport, type BuildChunkedOptions, type ChunkFile } from './chunk-build.js'
@@ -27,12 +27,32 @@ export const PACKAGE_MANIFEST_FILE = 'nilvn.json'
 export interface PackageActor {
   name?: string
   nameKey?: string
+  /** Name-tag background colour. */
   color?: string
+  /** Name-tag text colour. */
+  textColor?: string
   /** Sprite URL template; `{face}` is replaced by the current face. */
   sprites?: string
   defaultFace?: string
-  /** Base pitch (Hz) for the voice blip. */
+  /** Layered sprite: the shared canvas in image pixels (`[600, 1100]`). */
+  canvas?: [number, number]
+  /** Layered sprite: named layers composed bottom to top (`face` follows the
+   *  face; the others change through `[char id body=casual]`). Wins over `sprites`. */
+  layers?: Record<string, PackageActorLayer>
+  /** Plugin actor fields by plugin id (`contributes.actorFields`), e.g.
+   *  `ext['app.nilvn.voicefx'].voice`. */
+  ext?: Record<string, Record<string, unknown>>
+  /** @deprecated — the voicefx pitch; the engine moves it under `ext`. */
   voice?: number
+}
+
+/** One layer of a layered sprite in the package (the engine's `ActorLayerDef`). */
+export interface PackageActorLayer {
+  /** Path template; `{<layer>}` is replaced by the layer's value. */
+  src: string
+  default?: string
+  offset?: [number, number]
+  optional?: boolean
 }
 
 /** One enabled plugin, by its reverse-DNS id (`app.nilvn.textfx`; the engine
@@ -141,13 +161,32 @@ export function packageLanguages(project: Project): string[] {
   return [def, ...extra]
 }
 
+/** The layer table minus the editor's picker lists. */
+export function packageLayers(layers: NonNullable<Actor['layers']>): Record<string, PackageActorLayer> {
+  const out: Record<string, PackageActorLayer> = {}
+  for (const [name, l] of Object.entries(layers)) {
+    out[name] = { src: l.src, ...(l.default ? { default: l.default } : {}), ...(l.offset ? { offset: l.offset } : {}), ...(l.optional ? { optional: true } : {}) }
+  }
+  return out
+}
+
 /** The runtime actor table straight from the IR (`name` = the default-language
  *  display name, falling back to the id). */
 export function packageActors(project: Project): Record<string, PackageActor> {
   const cat = project.catalogs[project.meta.defaultLang] ?? {}
   const out: Record<string, PackageActor> = {}
   for (const [id, a] of Object.entries(project.actors)) {
-    out[id] = { name: cat[a.nameKey] ?? id, nameKey: a.nameKey, color: a.color, sprites: a.sprites, defaultFace: a.defaultFace, voice: a.voice }
+    out[id] = {
+      name: cat[a.nameKey] ?? id,
+      nameKey: a.nameKey,
+      color: a.color,
+      sprites: a.sprites,
+      defaultFace: a.defaultFace,
+      ...(a.textColor ? { textColor: a.textColor } : {}),
+      ...(a.canvas ? { canvas: a.canvas } : {}),
+      ...(a.layers ? { layers: packageLayers(a.layers) } : {}),
+      ...(a.ext && Object.keys(a.ext).length ? { ext: a.ext } : {}),
+    }
   }
   return out
 }

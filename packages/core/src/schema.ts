@@ -13,7 +13,11 @@ export type ParamType =
   | 'actor' // character picker
   | 'face' // expression picker (scoped to the chosen actor)
   | 'color' // color picker
-  | 'expr' // variable expression builder
+  | 'expr' // variable expression builder (a condition; serialized raw, read to the tag's end)
+  | 'variable' // a project variable's name
+  | 'panel' // a `[ui.<id>]` panel id from the work config
+  | 'key' // localizable text: the value is a catalog `@key` the editor edits in place
+  | 'script' // one script command (`jump shop`, `se click.wav`) — what a click runs
 
 export interface ParamOption {
   value: string
@@ -35,6 +39,9 @@ export interface ParamSchema {
   positional?: number
   /** Tuck behind an "advanced" disclosure in the editor. */
   advanced?: boolean
+  /** A positional that holds several values: the value is whitespace-separated
+   *  and serializes as that many positional tokens (`[preload a.png b.wav]`). */
+  list?: boolean
 }
 
 export type CommandCategory = 'stage' | 'audio' | 'fx' | 'flow' | 'text'

@@ -34,7 +34,11 @@ exceptions.
   "languages": ["zh", "en", "ja"],     // languages the in-game switcher offers
   "actors": {
     "yuki": { "name": "Yuki", "nameKey": "actor.yuki", "color": "#ff7eb6",
-              "sprites": "assets/char/yuki-{face}.svg", "defaultFace": "happy", "voice": 360 }
+              "sprites": "assets/char/yuki-{face}.svg", "defaultFace": "happy",
+              "ext": { "app.nilvn.voicefx": { "voice": 360 } } },
+    "mira": { "name": "Mira", "canvas": [600, 1100],
+              "layers": { "body": { "src": "assets/char/mira/body-{body}.png", "default": "uniform" },
+                          "face": { "src": "assets/char/mira/face-{face}.png", "default": "calm", "offset": [150, 280] } } }
   },
   "plugins": [                         // enabled plugins, auto-loaded at start
     { "id": "app.nilvn.textfx" },
@@ -53,7 +57,7 @@ exceptions.
 | `title` | Window / document title. |
 | `engine` | The tool version that produced the package. Compatibility is decided by the format numbers, not by this. |
 | `lang`, `languages` | Initial language and the switchable set (the default first). |
-| `actors` | The actor table (`PackageActor`): display `name`, optional `nameKey`, `color`, sprite template, default face, typing-blip pitch. |
+| `actors` | The actor table (`PackageActor`), the same shape as the engine's `ActorDef`: display `name`, optional `nameKey`, name-tag `color` / `textColor`, the sprite template and default face — or a layered sprite (`canvas` + `layers`, each `{ src, default?, offset?, optional? }`) — and `ext`, the plugin actor fields by plugin id (`ext["app.nilvn.voicefx"].voice` is the typing-blip pitch; a top-level `voice` from older packages is still moved there). |
 | `plugins` | Enabled plugins by id. `entry` points at a `plugin.json` inside the package for a plugin the work carries with it. |
 | `textSpeed` | Typewriter speed. |
 | `saveKey` | Per-work id the in-game menu namespaces `localStorage` by. |

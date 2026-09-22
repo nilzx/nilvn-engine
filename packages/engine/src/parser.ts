@@ -122,11 +122,18 @@ function parseChoice(tokens: string[], inner: string, line: number) {
   for (const part of inner.slice(afterTarget).split(/\s+(?=(?:if|disabled)=)/)) {
     const m = /^(if|disabled)=(.*)$/s.exec(part.trim())
     if (!m) continue
-    const expr = m[2]!.trim() || undefined
+    // A quoted condition (`if="day > 1"`, what a serializer writes for a value
+    // with spaces) is the same condition: the quotes are not part of it.
+    const expr = unquote(m[2]!.trim()) || undefined
     if (m[1] === 'if') cond = expr
     else disabled = expr
   }
   return { text, textKey, target, cond, disabled }
+}
+
+/** Strip one pair of surrounding quotes. */
+function unquote(v: string): string {
+  return v.replace(/^"([\s\S]*)"$/, '$1').replace(/^'([\s\S]*)'$/, '$1')
 }
 
 /** Split a tag's inner text into tokens, honoring "quoted values" */

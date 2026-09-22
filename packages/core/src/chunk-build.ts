@@ -160,7 +160,7 @@ export function buildChunkedExport(project: Project, opts: BuildChunkedOptions):
     for (const sceneId of chunk.scenes) {
       const scene = byId.get(sceneId)!
       for (const n of scene.nodes) {
-        if (n.kind === 'jump') addEdge(targetSceneId(n.target, sceneIds))
+        if (n.kind === 'jump' || n.kind === 'call') addEdge(targetSceneId(n.target, sceneIds))
         else if (n.kind === 'choice') for (const o of n.options) addEdge(targetSceneId(o.target, sceneIds))
       }
     }

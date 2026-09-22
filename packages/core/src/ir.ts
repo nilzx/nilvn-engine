@@ -105,8 +105,13 @@ export interface ReplaySegment {
  *      migration maps bundled short names (`textfx` → `app.nilvn.textfx`) and keeps
  *      unknown names verbatim (the editor reports them, nothing is dropped).
  *  v12: `Project.config` — the work's engine configuration (the JSON form of
- *      nilvn.config.toml), exported as the package's `config`. Pure addition. */
-export const CURRENT_SCHEMA_VERSION = 12
+ *      nilvn.config.toml), exported as the package's `config`. Pure addition.
+ *  v13: layered sprites and the actor's plugin fields — `Actor.textColor` /
+ *      `canvas` / `layers` / `ext` (pure additions) and `Actor.voice` moved under
+ *      `ext['app.nilvn.voicefx']` (migrated); `ChoiceNode.timer` / `timerDefault`,
+ *      `ChoiceOption.disabled`, `VariableDef.persist`, `CallNode` / `ReturnNode`
+ *      (pure additions). */
+export const CURRENT_SCHEMA_VERSION = 13
 
 /** Context shared by every migration step of one `migrateProject` call. */
 interface MigrationContext {
@@ -237,6 +242,20 @@ const MIGRATIONS: Migration[] = [
   },
   // v11 -> v12: `Project.config` (the work's engine configuration). Pure addition
   // — a project without one plays with the engine's defaults.
+  // v12 -> v13: the voicefx pitch (`Actor.voice`) moves under `ext['app.nilvn.voicefx']`
+  // like every plugin actor field; the layered-sprite fields are pure additions.
+  {
+    to: 13,
+    run: (p) => {
+      for (const a of Object.values(p.actors)) {
+        const legacy = a as Actor & { voice?: number }
+        if (legacy.voice === undefined) continue
+        const ext = (a.ext ??= {})
+        ext['app.nilvn.voicefx'] = { ...ext['app.nilvn.voicefx'], voice: legacy.voice }
+        delete legacy.voice
+      }
+    },
+  },
 ]
 
 /** Bring a loaded project up to CURRENT_SCHEMA_VERSION in place (then return it).
@@ -282,18 +301,42 @@ export interface SceneMapChapter {
   collapsed?: boolean
 }
 
+/** One layer of a layered sprite. `src` is a path template with `{<layer>}`
+ *  for the value (`char/yuki/body-{body}.webp`); `values` is the editor's
+ *  picker list — the `face` layer's values are the actor's `faces`. */
+export interface ActorLayer {
+  src: string
+  /** The value shown until a command sets one. */
+  default?: string
+  /** Where a cropped layer image sits on the canvas, in canvas pixels. */
+  offset?: [number, number]
+  /** May be unset (`none` clears it). */
+  optional?: boolean
+  values?: string[]
+}
+
 export interface Actor {
   id: string
   /** Display name is localizable, hence a catalog key. */
   nameKey: string
+  /** Name-tag BACKGROUND colour. */
   color?: string
+  /** Name-tag TEXT colour (the theme's `name-color` when absent). */
+  textColor?: string
   /** Sprite URL template; `{face}` is replaced by the current face. */
   sprites: string
   /** Available faces, for the editor's expression picker. */
   faces: string[]
   defaultFace?: string
-  /** Base pitch (Hz) for the voicefx plugin. */
-  voice?: number
+  /** Layered sprite: the shared canvas in image pixels the layers align on. */
+  canvas?: [number, number]
+  /** Layered sprite: named layers composed bottom to top in declaration order.
+   *  `face` is the layer `say.face` / `[char id face]` drive; the others change
+   *  through `[char id body=casual]`. Wins over `sprites` when present. */
+  layers?: Record<string, ActorLayer>
+  /** Plugin-declared fields by plugin id (`contributes.actorFields`) — the
+   *  voicefx pitch lives at `ext['app.nilvn.voicefx'].voice` (v13; was `voice`). */
+  ext?: Record<string, Record<string, unknown>>
   /** The character's reproducible recipe (provenance):
    *  typically `source:'face-creator'`, carrying the whole def so any pose can be
    *  re-rendered at conversion time (the expression-set "registration template" a
@@ -308,6 +351,10 @@ export interface VariableDef {
   default: number | boolean | string
   /** Display name in the editor. */
   label?: string
+  /** Kept across saves, restarts and runs (the engine's `[persist]` table: the
+   *  stored value wins, `default` seeds the first run). Exported into the
+   *  package config's `persist` section, never as a script command. */
+  persist?: boolean
 }
 
 export interface ResourceRegistry {
@@ -404,6 +451,8 @@ export type SceneNode =
   | ChoiceNode
   | SetNode
   | JumpNode
+  | CallNode
+  | ReturnNode
   | LabelNode
   | RecallNode
   | AnimNode
@@ -449,6 +498,11 @@ export interface CommandNode extends NodeBase {
 export interface ChoiceNode extends NodeBase {
   kind: 'choice'
   options: ChoiceOption[]
+  /** Seconds the prompt waits before picking `timerDefault` by itself (the
+   *  engine's `[choices timer=]`); absent = what the `[choices]` config says. */
+  timer?: number
+  /** The option a timeout picks, counted from 1 among the shown options. */
+  timerDefault?: number
 }
 
 export interface ChoiceOption {
@@ -456,6 +510,8 @@ export interface ChoiceOption {
   target: JumpTarget
   /** Shown only when truthy. */
   condition?: string
+  /** Shown greyed and unpickable when truthy (`disabled=`). */
+  disabled?: string
 }
 
 export interface SetNode extends NodeBase {
@@ -467,6 +523,17 @@ export interface SetNode extends NodeBase {
 export interface JumpNode extends NodeBase {
   kind: 'jump'
   target: JumpTarget
+}
+
+/** `[call label]`: jump there and come back at the next `[return]` (calls nest). */
+export interface CallNode extends NodeBase {
+  kind: 'call'
+  target: JumpTarget
+}
+
+/** `[return]`: back to the line after the last `[call]`. */
+export interface ReturnNode extends NodeBase {
+  kind: 'return'
 }
 
 export interface LabelNode extends NodeBase {
