@@ -1,7 +1,7 @@
 {
   "specVersion": 3,
   "pluginApiVersion": 2,
-  "irSchemaVersion": 11,
+  "irSchemaVersion": 12,
   "generatedBy": "@nilvn/plugin-sdk spec:gen (packages/plugin-sdk/src/spec.ts)",
   "references": {
     "guide": "packages/plugin-sdk/README.md",

@@ -14,6 +14,30 @@ export function mergeDefaults(
   }
 }
 
+/** The shape of a script package's `config`: the sections `nilvn.json` carries
+ *  itself are not the config's to set — the manifest names the actors, the
+ *  enabled plugins, the entry and the language; assets travel by ref, so path
+ *  aliases have nothing to point at. Returns the config to apply (those keys
+ *  dropped, the manifest's title in place as the title page's heading) and the
+ *  paths that were dropped, for the engine to report. */
+export function packageConfig(cfg: AdvConfig, title: string): { cfg: AdvConfig; ignored: string[] } {
+  const ignored: string[] = []
+  const { path, actors, ...rest } = cfg
+  if (path !== undefined) ignored.push('path')
+  if (actors !== undefined) ignored.push('actors')
+  const out: AdvConfig = { ...rest }
+  const { entry, scripts, ...game } = cfg.game ?? {}
+  if (entry !== undefined) ignored.push('game.entry')
+  if (scripts !== undefined) ignored.push('game.scripts')
+  out.game = { ...game, ...(title ? { title } : {}) }
+  if (cfg.plugins) {
+    const { use, ...tables } = cfg.plugins
+    if (use !== undefined) ignored.push('plugins.use')
+    out.plugins = tables
+  }
+  return { cfg: out, ignored }
+}
+
 /** Apply a parsed nilvn.config.toml onto an engine instance */
 export function applyConfig(engine: Engine, cfg: AdvConfig): void {
   engine.config = cfg

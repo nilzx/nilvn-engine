@@ -145,7 +145,11 @@ export type TransformValue = Transform[TransformProp]
  *  - `front`: a screen-space band above the dialogue & choices (below the
  *    transition fader). Lifts the object out of world space: it renders over the
  *    dialogue box but no longer follows camera shake / zoom. */
-export type ObjectBand = 'world' | 'front'
+/** Where a character or sprite is drawn: `world` is its home layer (sprites
+ *  over characters over the background, all under the camera), `back` puts a
+ *  sprite (or a character) behind the characters — ambient particles, a light
+ *  shaft — still under the camera, and `front` lifts it over the dialogue box. */
+export type ObjectBand = 'world' | 'front' | 'back'
 
 /** One animation keyframe: any subset of the transform props. The renderer
  *  composes each into the object's transform over its base anchor. */

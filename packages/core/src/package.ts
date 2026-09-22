@@ -9,7 +9,8 @@
 // exports (single-file HTML / asset ZIP / chunked ZIP / .nvpk) are this package
 // plus a shell; the engine's `load()` is its one consumer.
 
-import type { Lang, Project } from './ir.js'
+import type { Lang, Project, WorkConfig } from './ir.js'
+import { isAssetRef } from './serialize.js'
 import { isChunkManifest, type ChunkManifest, type ManifestAsset } from './chunk.js'
 import { buildChunkedExport, type BuildChunkedOptions, type ChunkFile } from './chunk-build.js'
 
@@ -65,6 +66,14 @@ export interface PackageManifest {
   textSpeed: number
   /** Per-work id the runtime namespaces saves / settings by. */
   saveKey: string
+  /** The work's engine configuration — the JSON form of `nilvn.config.toml`
+   *  (`Project.config`). The engine applies it once the package is open, after
+   *  the asset table is filled, so a skin, logo or background in it resolves by
+   *  ref like any other asset. Optional (a package without one plays with the
+   *  engine's defaults); the sections `nilvn.json` carries itself (`game.entry`
+   *  / `game.scripts` / `path` / `actors` / `plugins.use`) are dropped with a
+   *  diagnostic. Engines before 0.17 ignore the field. */
+  config?: WorkConfig
   /** The chunk manifest (chunk.ts), embedded as-is: chunk / locale-slice / asset
    *  index + entry label. Wire files (`chunks/**`, `assets/**`) are unchanged. */
   chunks: ChunkManifest
@@ -108,6 +117,8 @@ export interface BuildPackageOptions extends BuildChunkedOptions {
   textSpeed?: number
   /** Defaults to the project id, else the title. */
   saveKey?: string
+  /** Defaults to `project.config`; left out of the manifest when empty. */
+  config?: WorkConfig
 }
 
 export interface ScriptPackagePlan {
@@ -146,12 +157,14 @@ export function packageActors(project: Project): Record<string, PackageActor> {
  *  single-file / asset-ZIP shape) plus the manifest fields the shells used to bake
  *  into their bootstraps. Pure, zero-I/O. */
 export function buildScriptPackage(project: Project, opts: BuildPackageOptions): ScriptPackagePlan {
-  // Forward the command registry: without it the chunks serialize plugin commands
-  // against the built-ins alone, and a positional argument (`[move yuki …]`)
-  // degrades to `id=yuki`, which the plugin never reads.
-  const plan = buildChunkedExport(project, { engine: opts.engine, groups: opts.groups, ...(opts.commands ? { commands: opts.commands } : {}) })
+  // The chunk options ride through whole (registry, grouping, a preview's scene
+  // scope and anchor): without the command registry the chunks serialize plugin
+  // commands against the built-ins alone, and a positional argument
+  // (`[move yuki …]`) degrades to `id=yuki`, which the plugin never reads.
+  const plan = buildChunkedExport(project, opts)
   const title = opts.title ?? (project.meta.title || 'NilVN')
   const lang = (opts.lang ?? project.meta.defaultLang) as Lang
+  const config = opts.config ?? project.config
   const manifest: PackageManifest = {
     format: PACKAGE_FORMAT,
     title,
@@ -162,9 +175,31 @@ export function buildScriptPackage(project: Project, opts: BuildPackageOptions):
     plugins: opts.plugins ?? project.plugins.map((p) => ({ id: p.id })),
     textSpeed: opts.textSpeed ?? (Number(project.meta.textSpeed) || 40),
     saveKey: opts.saveKey ?? (project.meta.id || project.meta.title || 'nilvn'),
+    ...(config && Object.keys(config).length ? { config } : {}),
     chunks: plan.manifest,
   }
   return { manifest, files: plan.files, assetRefs: plan.assetRefs }
+}
+
+/** Asset refs a work configuration names — a skin, logo, background, music,
+ *  HUD icon or preload entry — found by walking every string in it with the
+ *  same predicate the scene walk uses (`isAssetRef`), so a producer resolves
+ *  them into the package's by-ref table alongside the scenes' assets. Strings
+ *  holding a `{placeholder}` (a layered actor's `src` template) are templates,
+ *  not refs, and are left to the actor table. */
+export function configAssetRefs(config: WorkConfig | undefined): string[] {
+  const out = new Set<string>()
+  const walk = (v: unknown): void => {
+    if (typeof v === 'string') {
+      if (isAssetRef(v) && !v.includes('{')) out.add(v)
+    } else if (Array.isArray(v)) {
+      for (const x of v) walk(x)
+    } else if (v && typeof v === 'object') {
+      for (const x of Object.values(v as Record<string, unknown>)) walk(x)
+    }
+  }
+  walk(config)
+  return [...out]
 }
 
 /** Fill the by-ref asset table (`chunks.assets`). Returns a new manifest. */

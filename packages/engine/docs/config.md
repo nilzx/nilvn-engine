@@ -403,7 +403,7 @@ widgets = [
 | `bar` | `var`, `max` (100), `min` (0), `label` | A progress bar; `max` / `min` may be numbers or expressions. |
 | `image` | `src`, `width` | An image (`src` resolves like an asset path). |
 | `list` | `var`, `empty` | One line per item of a list variable, or of a comma-separated string (so a string item cannot itself hold a comma — collect into a list variable for that, or store `@key`s, which never contain one and whose translated line may); each string item is a config string (`@key` resolves through the catalogs, `{$var}` fills); `empty` (a config string) when there are none. |
-| `button` | `label`, `onclick` | A button; `onclick` is script commands, one per line (a TOML multi-line string for several). |
+| `button` | `label`, `onclick` | A button; `onclick` is script commands, one per line (a TOML multi-line string for several). On a window opened from the title page (a `ui:<id>` button in `[title] buttons`) no story is running, so only `ui` and `set` commands run there — a `jump` is reported, not dropped. |
 
 Every widget takes `if` (an expression; false hides it). Panels re-render on
 every variable change, language switch and session change. A `playing` panel

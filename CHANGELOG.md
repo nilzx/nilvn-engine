@@ -5,6 +5,20 @@ three packages share one version and one `engine-v*` tag. Entries before the
 repository was split out of the NilVN monorepo (September 2026) are condensed
 from its history.
 
+## 0.17.0 — 2026-09-22
+
+The work's configuration travels with the script package.
+
+### Added
+
+- `nilvn.json` takes an optional `config`: [nilvn.config.toml](packages/engine/docs/config.md) as JSON (`Project.config` in core). `load()` applies it once the package is open and its asset table is filled, so a skin, logo or background in it resolves by ref, and checks it like a config file. What the manifest carries itself — `game.entry` / `game.scripts`, `path`, `actors`, `plugins.use` — is dropped with a `load` diagnostic each; `game.title` is always the manifest's `title`. Older engines ignore the field; `PACKAGE_FORMAT` is unchanged.
+- core: `Project.config` (`WorkConfig`, schema v12 — a pure addition); `buildChunkedExport` takes `scenes` (a scoped build: one chunk, jumps out of the scope route to the unset landing) and `anchorNodeId` / `anchorLabel`; `configAssetRefs()` lists the asset refs a configuration names.
+- A `back` band (`ObjectBand`): between the background and the characters, still under the camera — for ambient particles and light shafts that must not cover a sprite. `setBand()` and the saved `band` carry it; the first-party `[layer]` command gains `layer=back` with the plugins' next release.
+
+### Fixed
+
+- A window opened from the title page (a `ui:<id>` button in `[title] buttons`) could not be closed from its own button: `runInline` returned at once with no story running. Panel and variable commands (`ui`, `set`) now run there; anything else is reported rather than dropped.
+
 ## 0.16.3 — 2026-09-21
 
 Fixes and documentation from finishing the two sample works into complete short

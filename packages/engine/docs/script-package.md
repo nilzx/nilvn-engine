@@ -42,6 +42,7 @@ exceptions.
   ],
   "textSpeed": 40,
   "saveKey": "secret-base",            // namespaces saves / settings in the player's storage
+  "config": { "title": { "heading": "Secret Base" } },   // optional: nilvn.config.toml as JSON (0.17+)
   "chunks": { /* the chunk manifest, below */ }
 }
 ```
@@ -56,6 +57,7 @@ exceptions.
 | `plugins` | Enabled plugins by id. `entry` points at a `plugin.json` inside the package for a plugin the work carries with it. |
 | `textSpeed` | Typewriter speed. |
 | `saveKey` | Per-work id the in-game menu namespaces `localStorage` by. |
+| `config` | Optional (0.17+). The work's configuration — [nilvn.config.toml](config.md) as JSON, section by section (`title`, `ending`, `theme`, `window`, `menu`, `settings`, `keys`, `saves`, `choices`, `input`, `preload`, `ui`, `persist`, `strings`, `plugins.<id>` …). Applied once the package is open and its asset table is filled, so a skin, logo or background in it resolves by ref like any other asset; checked like a config file (a misspelled key is a `load` diagnostic). What `nilvn.json` carries itself — `game.entry` / `game.scripts`, `path`, `actors`, `plugins.use` — is dropped with a diagnostic; `game.title` is always the manifest's `title`. Engines before 0.17 ignore the field. |
 | `chunks` | The chunk manifest, embedded verbatim. |
 
 ## The chunk manifest

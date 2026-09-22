@@ -98,6 +98,24 @@ describe('[ui.<id>] panels', () => {
     e.destroy()
   })
 
+  it('a title-page window closes from its own button — a click runs panel and variable commands with no story running, nothing else', async () => {
+    const e = engineWith()
+    applyConfig(e, { ui: UI as never, title: { buttons: ['new', 'ui:status'] } } as never)
+    e.loadSource('narr: one\n')
+    await e.showTitle()
+    expect(e.session).toBe('title')
+    await e.runInline('[ui show status]')
+    expect(shown(e, 'status')).toBe(true)
+    const close = [...panel(e, 'status')!.querySelectorAll<HTMLButtonElement>('.nilvn-ui__button')].find((b) => b.textContent === 'Close')!
+    close.click()
+    await until(() => !shown(e, 'status'))
+    await e.runInline('[set went = 1]\n[jump there]', 'button')
+    expect(e.vars.went).toBe(1)
+    expect(e.session).toBe('title')
+    expect(e.diagnostics.map((d) => d.message)).toEqual([expect.stringContaining('button: [jump] needs a running story ("[jump there]")')])
+    e.destroy()
+  })
+
   it('a button that moves the playhead releases the parked line; the show decisions ride in the save', async () => {
     const store = new MemorySaveStore()
     const e = engineWith({}, store)
@@ -163,15 +181,15 @@ describe('hotspots and clickable sprites', () => {
     e.destroy()
   })
 
-  it('a sprite with onclick takes clicks; runInline reports a bad line and refuses outside a session', async () => {
+  it('a sprite with onclick takes clicks; runInline reports a bad line and, outside a session, runs only panel / variable commands', async () => {
     const e = engineWith()
     await e.stage.showSprite('star', { url: 'http://g.test/s.png', frames: 1, fps: 1, loop: true, onclick: '[set hit = 1]\n[bogus line' }, 0)
     const el = e.stage.root.querySelector<HTMLElement>('.nilvn-sprite[data-id="star"]')!
     expect(el.classList.contains('nilvn-clickable')).toBe(true)
     expect(e.stage.snapshot().sprites?.[0]?.onclick).toBe('[set hit = 1]\n[bogus line')
     el.click()
-    await tick(20)
-    expect(e.vars.hit).toBeUndefined() // not running yet
+    await until(() => e.vars.hit === 1) // a variable write runs even before the story does
+    e.setVar('hit', 0)
     e.loadSource('narr: x\n')
     void e.start()
     await until(() => text(e) === 'x')

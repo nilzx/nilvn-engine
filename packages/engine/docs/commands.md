@@ -87,7 +87,7 @@ command and parameter they add are documented with the plugins themselves:
 |---|---|---|
 | `screen` | screen | The whole picture: flashes, transitions. `target=screen` in object commands means the camera. |
 | `camera` | camera | Transformable: shake, zoom (`scale`), pan (`x` / `y`). |
-| `character:<actor id>` | character | Transformable and bandable (`world` / `front`). |
+| `character:<actor id>` | character | Transformable and bandable (`world` / `back` / `front`: `back` draws behind the characters, still under the camera; `front` over the dialogue box). |
 | `sprite:<id>` | sprite | Contributed by `spriteanim`; transformable and bandable. |
 | `window:dialog` | window | The dialogue box; reskinnable with `[window]`. |
 

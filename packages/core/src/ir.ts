@@ -11,6 +11,19 @@ export type Lang = string // 'zh' | 'en' | 'ja' | ...
 /** textKey -> localized string. Values may carry inline markup ({wave:..}, {w:0.5}, {br}). */
 export type TextCatalog = Record<string, string>
 
+/** The work's engine configuration — the JSON form of `nilvn.config.toml`,
+ *  section by section (`title`, `ending`, `theme`, `window`, `menu`, `settings`,
+ *  `keys`, `saves`, `choices`, `input`, `preload`, `ui`, `persist`, `strings`,
+ *  `plugins.<id>` …). Core keeps it opaque on purpose: the engine is the one
+ *  source of its meaning (its `CONFIG_SCHEMA` / `checkConfig` validate it and the
+ *  studio's settings forms are generated from that schema), so nothing here
+ *  duplicates the engine's types. Sections the package model carries elsewhere
+ *  (`game.entry` / `game.scripts` / `path` / `actors` / `plugins.use`) do not
+ *  belong in it — the engine drops them with a diagnostic. */
+export interface WorkConfig {
+  [section: string]: unknown
+}
+
 export interface Project {
   meta: ProjectMeta
   actors: Record<string, Actor> // actorId -> Actor
@@ -28,6 +41,10 @@ export interface Project {
    *  the engine unlocks a segment when normal play passes its end. Optional: older
    *  projects simply have none. */
   replays?: ReplaySegment[]
+  /** The work's engine configuration (see {@link WorkConfig}); travels into the
+   *  script package as `nilvn.json` `config`. Optional: a project without one
+   *  plays with the engine's defaults. Added at schema v12. */
+  config?: WorkConfig
 }
 
 /** A node position id: which scene, which node — the timeline's stable locator
@@ -86,8 +103,10 @@ export interface ReplaySegment {
  *  v11: plugin platform v2 — `PluginRef`
  *      is `{ id, version?, config? }` keyed by the plugin's reverse-DNS id; the
  *      migration maps bundled short names (`textfx` → `app.nilvn.textfx`) and keeps
- *      unknown names verbatim (the editor reports them, nothing is dropped). */
-export const CURRENT_SCHEMA_VERSION = 11
+ *      unknown names verbatim (the editor reports them, nothing is dropped).
+ *  v12: `Project.config` — the work's engine configuration (the JSON form of
+ *      nilvn.config.toml), exported as the package's `config`. Pure addition. */
+export const CURRENT_SCHEMA_VERSION = 12
 
 /** Context shared by every migration step of one `migrateProject` call. */
 interface MigrationContext {
@@ -216,6 +235,8 @@ const MIGRATIONS: Migration[] = [
       p.plugins = next
     },
   },
+  // v11 -> v12: `Project.config` (the work's engine configuration). Pure addition
+  // — a project without one plays with the engine's defaults.
 ]
 
 /** Bring a loaded project up to CURRENT_SCHEMA_VERSION in place (then return it).

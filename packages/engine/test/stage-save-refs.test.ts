@@ -111,3 +111,29 @@ describe('engine saves through the by-ref table', () => {
     e2.destroy()
   })
 })
+
+describe('the back band', () => {
+  it('draws a sprite behind the characters, keeps it under the camera, and survives a save', async () => {
+    const e = createEngine({ container: document.createElement('div'), textSpeed: 0 })
+    e.loadSource('[set a = 1]\n')
+    await e.start()
+    await e.stage.showSprite('dust', { url: 'http://g.test/dust.png', frames: 1, fps: 1, loop: true }, 0)
+    e.stage.setBand('sprite:dust', 'back')
+    const el = e.stage.root.querySelector<HTMLElement>('.nilvn-sprite[data-id="dust"]')!
+    expect(el.parentElement!.className).toBe('nilvn-layer nilvn-back')
+    const camera = e.stage.root.querySelector<HTMLElement>('.nilvn-camera')!
+    expect(camera.contains(el)).toBe(true)
+    // bg → back → chars → sprites: the back layer sits between the background and the characters
+    const order = [...camera.children].map((c) => c.className)
+    expect(order.indexOf('nilvn-layer nilvn-back')).toBe(order.indexOf('nilvn-layer nilvn-bg') + 1)
+    expect(order.indexOf('nilvn-layer nilvn-chars')).toBe(order.indexOf('nilvn-layer nilvn-back') + 1)
+    const snap = e.stage.snapshot()
+    expect(snap.sprites?.find((s) => s.id === 'dust')?.band).toBe('back')
+    e.stage.setBand('sprite:dust', 'world')
+    expect(el.parentElement!.className).toBe('nilvn-layer nilvn-sprites')
+    await e.stage.restore(snap)
+    expect(e.stage.root.querySelector<HTMLElement>('.nilvn-sprite[data-id="dust"]')!.parentElement!.className).toBe('nilvn-layer nilvn-back')
+    e.destroy()
+  })
+})
+

@@ -48,6 +48,16 @@ export interface BuildChunkedOptions {
   /** Command schema registry for serialization (`commandRegistry(manifests)`);
    *  built-ins only when omitted — see SerializeOptions.commands. */
   commands?: Record<string, CommandSchema>
+  /** A scoped build (the studio's preview of one scene): only these scene ids, in
+   *  project order, go into the package — as ONE chunk, which is also the entry —
+   *  and a jump or choice that leaves the scope routes to the unset landing
+   *  (serialize's non-`crossChunk` mode) instead of naming a label the package
+   *  does not carry. `groups` is ignored when set. Omitted = the whole project. */
+  scenes?: string[]
+  /** Emit `[label anchorLabel]` right before this node (play-from-here). */
+  anchorNodeId?: string
+  /** The label to inject at `anchorNodeId`; defaults to `__nilvn_here__`. */
+  anchorLabel?: string
 }
 
 /** UTF-8 byte length of a string — pure, so @nilvn/core stays zero-dep and
@@ -91,10 +101,12 @@ export function sceneTextKeys(nodes: SceneNode[], into: Set<string>): void {
 }
 
 export function buildChunkedExport(project: Project, opts: BuildChunkedOptions): ChunkedExportPlan {
-  const sceneOrder = project.scenes.map((s) => s.id)
+  const scoped = opts.scenes ? project.scenes.filter((s) => opts.scenes!.includes(s.id)) : project.scenes
+  const sceneOrder = scoped.map((s) => s.id)
   const sceneIds = new Set(sceneOrder)
-  const byId = new Map(project.scenes.map((s) => [s.id, s]))
-  const groups = opts.groups ?? sceneOrder.map((id) => [id])
+  const byId = new Map(scoped.map((s) => [s.id, s]))
+  const groups = opts.scenes ? [sceneOrder] : (opts.groups ?? sceneOrder.map((id) => [id]))
+  const anchor = opts.anchorNodeId ? { anchorNodeId: opts.anchorNodeId, ...(opts.anchorLabel ? { anchorLabel: opts.anchorLabel } : {}) } : {}
 
   // Each group → one chunk. Chunk id = its first scene id (stable, unique).
   const chunks: ManifestChunk[] = []
@@ -111,7 +123,7 @@ export function buildChunkedExport(project: Project, opts: BuildChunkedOptions):
     const ids = group.filter((id) => sceneIds.has(id))
     if (!ids.length) continue
     const chunkId = ids[0]!
-    const { body, labels, assetRefs } = serializeChunk(project, { scenes: ids, keepKeys: true, crossChunk: true, ...(opts.commands ? { commands: opts.commands } : {}) })
+    const { body, labels, assetRefs } = serializeChunk(project, { scenes: ids, keepKeys: true, crossChunk: !opts.scenes, ...anchor, ...(opts.commands ? { commands: opts.commands } : {}) })
     const scriptChunk: ScriptChunk = { id: chunkId, body, labels }
     const text = JSON.stringify(scriptChunk)
     const bytes = utf8Len(text)

@@ -1,6 +1,6 @@
 {
   "name": "@nilvn/core",
-  "version": "0.16.3",
+  "version": "0.17.0",
   "type": "module",
   "description": "NilVN shared core \u2014 the project document model (IR), command / plugin-manifest schemas, script-package format and serializers",
   "license": "MIT",

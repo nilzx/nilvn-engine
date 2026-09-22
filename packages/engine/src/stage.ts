@@ -291,6 +291,7 @@ const BASE_CSS = `
 .nilvn-fx{pointer-events:none}
 .nilvn-front{pointer-events:none}
 .nilvn-sprites{pointer-events:none}
+.nilvn-back{pointer-events:none}
 .nilvn-char{position:absolute;bottom:0;height:88%;transform:translateX(-50%);transition:left .45s ease,filter .35s ease}
 .nilvn-char img{height:100%;width:auto;display:block;pointer-events:none}
 .nilvn-char__layers{position:relative;height:100%;aspect-ratio:var(--canvas-w,600)/var(--canvas-h,1100)}
@@ -625,6 +626,8 @@ export class DomRenderer implements Renderer, EditStage {
   readonly root: HTMLDivElement
   readonly camera: HTMLDivElement
   readonly bgLayer: HTMLDivElement
+  /** The `back` band: between the background and the characters (band='back'). */
+  readonly backLayer: HTMLDivElement
   readonly charLayer: HTMLDivElement
   /** Layer holding sprite-frame objects, above characters, below the free fx layer */
   readonly spriteLayer: HTMLDivElement
@@ -688,8 +691,9 @@ export class DomRenderer implements Renderer, EditStage {
     this.bgLayer = div('nilvn-layer nilvn-bg')
     this.charLayer = div('nilvn-layer nilvn-chars')
     this.spriteLayer = div('nilvn-layer nilvn-sprites')
+    this.backLayer = div('nilvn-layer nilvn-back')
     this.fxLayer = div('nilvn-layer nilvn-fx')
-    this.camera.append(this.bgLayer, this.charLayer, this.spriteLayer, this.fxLayer)
+    this.camera.append(this.bgLayer, this.backLayer, this.charLayer, this.spriteLayer, this.fxLayer)
 
     this.dialog = div('nilvn-dialog nilvn-hidden')
     this.nameEl = div('nilvn-name nilvn-hidden')
@@ -1425,8 +1429,8 @@ export class DomRenderer implements Renderer, EditStage {
   setBand(objId: string, band: ObjectBand): void {
     const b = this.bandSlot(objId)
     if (!b) return
-    b.slot.band = band === 'front' ? 'front' : undefined
-    const target = band === 'front' ? this.frontLayer : this.homeBandEl(b.kind)
+    b.slot.band = band === 'front' || band === 'back' ? band : undefined
+    const target = band === 'front' ? this.frontLayer : band === 'back' ? this.backLayer : this.homeBandEl(b.kind)
     if (b.slot.el.parentElement !== target) target.append(b.slot.el)
   }
 

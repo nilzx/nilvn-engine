@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildScriptPackage, fillPackageAssets, isPackageManifest, PACKAGE_FORMAT, packageActors, packageLanguages } from '../src/index'
+import { buildScriptPackage, configAssetRefs, fillPackageAssets, isPackageManifest, PACKAGE_FORMAT, packageActors, packageLanguages } from '../src/index'
 import { makeProject } from './fixtures'
 import { commandRegistry } from '../src/plugins'
 import type { PluginManifest } from '../src/plugin-manifest'
@@ -97,3 +97,46 @@ describe('buildScriptPackage', () => {
     expect(packageActors(p).yuki?.name).toBe('由纪')
   })
 })
+
+describe('the work configuration in the package', () => {
+  it('ships project.config as nilvn.json `config`, or an explicit one; nothing when empty', () => {
+    const p = makeProject()
+    expect(buildScriptPackage(p, { engine: '0.17.0' }).manifest.config).toBeUndefined()
+    p.config = { title: { heading: 'Test' }, theme: { 'name-bg': '#123456' } }
+    expect(buildScriptPackage(p, { engine: '0.17.0' }).manifest.config).toEqual({ title: { heading: 'Test' }, theme: { 'name-bg': '#123456' } })
+    expect(buildScriptPackage(p, { engine: '0.17.0', config: { saves: { autosave: 'line' } } }).manifest.config).toEqual({ saves: { autosave: 'line' } })
+    expect(buildScriptPackage(p, { engine: '0.17.0', config: {} }).manifest.config).toBeUndefined()
+    expect(isPackageManifest(buildScriptPackage(p, { engine: '0.17.0' }).manifest)).toBe(true)
+  })
+
+  it('collects the asset refs a configuration names, skipping layer templates', () => {
+    expect(
+      configAssetRefs({
+        window: { skin: 'ui/box.png', position: 'top' },
+        title: { logo: './ui/logo.svg', background: 'bg/title.webp', music: 'audio/title.mp3', buttons: ['new', 'load'] },
+        preload: { assets: ['ui/btn.png', 'bg/title.webp'] },
+        actors: { vera: { layers: { face: { src: 'char/vera/face-{face}.png' } } } },
+        ui: { hud: { widgets: [{ type: 'image', src: 'ui/icon.svg' }] } },
+      }),
+    ).toEqual(['ui/box.png', './ui/logo.svg', 'bg/title.webp', 'audio/title.mp3', 'ui/btn.png', 'ui/icon.svg'])
+    expect(configAssetRefs(undefined)).toEqual([])
+  })
+})
+
+describe('a scoped plan (the studio preview)', () => {
+  it('holds only the scoped scene as one chunk, routes jumps out of it to the unset landing, and injects the anchor', () => {
+    const p = makeProject()
+    const s1 = p.scenes[0]!
+    const { manifest, files } = buildScriptPackage(p, { engine: '0.17.0', scenes: ['s1'], anchorNodeId: s1.nodes[1]!.id, anchorLabel: '__nilvn_here__' })
+    expect(manifest.chunks.chunks.map((c) => c.id)).toEqual(['s1'])
+    expect(manifest.chunks.entry).toEqual({ label: 's1' })
+    expect(manifest.chunks.sceneOrder).toEqual(['s1'])
+    expect(manifest.chunks.chunks[0]!.next).toEqual([]) // nothing to fall through to inside the scope
+    const body = (JSON.parse(files.find((f) => f.path === 'chunks/scene/s1.json')!.text) as { body: string }).body
+    expect(body).toContain('[label __nilvn_here__]')
+    expect(body).not.toContain('-> s2') // the fixture's jump to s2 is out of scope → the unset landing
+    expect(body).toContain('__nilvn_unset__')
+    expect(files.some((f) => f.path === 'chunks/scene/s2.json')).toBe(false)
+  })
+})
+

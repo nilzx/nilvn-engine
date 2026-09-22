@@ -105,3 +105,48 @@ describe('directory package (fetch)', () => {
     await expect(openPackage('https://host/nowhere/')).rejects.toThrow(/404/)
   })
 })
+
+describe('the work configuration in a package', () => {
+  it('applies `config` after the asset table is filled, with nilvn.json keeping what it carries', async () => {
+    const e = newEngine({ textSpeed: 0, registry: [fxFixtures().fx] })
+    const data = makePackage()
+    data.manifest.config = {
+      game: { title: 'Not this one', entry: 'other.nvn', scripts: ['a.nvn'] },
+      path: { '@bg': 'bg' },
+      actors: { rin: { name: 'Rin' } },
+      plugins: { use: ['other'], fx: { level: 2 } },
+      title: { heading: 'Pack, the game', background: 'bg/room.png' },
+      theme: { 'name-bg': '#123456' },
+      saves: { autosave: 'line' },
+    }
+    await e.load(inlinePackage(data))
+    expect(e.config.game?.title).toBe('Pack') // the manifest's title is the work's
+    expect(e.titleConfig.heading).toBe('Pack, the game')
+    expect(e.theme['name-bg']).toBe('#123456')
+    expect(e.autosave).toBe('line')
+    expect(e.actors.rin).toBeUndefined() // the manifest names the actors
+    expect(e.pluginConfigValue('app.nilvn.fx', 'level')).toBe(2)
+    expect(e.diagnostics.map((d) => d.message).sort()).toEqual([
+      'config: actors: a script package carries this in nilvn.json — ignored',
+      'config: game.entry: a script package carries this in nilvn.json — ignored',
+      'config: game.scripts: a script package carries this in nilvn.json — ignored',
+      'config: path: a script package carries this in nilvn.json — ignored',
+      'config: plugins.use: a script package carries this in nilvn.json — ignored',
+    ])
+    await e.start()
+    expect(e.vars.x).toBe(2)
+    e.destroy()
+  })
+
+  it('reports a misspelled section the same way a config file would, and plays on', async () => {
+    const e = newEngine({ textSpeed: 0, registry: [fxFixtures().fx] })
+    const data = makePackage()
+    data.manifest.config = { titel: { heading: 'x' }, saves: { autosave: 'sometimes' } }
+    await e.load(inlinePackage(data))
+    expect(e.diagnostics.map((d) => d.message)).toEqual([expect.stringContaining('config: titel:'), expect.stringContaining('config: saves.autosave:')])
+    await e.start()
+    expect(e.vars.x).toBe(2)
+    e.destroy()
+  })
+})
+

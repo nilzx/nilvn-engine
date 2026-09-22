@@ -1,5 +1,5 @@
 import { builtins } from './builtins.js'
-import { applyConfig, fetchConfig, mergeDefaults } from './config.js'
+import { applyConfig, fetchConfig, mergeDefaults, packageConfig } from './config.js'
 import { isThemeToken, THEME_TOKEN_RE } from './theme.js'
 import { tUI, uiLangName } from './i18n.js'
 import { AUTOSAVE_KEY, QUICKSAVE_KEY, READ_KEY, SETTINGS_KEY, UNLOCKS_KEY, PLUGIN_SETTINGS_KEY, GLOBALS_KEY, LocalStorageSaveStore, isSlotPayload, slotKey, type SaveStore, type SlotPayload, type SettingsPayload, type GlobalsPayload } from './save-store.js'
@@ -152,6 +152,10 @@ export interface SaveState {
  * event-frames + loops) and {@link ReplayRegistry} (A–B segments). Commands see
  * only the `Renderer` via `CommandContext.stage`.
  */
+/** Commands a click may run while no story is running (a title-page panel's
+ *  button): they touch panels and variables, never the playhead. */
+const IDLE_INLINE_COMMANDS = new Set(['ui', 'set'])
+
 export class Engine {
   // Concrete DOM renderer: the engine constructs it and drives its dialogue layer
   // through the Renderer verbs (typeLine / showChoices). Commands see only the
@@ -682,6 +686,16 @@ export class Engine {
         }
       }),
     )
+    if (this.destroyed) return
+    // The work's configuration travels in the package (0.17): applied once the
+    // asset table is filled, so a skin, logo or background in it resolves by ref.
+    // What nilvn.json carries itself (actors, plugins, entry, path aliases) is
+    // not the config's to set — dropped, and named once each.
+    if (m.config) {
+      const { cfg, ignored } = packageConfig(m.config as AdvConfig, m.title)
+      for (const p of ignored) this.report({ phase: 'load', message: `config: ${p}: a script package carries this in nilvn.json — ignored` }, true)
+      applyConfig(this, cfg)
+    }
   }
 
   loadSource(source: string): void {
@@ -1230,7 +1244,11 @@ export class Engine {
    *  When the commands move the playhead (`[jump]`, `[call]`), the parked
    *  line or prompt is released so play goes on from there. */
   async runInline(text: string, source = 'ui'): Promise<void> {
-    if (!this.running || this.destroyed) return
+    if (this.destroyed) return
+    // Outside a running story — a title-page panel's button — only the commands
+    // that need no playhead run: a panel toggle, a variable write. Anything else
+    // is reported rather than silently dropped.
+    const idle = !this.running
     const gen = this.generation
     const before = this.pos
     const lines = text
@@ -1251,9 +1269,13 @@ export class Engine {
         this.report({ phase: 'exec', message: `${source}: only commands can run from a click ("${line}")` }, true)
         continue
       }
+      if (idle && !IDLE_INLINE_COMMANDS.has(node.name)) {
+        this.report({ phase: 'exec', message: `${source}: [${node.name}] needs a running story ("${line}")` }, true)
+        continue
+      }
       await this.execCommand(node)
     }
-    if (gen === this.generation && this.pos !== before) this.unblock()
+    if (!idle && gen === this.generation && this.pos !== before) this.unblock()
   }
 
   // ---- audio (see AudioBus) ----
