@@ -98,7 +98,7 @@ const MANIFEST_FIELDS: FieldDoc[] = [
 ]
 
 const CONTRIBUTES_FIELDS: FieldDoc[] = [
-  F('commands', 'CommandSchema[]', 'Script commands `[name …]` with typed params (drives the editor insert form and the authoring lint).'),
+  F('commands', 'CommandSchema[]', "Script commands `[name …]` with typed params (drives the editor insert form and the authoring lint); ifFalse: 'skip' (default) | 'handle' sets what a false trailing if= does."),
   F('textEffects', '{ name, label? }[]', 'Inline text effects `{name:text}`.'),
   F('objectKinds', 'ObjectKindSchema[]', 'Addressable stage-object kinds the plugin adds.'),
   F('effects', 'EffectSchema[]', 'Retargetable effects bound to kinds via appliesToKinds.'),
@@ -157,7 +157,8 @@ const RUNTIME_CONTEXT: FieldDoc[] = [
 ]
 
 const COMMAND_CONTEXT: FieldDoc[] = [
-  F('name / args / params / raw', '…', 'The parsed tag.'),
+  F('name / args / params / raw', '…', 'The parsed tag, without its trailing `if=` (the engine splits and evaluates it).'),
+  F('cond', 'boolean', "The tag's `if=`: true when absent or holding. A false one skips the command unless its CommandSchema declares ifFalse: 'handle' — then the command runs with cond === false and decides what \"not present\" means."),
   F('str(keyOrIndex, def?) / num(keyOrIndex, def?) / numOpt(keyOrIndex)', '…', 'Argument accessors (positional index or named key); numOpt yields undefined for an absent / non-numeric param instead of a default.'),
   F('resolve(path) / wait(sec)', '…', 'Path resolution and a delay.'),
   F('plugin', 'PluginContext', 'The owning plugin’s capability context — the ONLY way to the stage / audio / vars.'),
@@ -227,7 +228,7 @@ const EXAMPLE_MANIFEST: PluginManifest = {
   name: 'plugin.neon.name',
   description: 'plugin.neon.desc',
   version: '1.0.0',
-  engine: '>=0.17 <1',
+  engine: '>=0.18 <1',
   entries: { engine: './engine.js' },
   permissions: ['stage.write'],
   contributes: {

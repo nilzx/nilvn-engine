@@ -39,7 +39,7 @@ examples of every extension point, written against exactly this surface.
   "name": "plugin.neon.name",           // an id resolved through "messages"
   "description": "plugin.neon.desc",
   "version": "1.0.0",
-  "engine": ">=0.17 <1",                // engine compatibility range (optional)
+  "engine": ">=0.18 <1",                // engine compatibility range (optional)
   "entries": { "engine": "./engine.js" },
   "permissions": ["stage.write"],
   "contributes": {

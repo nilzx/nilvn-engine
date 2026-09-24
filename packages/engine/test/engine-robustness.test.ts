@@ -78,6 +78,31 @@ describe('clickable regions', () => {
       },
     )
   })
+
+  it('probes a clickable sprite the same way, and only a clickable one', async () => {
+    const box = document.createElement('div')
+    box.className = 'nilvn-text'
+    document.body.append(box)
+    await withStubs(
+      () => box,
+      async () => {
+        const e = await run('[set a = 1]')
+        const sheet = { url: 'x.png', frames: 1, fps: 12, loop: true }
+        await e.stage.showSprite('deco', sheet, 0)
+        expect(e.diagnostics).toEqual([])
+        await e.stage.showSprite('star', { ...sheet, onclick: 'jump a' }, 0)
+        expect(e.diagnostics.map((d) => d.message)).toEqual([expect.stringContaining('sprite "star": "nilvn-text" covers its centre')])
+        // Re-showing it unmoved (what the editor does on every refresh) says nothing new.
+        await e.stage.showSprite('star', { ...sheet, onclick: 'jump a' }, 0)
+        expect(e.diagnostics).toHaveLength(1)
+        // Nor does a restore rebuilding the stage.
+        await e.stage.restore(e.stage.snapshot())
+        expect(e.diagnostics).toHaveLength(1)
+        e.destroy()
+      },
+    )
+    box.remove()
+  })
 })
 
 describe('asset paths', () => {

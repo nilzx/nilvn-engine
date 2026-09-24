@@ -2,7 +2,7 @@
 // engine and plugins manipulate.
 //
 //   .nilvn-root
-//     .nilvn-camera          <- plugins shake/filter this for screen effects
+//     .nilvn-camera          <- the world wrapper: pan / zoom / shake + colour grade
 //       .nilvn-bg            <- crossfading background items
 //       .nilvn-chars         <- one .nilvn-char per visible character
 //       .nilvn-fx            <- free overlay layer for plugins
@@ -132,8 +132,55 @@ interface SpriteSlot {
 // plugin as semantic TransformKeyframe[] and reach the DOM via `animate`.
 const CHAR_BASE = 'translateX(-50%)'
 
+// ---- colour grade (camera only) ----
+// Six numeric channels rather than a CSS filter string: the keyframe sampler
+// interpolates numbers, saves carry numbers, and a non-DOM backend maps them onto a
+// colour matrix. The DOM backend composes them into one `filter` in a fixed order.
+
+type GradeProp = 'hue' | 'invert' | 'saturate' | 'brightness' | 'contrast' | 'grayscale'
+const GRADE_IDENTITY: Record<GradeProp, number> = { hue: 0, invert: 0, saturate: 1, brightness: 1, contrast: 1, grayscale: 0 }
+const GRADE_PROPS = Object.keys(GRADE_IDENTITY) as GradeProp[]
+/** Channels whose identity is 0 add under `compose: 'offset'`; the rest multiply. */
+const GRADE_ADDS: ReadonlySet<GradeProp> = new Set(['hue', 'invert', 'grayscale'])
+const clamp01 = (n: number): number => Math.min(1, Math.max(0, n))
+
+/** A grade as CSS `filter`; the empty string at identity (pixel-identical). With
+ *  `full`, every function is spelled out even at identity: WAAPI interpolates
+ *  `filter` only between lists of matching functions, so each keyframe of an
+ *  animated grade carries all six and every segment tweens. */
+function filterStr(g: Pick<Transform, GradeProp>, full = false): string {
+  const parts: string[] = []
+  if (full || g.hue !== 0) parts.push(`hue-rotate(${round5(g.hue)}deg)`)
+  if (full || g.invert !== 0) parts.push(`invert(${round5(clamp01(g.invert))})`)
+  if (full || g.saturate !== 1) parts.push(`saturate(${round5(Math.max(0, g.saturate))})`)
+  if (full || g.brightness !== 1) parts.push(`brightness(${round5(Math.max(0, g.brightness))})`)
+  if (full || g.contrast !== 1) parts.push(`contrast(${round5(Math.max(0, g.contrast))})`)
+  if (full || g.grayscale !== 0) parts.push(`grayscale(${round5(clamp01(g.grayscale))})`)
+  return parts.join(' ')
+}
+
+/** The grade a keyframe paints: `absolute` replaces the channels it names,
+ *  `offset` composes each over the resting one by its identity (add / multiply). */
+function frameGrade(m: Transform, k: Partial<Transform>, offset: boolean): Pick<Transform, GradeProp> {
+  const out = {} as Pick<Transform, GradeProp>
+  for (const p of GRADE_PROPS) {
+    const d = k[p]
+    out[p] = d === undefined ? m[p] : !offset ? d : GRADE_ADDS.has(p) ? m[p] + d : m[p] * d
+  }
+  return out
+}
+
 /** Default resting transform — what an object reads as before any setProp. */
-const DEFAULT_TRANSFORM: Transform = { x: 0, y: 0, scale: 1, rotation: 0, opacity: 1, visible: true, zIndex: null }
+const DEFAULT_TRANSFORM: Transform = {
+  x: 0,
+  y: 0,
+  scale: 1,
+  rotation: 0,
+  opacity: 1,
+  visible: true,
+  zIndex: null,
+  ...GRADE_IDENTITY,
+}
 const freshTransform = (): Transform => ({ ...DEFAULT_TRANSFORM })
 
 /** Parse a CSS percent ("37%") to a number, with a fallback for empty/NaN. NOT
@@ -207,6 +254,7 @@ function cameraState(t: Transform): StageState['camera'] {
   if (t.rotation !== 0) out.rotation = t.rotation
   if (t.opacity !== 1) out.opacity = t.opacity
   if (!t.visible) out.visible = false
+  for (const p of GRADE_PROPS) if (t[p] !== GRADE_IDENTITY[p]) out[p] = t[p]
   return Object.keys(out).length ? out : undefined
 }
 
@@ -281,6 +329,8 @@ interface ObjRef {
   el: HTMLElement
   base: string
   model: Transform
+  /** Paints the colour-grade channels (the camera only). */
+  grade?: boolean
 }
 
 const BASE_CSS = `
@@ -652,9 +702,12 @@ export class DomRenderer implements Renderer, EditStage {
   /** An image the stage was told to show failed to load (a wrong path). The
    *  engine turns it into a diagnostic. */
   onAssetError?: (what: string, url: string) => void
-  /** A hotspot was declared where a click cannot reach it — something else is
-   *  drawn over its centre. The engine turns it into a diagnostic. */
-  onObstructed?: (id: string, by: string) => void
+  /** A clickable object (`hotspot:<id>`, `sprite:<id>`) was declared where a click
+   *  cannot reach it — something else is drawn over its centre. The engine turns it
+   *  into a diagnostic. */
+  onObstructed?: (objId: string, by: string) => void
+  /** Set while `restore` rebuilds the stage: no reachability probes. */
+  private rebuilding = false
   /** Screen-space band hosting objects promoted over the dialogue (band='front').
    *  Sits above dialogue/choices, below the transition fader; empty by default. */
   readonly frontLayer: HTMLDivElement
@@ -1137,10 +1190,10 @@ export class DomRenderer implements Renderer, EditStage {
     h.el.style.top = `${spec.y}%`
     h.el.style.width = `${spec.w}%`
     h.el.style.height = `${spec.h}%`
-    if (probe && moved) this.checkReachable(h.el, spec.id)
+    if (probe && moved) this.checkReachable(h.el, `hotspot:${spec.id}`)
   }
 
-  /** A clickable region the player cannot reach is the one content bug the author
+  /** A clickable object the player cannot reach is the one content bug the author
    *  cannot see: the dialogue box, a panel or the HUD is drawn over it and takes
    *  the click, while the coordinates still read fine in the script. Probe the
    *  region's own centre — `elementFromPoint` skips `pointer-events: none`, so it
@@ -1149,7 +1202,7 @@ export class DomRenderer implements Renderer, EditStage {
    *  detached stage, jsdom) there is nothing to measure and nothing is said, and
    *  only the moment of declaration is judged, so a box shown afterwards over a
    *  standing hotspot goes unreported. */
-  private checkReachable(el: HTMLElement, id: string): void {
+  private checkReachable(el: HTMLElement, objId: string): void {
     if (!this.onObstructed) return
     const doc = el.ownerDocument
     if (typeof doc.elementFromPoint !== 'function') return // a DOM without hit testing
@@ -1158,7 +1211,7 @@ export class DomRenderer implements Renderer, EditStage {
     const top = doc.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)
     if (!top || top === el || el.contains(top)) return
     const named = top.closest('[class*="nilvn-"]') ?? top
-    this.onObstructed(id, named.className || named.tagName.toLowerCase())
+    this.onObstructed(objId, named.className || named.tagName.toLowerCase())
   }
 
   hideHotspot(id: string): void {
@@ -1292,6 +1345,11 @@ export class DomRenderer implements Renderer, EditStage {
     // Seed any birth transform (y / scale / rotation), restate the centering base,
     // and fade a fresh sprite in.
     this.applyBirthTransform(el, slot.transform, spec)
+    // A clickable sprite gets the same reachability probe as a [hotspot], judged when
+    // it appears or moves (the editor re-shows unchanged sprites on every refresh),
+    // before the fade — an element at opacity 0 still takes a click.
+    const moved = fresh || !prev || prev.at !== spec.at || prev.height !== height || prev.y !== spec.y || prev.scale !== spec.scale || prev.rotation !== spec.rotation
+    if (spec.onclick && moved && !this.rebuilding) this.checkReachable(el, `sprite:${id}`)
     if (fresh && fadeSec > 0) await animate(el, [{ opacity: 0 }, { opacity: 1 }], { duration: fadeSec * 1000, easing: 'ease' })
   }
 
@@ -1318,7 +1376,7 @@ export class DomRenderer implements Renderer, EditStage {
   /** Resolve an object id to its DOM element, base anchor, and transform model;
    *  null for the non-transformable `screen` and unknown ids. */
   private resolveObject(objId: string): ObjRef | null {
-    if (objId === 'camera') return { el: this.camera, base: '', model: this.cameraModel }
+    if (objId === 'camera') return { el: this.camera, base: '', model: this.cameraModel, grade: true }
     // The dialogue window is a screen-space singleton like the camera: always present,
     // its element laid out by CSS, its transform owned entirely by the pose model.
     if (objId === 'window:dialog') return { el: this.dialog, base: '', model: this.windowModel }
@@ -1364,6 +1422,7 @@ export class DomRenderer implements Renderer, EditStage {
     el.style.opacity = model.opacity === 1 ? '' : String(model.opacity)
     el.style.visibility = model.visible ? '' : 'hidden'
     el.style.zIndex = model.zIndex === null ? '' : String(model.zIndex)
+    if (ref.grade) el.style.filter = filterStr(model)
   }
 
   async animate(objId: string, keyframes: AnimFrame[], opts: AnimOpts): Promise<void> {
@@ -1374,6 +1433,7 @@ export class DomRenderer implements Renderer, EditStage {
     // composes over the resting model, so an animation respects a prior setProp.
     const touchesTransform = keyframes.some((k) => k.x !== undefined || k.y !== undefined || k.scale !== undefined || k.rotation !== undefined)
     const touchesOpacity = keyframes.some((k) => k.opacity !== undefined)
+    const touchesGrade = !!ref.grade && keyframes.some((k) => GRADE_PROPS.some((p) => k[p] !== undefined))
     // 'offset' frames are DELTAS over the resting pose (a transient gesture); the
     // default 'absolute' replaces the channels it names (a state change). See AnimOpts.
     const offsetMode = opts.compose === 'offset'
@@ -1385,6 +1445,7 @@ export class DomRenderer implements Renderer, EditStage {
       const frame: Keyframe = {}
       if (touchesTransform) frame.transform = offsetMode ? offsetTransformStr(ref.base, ref.model, channels) : transformStr(ref.base, m)
       if (touchesOpacity) frame.opacity = offsetMode ? m.opacity * (channels.opacity ?? 1) : m.opacity
+      if (touchesGrade) frame.filter = filterStr(frameGrade(ref.model, channels, offsetMode), true)
       if (offset !== undefined) frame.offset = offset
       if (easing !== undefined) frame.easing = easing
       return frame
@@ -2162,14 +2223,20 @@ export class DomRenderer implements Renderer, EditStage {
     // Sprites restart their frame loop from frame 0 on restore (their exact phase
     // is not part of the save shape). Clearing handles the blank-stage restore too.
     await this.clearSprites(0)
-    for (const s of state.sprites ?? []) {
-      await this.showSprite(
-        s.id,
-        { url: url(s.url), ref: s.url, frames: s.frames, fps: s.fps, loop: s.loop, at: String(s.at), height: s.height, y: s.y, scale: s.scale, rotation: s.rotation, onclick: s.onclick },
-        0,
-      )
-      this.applyRestingPose(`sprite:${s.id}`, s)
-      if (s.band && s.band !== 'world') this.setBand(`sprite:${s.id}`, s.band)
+    // No probing while the stage is rebuilt (same rule as the hotspots below).
+    this.rebuilding = true
+    try {
+      for (const s of state.sprites ?? []) {
+        await this.showSprite(
+          s.id,
+          { url: url(s.url), ref: s.url, frames: s.frames, fps: s.fps, loop: s.loop, at: String(s.at), height: s.height, y: s.y, scale: s.scale, rotation: s.rotation, onclick: s.onclick },
+          0,
+        )
+        this.applyRestingPose(`sprite:${s.id}`, s)
+        if (s.band && s.band !== 'world') this.setBand(`sprite:${s.id}`, s.band)
+      }
+    } finally {
+      this.rebuilding = false
     }
     this.clearHotspots()
     // No probing here: a restore rebuilds the stage in pieces, so what covers what
@@ -2188,8 +2255,12 @@ export class DomRenderer implements Renderer, EditStage {
       if (cam.rotation !== undefined) this.cameraModel.rotation = cam.rotation
       if (cam.opacity !== undefined) this.cameraModel.opacity = cam.opacity
       if (cam.visible !== undefined) this.cameraModel.visible = cam.visible
+      for (const p of GRADE_PROPS) {
+        const v = cam[p]
+        if (typeof v === 'number' && Number.isFinite(v)) this.cameraModel[p] = v
+      }
     }
-    this.applyModel({ el: this.camera, base: '', model: this.cameraModel })
+    this.applyModel({ el: this.camera, base: '', model: this.cameraModel, grade: true })
     // Window resting pose + skin: reset-then-layer, exactly like the camera — a
     // restore to a point before any window work must not keep a later pose or skin.
     this.windowModel = freshTransform()

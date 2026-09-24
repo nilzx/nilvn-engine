@@ -118,7 +118,7 @@
       {
         "name": "commands",
         "type": "CommandSchema[]",
-        "desc": "Script commands `[name …]` with typed params (drives the editor insert form and the authoring lint).",
+        "desc": "Script commands `[name …]` with typed params (drives the editor insert form and the authoring lint); ifFalse: 'skip' (default) | 'handle' sets what a false trailing if= does.",
         "required": false
       },
       {
@@ -853,7 +853,13 @@
       {
         "name": "name / args / params / raw",
         "type": "…",
-        "desc": "The parsed tag.",
+        "desc": "The parsed tag, without its trailing `if=` (the engine splits and evaluates it).",
+        "required": false
+      },
+      {
+        "name": "cond",
+        "type": "boolean",
+        "desc": "The tag's `if=`: true when absent or holding. A false one skips the command unless its CommandSchema declares ifFalse: 'handle' — then the command runs with cond === false and decides what \"not present\" means.",
         "required": false
       },
       {
@@ -1113,7 +1119,7 @@
       "name": "plugin.neon.name",
       "description": "plugin.neon.desc",
       "version": "1.0.0",
-      "engine": ">=0.17 <1",
+      "engine": ">=0.18 <1",
       "entries": {
         "engine": "./engine.js"
       },

@@ -235,7 +235,9 @@ narr: Where to?
 The parked line is an ordinary line: a tap ends it and play goes on below, so
 a map loops back to itself (the `[jump map]`) until a hotspot moves the
 playhead. A `[hotspot]`'s `if=` runs to the end of the tag, as a `[choice]`'s
-does.
+does; so does the `if=` every plugin command takes — a one-shot clickable sprite
+is `[sprite star @fx/star.png onclick="…" if=!seen_star]`, gone once the scene
+re-runs with `seen_star` set (see [commands.md](commands.md#plugin-commands)).
 
 **Keep clickable regions clear of the chrome.** The dialogue box, a `[ui.<id>]`
 panel and the HUD are drawn over the stage and take the click, so a hotspot
@@ -243,7 +245,9 @@ reaching under one is unreachable however right its coordinates look — and a
 test that drives the page with `element.click()` will never notice, because that
 bypasses hit testing. The engine probes each region's centre where it is
 declared and reports `hotspot "id": "…" covers its centre` when something else
-answers there. Check your own by hit-testing the point a player would aim at
+answers there; a clickable sprite gets the same probe when it appears or moves
+(`sprite "id": "…" covers its centre` — a character standing in front of a sprite
+on the `back` band counts). Check your own by hit-testing the point a player would aim at
 (`document.elementFromPoint`), not by clicking the element.
 
 ## Transitions

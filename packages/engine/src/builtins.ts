@@ -1,4 +1,5 @@
 import { evalExpr, truthy } from './expr.js'
+import { splitCondition } from './parser.js'
 import type { BuiltinContext, CommandContext } from './types.js'
 import type { SceneTransitionOpts, TransitionKind } from './renderer/types.js'
 
@@ -216,7 +217,7 @@ export const builtins: Record<string, BuiltinFn> = {
     const onclick = ctx.str('onclick')
     if (!first || !onclick) throw new Error('[hotspot] syntax: [hotspot <id> x= y= w= h= onclick="…" if=cond]')
     // `if=` runs to the end of the tag (spaces allowed), as a [choice]'s does.
-    const cond = tailCondition(ctx.raw)
+    const { cond } = splitCondition(ctx.raw)
     if (cond && !truthy(evalExpr(cond, ctx.engine.scope()))) {
       ctx.engine.stage.hideHotspot(first)
       return
@@ -355,12 +356,4 @@ export const builtins: Record<string, BuiltinFn> = {
   async title(ctx) {
     await ctx.engine.showTitle()
   },
-}
-
-/** The `if=` a tag ends with, unquoted — everything after `if=` to the tag's end. */
-function tailCondition(raw: string): string | undefined {
-  const m = /(?:^|\s)if=([\s\S]*)$/.exec(raw)
-  if (!m) return undefined
-  const v = m[1]!.trim()
-  return v.replace(/^"([\s\S]*)"$/, '$1').replace(/^'([\s\S]*)'$/, '$1')
 }

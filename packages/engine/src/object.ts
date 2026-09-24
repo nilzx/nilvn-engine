@@ -23,7 +23,8 @@ export function kindOf(objId: string): string {
 // channels (visible, face, layer, sprite frame) snap at the
 // keyframe time. Each reads / writes only through the scoped object handle.
 
-/** A continuous transform channel (x / y / scale / rotation / opacity). The
+/** A continuous transform channel (x / y / scale / rotation / opacity, and the
+ *  camera's colour grade). The
  *  descriptor coerces the value to a number (the "descriptor coerces" rule, like
  *  `visibleChannel`): the rAF player feeds numbers straight through, while a raw
  *  wire string (a loop's `entry` / `exit` pose, a hand-authored value) is parsed.
@@ -92,6 +93,19 @@ export const FULL_TRANSFORM_CHANNELS: RecordableProp[] = [
   visibleChannel,
 ]
 
+/** The camera's colour grade — six continuous numeric channels (hue in degrees,
+ *  invert / grayscale 0..1, saturate / brightness / contrast as multipliers). Only
+ *  the camera paints them (see `Transform`), so they are not standard channels a
+ *  plugin kind could name: a character's dim is its own CSS filter. */
+export const GRADE_CHANNELS: RecordableProp[] = [
+  transformChannel('hue', 'channel.hue'),
+  transformChannel('invert', 'channel.invert'),
+  transformChannel('saturate', 'channel.saturate'),
+  transformChannel('brightness', 'channel.brightness'),
+  transformChannel('contrast', 'channel.contrast'),
+  transformChannel('grayscale', 'channel.grayscale'),
+]
+
 /** The standard channels by id — what an {@link ObjectKindDecl} names instead of
  *  importing descriptors (a plugin declares `recordable: ['x', 'band']`). */
 export const STANDARD_CHANNELS: Record<StandardChannel, RecordableProp> = {
@@ -135,6 +149,7 @@ export const BUILTIN_KINDS: ObjectKind[] = [
       transformChannel('y', 'channel.y'),
       transformChannel('scale', 'channel.scale'),
       transformChannel('rotation', 'channel.rotation'),
+      ...GRADE_CHANNELS,
     ],
   },
   { id: 'screen', label: 'objectKind.screen', transformable: false },

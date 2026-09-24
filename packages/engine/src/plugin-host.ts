@@ -440,6 +440,14 @@ export class PluginHost {
     return this.commands.get(name)
   }
 
+  /** What a false `if=` does to a command (`contributes.commands[].ifFalse` in its
+   *  owner's manifest): `skip` (default) or `handle`. */
+  commandIfFalse(name: string): 'skip' | 'handle' {
+    const owner = this.commands.get(name)?.owner
+    const decl = owner ? this.recs.get(owner)?.manifest?.contributes?.commands?.find((c) => c.name === name) : undefined
+    return decl?.ifFalse === 'handle' ? 'handle' : 'skip'
+  }
+
   hasCommand(name: string): boolean {
     return this.commands.has(name)
   }

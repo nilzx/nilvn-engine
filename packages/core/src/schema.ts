@@ -54,6 +54,10 @@ export interface CommandSchema {
   hint?: string
   icon?: string
   params: ParamSchema[]
+  /** What a false trailing `if=` does (plugin commands): `skip` (default) — the
+   *  engine drops the tag; `handle` — the command still runs with `ctx.cond ===
+   *  false` and decides what "not present" means (a clickable sprite hides). */
+  ifFalse?: 'skip' | 'handle'
 }
 
 export interface TextEffectDef {

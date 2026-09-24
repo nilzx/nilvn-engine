@@ -162,6 +162,10 @@ export interface CommandContext {
   wait(sec: number): Promise<void>
   /** The owning plugin's capability context. */
   plugin: PluginContext
+  /** The tag's `if=`: `true` when it has none or it holds. A command only ever sees
+   *  `false` when its manifest declares `ifFalse: 'handle'` — otherwise a false
+   *  condition skips it. The `if=` itself never reaches `raw` / `args` / `params`. */
+  cond: boolean
 }
 
 /** The context the engine's own built-in commands run with: the plugin surface

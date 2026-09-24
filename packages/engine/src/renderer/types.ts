@@ -132,6 +132,19 @@ export interface Transform {
   visible: boolean
   /** Stacking order; null = auto/CSS default. */
   zIndex: number | null
+  /** Colour grade — honored by the camera only (other objects ignore these). Hue
+   *  shift in degrees (default 0). */
+  hue: number
+  /** Colour inversion 0..1 (default 0). */
+  invert: number
+  /** Saturation multiplier (default 1; 0 = greyscale, 2 = doubled). */
+  saturate: number
+  /** Brightness multiplier (default 1; 0 = black). */
+  brightness: number
+  /** Contrast multiplier (default 1). */
+  contrast: number
+  /** Greyscale amount 0..1 (default 0). */
+  grayscale: number
 }
 
 export type TransformProp = keyof Transform
@@ -327,6 +340,13 @@ export interface StageState {
     opacity?: number
     /** Whole-screen hide ([visibility target=screen]). */
     visible?: boolean
+    /** Colour grade (see `Transform`); each omitted at its identity. */
+    hue?: number
+    invert?: number
+    saturate?: number
+    brightness?: number
+    contrast?: number
+    grayscale?: number
   }
   /** A full-screen cover held over the stage. `[transout]` / `[fadeout]` hand the
    *  screen to the fader and it stays there until a reveal — through dialogue and

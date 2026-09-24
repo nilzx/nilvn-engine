@@ -131,6 +131,28 @@ function parseChoice(tokens: string[], inner: string, line: number) {
   return { text, textKey, target, cond, disabled }
 }
 
+/** Split a tag's trailing `if=` condition off its inner text. The condition runs
+ *  to the end of the tag (spaces, commas and quotes allowed — `if=has(s, "a b")`),
+ *  one pair of surrounding quotes is dropped, and an `if=` inside a quoted value
+ *  (`onclick="… if=…"`) is not a split point. `cond` is undefined when there is no
+ *  condition; `head` is the tag without it. */
+export function splitCondition(inner: string): { head: string; cond?: string } {
+  let quote: string | null = null
+  for (let i = 0; i < inner.length; i++) {
+    const ch = inner[i]!
+    if (quote) {
+      if (ch === quote) quote = null
+      continue
+    }
+    if (ch === '"' || ch === "'") quote = ch
+    else if (/\s/.test(ch) && inner.startsWith('if=', i + 1)) {
+      const cond = unquote(inner.slice(i + 4).trim())
+      return cond ? { head: inner.slice(0, i).trimEnd(), cond } : { head: inner.slice(0, i).trimEnd() }
+    }
+  }
+  return { head: inner }
+}
+
 /** Strip one pair of surrounding quotes. */
 function unquote(v: string): string {
   return v.replace(/^"([\s\S]*)"$/, '$1').replace(/^'([\s\S]*)'$/, '$1')

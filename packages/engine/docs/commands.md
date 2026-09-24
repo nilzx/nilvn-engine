@@ -37,7 +37,7 @@ Always available; they live in the engine itself.
 | `[preload ref …]` | `wait=false` | Warm assets ahead of a heavy scene; `wait=true` shows the loading page until they are in. |
 | `[ui show\|hide\|toggle id]` | | Show, hide or toggle a `[ui.<id>]` panel (see [config.md](config.md#uiid)). |
 | `[choices timer= default=]` | | The next prompt's countdown (seconds; `0` = none) and 1-based default, overriding the `[choices]` config for that prompt only. |
-| `[hotspot id x= y= w= h= onclick= if=]` | | A clickable region of the stage (percent of the stage, in the world so it pans with the camera) whose click runs `onclick` (script commands, one per line). `if=` runs to the end of the tag (spaces allowed — put it last); false leaves the hotspot out. `[hotspot remove id]` / `[hotspot clear]`. Saved with the stage. A region whose centre the dialogue box, a panel or the HUD covers is reported as a diagnostic — see [script-syntax.md](script-syntax.md#events). |
+| `[hotspot id x= y= w= h= onclick= if=]` | | A clickable region of the stage (percent of the stage, in the world so it pans with the camera) whose click runs `onclick` (script commands, one per line). `if=` runs to the end of the tag (spaces allowed — put it last); false leaves the hotspot out. `[hotspot remove id]` / `[hotspot clear]`. Saved with the stage. A region whose centre the dialogue box, a panel or the HUD covers is reported as a diagnostic — see [script-syntax.md](script-syntax.md#events); a clickable `[sprite … onclick=]` is probed the same way. |
 
 ### Stage
 
@@ -76,6 +76,19 @@ is active: `[use short-name]`, `[use app.nilvn.<short-name>]`, the config's
 registered; `[use ./x/plugin.json]` fetches one. An unknown command is a
 diagnostic and a no-op, never a stop.
 
+Every plugin command and every macro takes a trailing `if=condition`, with the
+same grammar as a `[choice]`'s and a `[hotspot]`'s: it runs to the end of the
+tag (spaces allowed — put it last). A false condition skips the tag. A command
+can instead declare that it handles a false condition itself — `[sprite … if=]`
+does, and takes the sprite off the stage, the way a false `[hotspot … if=]`
+leaves the region out. A condition that fails to evaluate is a diagnostic and
+counts as false.
+
+```text
+[glitch duration=0.4 if=chapter >= 3]
+[sprite star @fx/star.png onclick="set seen_star = true" if=!seen_star]
+```
+
 The first-party plugins (`textfx`, `screenfx`, `charfx`, `objectfx`,
 `spriteanim`, `choicefx`, `voicefx`, `animstudio`, `abreplay`, `menu`) and every
 command and parameter they add are documented with the plugins themselves:
@@ -86,7 +99,7 @@ command and parameter they add are documented with the plugins themselves:
 | Id | Kind | Notes |
 |---|---|---|
 | `screen` | screen | The whole picture: flashes, transitions. `target=screen` in object commands means the camera. |
-| `camera` | camera | Transformable: shake, zoom (`scale`), pan (`x` / `y`). |
+| `camera` | camera | Transformable: shake, zoom (`scale`), pan (`x` / `y`), and a colour grade (below). |
 | `character:<actor id>` | character | Transformable and bandable (`world` / `back` / `front`: `back` draws behind the characters, still under the camera; `front` over the dialogue box). |
 | `sprite:<id>` | sprite | Contributed by `spriteanim`; transformable and bandable. |
 | `window:dialog` | window | The dialogue box; reskinnable with `[window]`. |
@@ -95,3 +108,16 @@ The transform every transformable object honors: `x`, `y` (offsets, pixels or a
 percentage of the object's own box), `scale`, `rotation` (degrees), `opacity`,
 `visible`, `zIndex`. Plugins drive it through the stage capability
 (see [api.md](api.md#plugins-and-capabilities)).
+
+The camera also carries a colour grade over everything under it (backgrounds,
+characters, sprites — not the dialogue box): `hue` (degrees, default 0),
+`invert` and `grayscale` (0–1, default 0), and `saturate` / `brightness` /
+`contrast` (multipliers, default 1). They are ordinary numeric channels: they
+tween in `animate`, compose under `compose: 'offset'` (hue / invert / grayscale
+add, the multipliers multiply), record on the camera's event-frame tracks, and
+persist in saves. Other objects ignore them.
+
+```js
+// A colour flash on the whole picture, then back.
+await ctx.plugin.stage.animate('camera', [{ hue: 180, invert: 1 }, { hue: 0, invert: 0 }], { durationSec: 0.2 })
+```

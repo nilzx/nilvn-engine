@@ -49,7 +49,7 @@ export const VOLUME_FIELD: Record<VolumeChannel, 'bgmVolume' | 'ambienceVolume' 
   voice: 'voiceVolume',
 }
 import { evalExpr, truthy } from './expr.js'
-import { parseScript, parseSegments, parseTag } from './parser.js'
+import { parseScript, parseSegments, parseTag, splitCondition } from './parser.js'
 import { animate, DomRenderer, preloadImage } from './stage.js'
 import type { EditStage, StageState } from './stage.js'
 import type { ChoicePrompt, ChoiceView, CharLayer, CharOptions, SceneTransitionOpts, TransitionKind } from './renderer/types.js'
@@ -445,8 +445,10 @@ export class Engine {
   constructor(opts: EngineOptions) {
     this.stage = new DomRenderer(opts.container)
     this.stage.onAssetError = (what, url) => this.report({ phase: 'exec', message: `${what}: image failed to load — ${url}` }, true)
-    this.stage.onObstructed = (id, by) =>
-      this.report({ phase: 'exec', message: `hotspot "${id}": "${by}" covers its centre — a click there never reaches it` }, true)
+    this.stage.onObstructed = (objId, by) => {
+      const [kind, id] = objId.split(':', 2) as [string, string]
+      this.report({ phase: 'exec', message: `${kind} "${id}": "${by}" covers its centre — a click there never reaches it` }, true)
+    }
     this._textSpeed = opts.textSpeed ?? 40 // direct: no hooks before the plugin host exists
     this.baseUrl = opts.baseUrl ?? document.baseURI
     this.onEndCb = opts.onEnd
@@ -2877,7 +2879,7 @@ export class Engine {
   }
 
   /** The parsed-tag half every command context shares. */
-  private tagArgs(node: { name: string; args: string[]; params: Record<string, string>; raw: string }): Omit<CommandContext, 'plugin'> {
+  private tagArgs(node: { name: string; args: string[]; params: Record<string, string>; raw: string }): Omit<CommandContext, 'plugin' | 'cond'> {
     const { args, params } = node
     const pick = (key: string | number) => (typeof key === 'number' ? args[key] : params[key])
     return {
@@ -2905,23 +2907,51 @@ export class Engine {
    *  privileged root context. Never handed to a plugin. */
   private builtinContext(node: { name: string; args: string[]; params: Record<string, string>; raw: string }): BuiltinContext {
     this.rootCtx ??= this.host.rootContext()
-    return { ...this.tagArgs(node), plugin: this.rootCtx, engine: this, stage: this.stage, animate }
+    return { ...this.tagArgs(node), plugin: this.rootCtx, cond: true, engine: this, stage: this.stage, animate }
   }
 
   /** A plugin command runs with its owner's capability context only. */
-  private pluginCommandContext(node: { name: string; args: string[]; params: Record<string, string>; raw: string }, plugin: PluginContext): CommandContext {
-    return { ...this.tagArgs(node), plugin }
+  private pluginCommandContext(node: { name: string; args: string[]; params: Record<string, string>; raw: string }, plugin: PluginContext, cond = true): CommandContext {
+    return { ...this.tagArgs(node), plugin, cond }
   }
 
-  private async execCommand(node: CommandNode, depth = 0): Promise<void> {
+  /** The generic `if=` of a plugin command or macro tag: split off the tag's tail
+   *  (so the command never sees it as stray args / params) and evaluated. A broken
+   *  condition is a diagnostic and counts as false. Built-in commands keep their own
+   *  `if=` ([hotspot], [choice]) and never come through here. */
+  private tagCondition(node: CommandNode): { node: CommandNode; holds: boolean } {
+    const { head, cond } = splitCondition(node.raw)
+    if (cond === undefined) return { node, holds: true }
+    const stripped = parseTag(head, node.line) as CommandNode
+    let holds = false
+    try {
+      holds = truthy(evalExpr(cond, this.scope()))
+    } catch (err) {
+      this.report({ phase: 'exec', message: `[${node.name}] if=${cond}: ${errMsg(err)}`, line: node.line, node })
+    }
+    return { node: stripped, holds }
+  }
+
+  private async execCommand(input: CommandNode, depth = 0): Promise<void> {
+    let node = input
     const builtin = this.builtinCommands.get(node.name)
     // A plugin command; an `onCommand`-activated plugin wakes up on first use.
     const owned = builtin ? undefined : (this.host.command(node.name) ?? this.host.activateForCommand(node.name))
-    if (!builtin && !owned) {
-      if (this.macros[node.name] !== undefined) return this.execMacro(node, depth)
+    if (!builtin && !owned && this.macros[node.name] === undefined) {
       this.report({ phase: 'exec', message: `unknown command [${node.name}] — missing a [use ...] or macro?`, line: node.line, node }, true)
       return
     }
+    // A plugin command's / macro's `if=`: false skips the tag, unless the command
+    // declared `ifFalse: 'handle'` — then it runs with `ctx.cond === false` and
+    // decides what "not present" means (a sprite hides).
+    let cond = true
+    if (!builtin) {
+      const split = this.tagCondition(node)
+      node = split.node
+      cond = split.holds
+      if (!cond && (!owned || this.host.commandIfFalse(node.name) !== 'handle')) return
+    }
+    if (!builtin && !owned) return this.execMacro(node, depth)
     // A quarantined plugin's commands are no-ops (already reported at isolation).
     const owner = owned?.owner
     if (owner && this.host.isIsolated(owner)) return
@@ -2933,7 +2963,7 @@ export class Engine {
       else {
         const ctx = this.host.contextOf(owner!)
         if (!ctx) return
-        await owned!.value(this.pluginCommandContext(merged, ctx))
+        await owned!.value(this.pluginCommandContext(merged, ctx, cond))
       }
     } catch (err) {
       this.report({ phase: 'exec', message: `[${node.name}] failed: ${errMsg(err)}`, line: node.line, node, plugin: owner, error: err })

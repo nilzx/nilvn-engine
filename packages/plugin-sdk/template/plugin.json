@@ -3,7 +3,7 @@
   "name": "plugin.neon.name",
   "description": "plugin.neon.desc",
   "version": "1.0.0",
-  "engine": ">=0.17 <1",
+  "engine": ">=0.18 <1",
   "entries": {
     "engine": "./engine.js"
   },

@@ -5,6 +5,19 @@ three packages share one version and one `engine-v*` tag. Entries before the
 repository was split out of the NilVN monorepo (September 2026) are condensed
 from its history.
 
+## 0.18.0 — 2026-09-24
+
+### Added
+
+- A colour grade on the camera: six numeric channels — `hue` (degrees), `invert` and `grayscale` (0–1), `saturate` / `brightness` / `contrast` (multipliers) — composed into one CSS `filter` over everything under the camera. They work through `setProp` / `animate` (tweening; under `compose: 'offset'` hue / invert / grayscale add and the multipliers multiply), record on the camera's event-frame tracks and persist in saves (`StageState.camera`). Other objects ignore them.
+- A trailing `if=condition` on every plugin command and macro, with the `[choice]` / `[hotspot]` grammar (runs to the end of the tag). The engine splits it off before dispatch — the command never sees it in `raw` / `args` / `params` — and a false condition skips the tag and its `onCommand` hook; a condition that fails to evaluate is a diagnostic and counts as false. A command whose `CommandSchema` declares `ifFalse: 'handle'` runs anyway with the new `CommandContext.cond === false` and decides what "not present" means.
+- A clickable sprite (`onclick`) is probed for reachability like a `[hotspot]`, when it appears or moves: `sprite "id": "…" covers its centre`.
+- `plugin-spec.json` documents `CommandContext.cond` and `CommandSchema.ifFalse`.
+
+### Changed
+
+- `DomRenderer.onObstructed` receives the object id (`hotspot:<id>` / `sprite:<id>`) instead of the bare hotspot id. The engine's diagnostic text for hotspots is unchanged.
+
 ## 0.17.1 — 2026-09-22
 
 ### Added
