@@ -7,8 +7,8 @@ import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { ENGINE_VERSION } from '@nilvn/engine'
-import { buildPluginSpec, PLUGIN_SPEC_VERSION } from '../src/spec'
+import { ENGINE_VERSION, createEngine, type EnginePlugin, type PluginContext, type StageObjectHandle } from '@nilvn/engine'
+import { buildPluginSpec, PLUGIN_SPEC_VERSION, signaturesMarkdown } from '../src/spec'
 import { validatePluginManifest, type PluginManifest } from '../src/index'
 
 const pkg = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -53,5 +53,37 @@ describe('plugin-spec', () => {
     expect(read('template/engine.js')).toBe(spec.example.engineModule)
     // The template's stylesheet exists under the name the manifest lists.
     for (const s of spec.example.manifest.styles ?? []) expect(read(join('template', s)).length).toBeGreaterThan(0)
+  })
+
+  it("the README's Signatures section is the generated one", () => {
+    const readme = read('README.md')
+    const body = readme.slice(readme.indexOf('\n', readme.indexOf('<!-- signatures:start')) + 1, readme.indexOf('<!-- signatures:end -->'))
+    expect(body).toBe(signaturesMarkdown() + '\n')
+  })
+
+  it('every stage verb has a signature, and the engine grants exactly the listed verbs', async () => {
+    const documented = new Set(spec.runtime.signatures.filter((f) => f.name.startsWith('stage.')).flatMap((f) => f.name.slice('stage.'.length).split(' / ')))
+    const listed = [...spec.runtime.capabilities['stage.write']!, ...spec.runtime.capabilities['stage.read']!]
+    for (const verb of listed) expect(documented, verb).toContain(verb)
+    // …and the live engine hands a plugin exactly those verbs, and an effect those handle members.
+    let stage: object | undefined
+    let handle: StageObjectHandle | undefined
+    const probe: EnginePlugin = {
+      id: 'com.x.probe',
+      permissions: ['stage.write', 'stage.read'],
+      activate: (ctx: PluginContext) => void (stage = ctx.stage),
+      effects: { peek: { appliesToKinds: ['camera'], apply: (h: StageObjectHandle) => void (handle = h) } },
+    }
+    const container = document.createElement('div')
+    document.body.append(container)
+    const engine = createEngine({ container, plugins: [probe] })
+    engine.loadSource('narr: x\n')
+    await engine.prepare()
+    await engine.applyEffect('peek', 'camera', {})
+    expect(new Set(Object.keys(stage!))).toEqual(new Set(listed))
+    const members = spec.runtime.signatures.find((f) => f.name === 'effect handle')!.type.replace(/\([^)]*\)/g, '').split(', ')
+    const actual = [...Object.getOwnPropertyNames(handle!), ...Object.getOwnPropertyNames(Object.getPrototypeOf(handle!))].filter((k) => k !== 'constructor')
+    expect(new Set(actual)).toEqual(new Set(members))
+    engine.destroy()
   })
 })

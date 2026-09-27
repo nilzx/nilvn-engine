@@ -1,6 +1,6 @@
 {
   "name": "@nilvn/plugin-sdk",
-  "version": "0.18.0",
+  "version": "0.19.0",
   "type": "module",
   "description": "NilVN plugin SDK — manifest types and validator, extension-point / permission catalogs, runtime plugin types, a package template and the generated plugin-spec.json contract",
   "license": "MIT",
@@ -43,7 +43,8 @@
     "build": "tsc -p tsconfig.lib.json",
     "prepack": "pnpm build && pnpm spec:check",
     "spec:gen": "tsx scripts/gen-spec.ts",
-    "spec:check": "tsx scripts/gen-spec.ts --check"
+    "spec:check": "tsx scripts/gen-spec.ts --check",
+    "examples:pack": "tsx examples/pack.ts"
   },
   "dependencies": {
     "@nilvn/core": "workspace:^"

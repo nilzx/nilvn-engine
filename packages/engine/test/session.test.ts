@@ -114,7 +114,7 @@ describe('session state machine', () => {
     expect(engine.stage.chrome.currentScreen()).toBe('title')
   })
 
-  it('a restore and a restart re-enter playing; destroy ends in idle', async () => {
+  it('a restore and a restart re-enter playing (each an announced session entry); destroy ends in idle', async () => {
     const seen: string[] = []
     const engine = createEngine({ container: container(), onSessionChange: (s) => seen.push(s) })
     engine.loadSource('[label s]\nyuki: hi\n')
@@ -129,7 +129,7 @@ describe('session state machine', () => {
     expect(engine.session).toBe('playing')
     engine.destroy()
     expect(engine.session).toBe('idle')
-    expect(seen).toEqual(['playing', 'title', 'playing', 'idle'])
+    expect(seen).toEqual(['playing', 'title', 'playing', 'playing', 'idle']) // the restart is an entry too
   })
 
   it('the chrome seam records one screen at a time', () => {
@@ -173,13 +173,14 @@ describe('session hooks', () => {
     void engine.start()
     await tick()
     ctxRef!.vars!.set('y', 2)
-    expect(log).toEqual(['x=1', 'y=2'])
+    expect(log).toEqual(['x=1', 'test.vars.y=2']) // a plugin's variable lives under its namespace
     const save = engine.saveState()
     log.length = 0
     await engine.restoreState(save)
     await tick()
     expect(log).toEqual([]) // the table came back wholesale — no per-var events (play resumes at the parked line)
-    expect(ctxRef!.vars!.all()).toMatchObject({ x: 1, y: 2 }) // plus the engine's own sys.* lists
+    expect(ctxRef!.vars!.all()).toEqual({ y: 2 }) // its own namespace only
+    expect(ctxRef!.vars!.global('x')).toBe(1)
     engine.destroy()
   })
 

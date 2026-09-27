@@ -86,13 +86,13 @@ slotsPerPage = 10
 
 [menu]                      # the in-game system menu (☰ / Esc)
 entry = "top-right"
-items = ["save", "load", "quicksave", "quickload", "backlog", "auto", "skip", "settings", "replays", "title", "restart"]
+items = ["save", "load", "quicksave", "quickload", "backlog", "plugins", "auto", "skip", "settings", "replays", "title", "restart"]
 
 [settings]                  # the settings panel + player defaults
 autoDelay = 1.5
 skipMode = "read"
 textSpeedRange = [10, 100]  # the text-speed slider, chars per second; its top notch is "instant"
-show = ["textSpeed", "autoDelay", "skipMode", "volumes", "language", "fullscreen", "dialogOpacity", "uiScale"]
+show = ["textSpeed", "autoDelay", "skipMode", "volumes", "language", "fullscreen", "dialogOpacity", "uiScale", "keys"]
 
 [keys]                      # keyboard bindings (KeyboardEvent.key names; false unbinds)
 auto = "a"
@@ -100,6 +100,9 @@ skip = "Tab"
 quicksave = "F5"
 quickload = "F9"
 backlog = "l"
+
+[keys."com.example.weather"]  # a plugin's key bindings (contributes.keybindings), by id
+toggle = "w"
 
 [strings.zh]                # chrome string overrides, per language
 "ui.title.new" = "开始"
@@ -120,6 +123,7 @@ or off its list — `CONFIG_SCHEMA` in `@nilvn/engine` is the schema
 | `title` | string | Sets `document.title`. |
 | `entry` | string | Script `start()` auto-loads when no script or package was loaded explicitly. Relative to the config file. |
 | `textSpeed` | number | Typewriter speed in characters per second (default 40). |
+| `lang` *(since 0.19.0)* | string | The work's starting language, content and chrome (`"zh"` for a work written in Chinese). Used when the host passes no `lang` to `createEngine`; it is also the fallback and the only language unless the host set `defaultLang` / `languages`. A language the player picked in the settings still wins. A script package carries its language in `nilvn.json`, so this key is ignored there. |
 
 `defaultLang` sets the fallback content language (as `createEngine({ defaultLang })`).
 `scripts = ["intro.nvn", "day1.nvn"]` plays several files in order as chunks —
@@ -130,14 +134,14 @@ labels global, list-order fall-through, saves addressing the file (see
 
 | Key | Type | Effect |
 |---|---|---|
-| `use` | string[] | Plugins to activate at `start()`. Same entries as the script's `[use …]`: host-registered ids (or the short names of `app.nilvn.*` ones), `…/plugin.json` packages, bare `.js` modules. |
+| `use` | string[] | Plugins to activate at `start()`. Same entries as the script's `[use …]`: ids the host registered (or the short names of `app.nilvn.*` ones), `…/plugin.json` packages, bare `.js` modules. A third-party plugin by id works only once the host registered it; otherwise name its `plugin.json`. (In a script package, `nilvn.json` `plugins` replaces `use`.) |
 
 A sub-table per plugin holds its settings — the keys its manifest declares under
 `contributes.config`:
 
 ```toml
 [plugins]
-use = ["textfx", "voicefx", "com.example.weather"]
+use = ["textfx", "voicefx", "./plugins/weather/plugin.json"]
 
 [plugins.voicefx]                  # a first-party plugin by short name
 level = 0.6
@@ -145,11 +149,15 @@ wobble = 0.1
 
 [plugins."com.example.weather"]    # a third-party plugin by its full id
 intensity = 0.8
+
+[plugins."com.example.achievements"]
+list = ["prologue", "true_end"]     # a list setting is an array
 ```
 
 Values are coerced to the declared type (numbers clamped to `min` / `max`, an
-enum outside its options falls back to the default); a key the plugin does not
-declare is one diagnostic. Fields the plugin marks `scope = "player"` also appear
+enum outside its options falls back to the default, a `list` setting *(since 0.19.0)*
+takes an array of strings or numbers); a key the plugin does not declare is one
+diagnostic. Fields the plugin marks `scope = "player"` also appear
 in the game's settings panel, where the player's value overrides the author's and
 persists per work. The runtime equivalent is `createEngine({ pluginConfig })` /
 `engine.setPluginConfig(id, patch)`.
@@ -157,7 +165,9 @@ persists per work. The runtime equivalent is `createEngine({ pluginConfig })` /
 ### `[path]`
 
 A table of prefix → path. `"@bg" = "assets/bg"` lets a script write
-`@bg/street.svg`. Equivalent to `[alias @bg assets/bg]` in the script.
+`@bg/street.svg`. Equivalent to `[alias @bg assets/bg]` in the script. A
+[script package](script-package.md) keeps the table *(since 0.19.0)*: the
+aliases expand onto the package's asset refs.
 
 ### `[actors.<id>]`
 
@@ -273,8 +283,10 @@ the `[game] title` and a New-game button.
 | `logo` | path | An image above the heading. |
 | `logoWidth` | CSS length | The logo's width (`"40cqw"`; a number = px). Without it the image keeps its size, capped at 70% of the stage's width and 34% of its height. |
 | `background` | path or CSS | An image path, or a colour / gradient (`"#0b1c2e"`, `"linear-gradient(…)"`). |
+| `color` *(since 0.19.0)* | CSS colour | The heading and subtitle colour — for a light background. The buttons keep the `button-*` tokens. |
+| `shadow` *(since 0.19.0)* | CSS `text-shadow` | The heading's shadow; `"none"` for none. The default dark shadow blurs a dark `color` — pair a dark `color` with `"none"` or a light shadow. Default: the theme's `screen-heading-shadow`. |
 | `bgm`, `bgmVolume` | path, 0..1 | Music while the page is up (stopped when the story starts). |
-| `buttons` | string[] | Ids in order: `new`, `continue` (shown only when an autosave exists); `load` / `settings` once those screens exist. Default `["new", "continue"]`. Unknown ids are reported. |
+| `buttons` | string[] | Ids in order: `new`, `continue` (shown only when an autosave exists); `load` / `settings` once those screens exist; `ui:<id>` opens a panel; a plugin's button by `<plugin>:<item>` (the plugin's full id or its id's last segment, `album:open`), and `plugins` for the plugins' buttons the list does not name — without it they follow the list *(since 0.19.0)*. Default `["new", "continue"]`. Unknown ids are reported. |
 | `layout` | `center` \| `left` \| `right` \| `bottom` | Where the block sits. |
 | `version` | boolean | Show the tool version (`buildInfo`) in a corner. Default on when known. |
 
@@ -289,6 +301,8 @@ with no table still gets a page (the chrome's "The End" and the two buttons).
 | `enabled` | boolean | `false` = no page for this ending (the session still enters `ending`). |
 | `heading`, `subtitle` | string | Text (`@key` ok). Default heading: the chrome string `ui.ending.title`. |
 | `background` | path or CSS | As for `[title]`. |
+| `color` *(since 0.19.0)* | CSS colour | The heading, subtitle and credits colour — for a light CG. |
+| `shadow` *(since 0.19.0)* | CSS `text-shadow` | The heading's shadow; `"none"` for none. The default dark shadow blurs a dark `color` — pair a dark `color` with `"none"` or a light shadow. Default: the theme's `screen-heading-shadow`. |
 | `bgm`, `bgmVolume` | | Music for the page. |
 | `credits` | string | Rolling credits: a multi-line string (or an array of lines), one entry per line, `@key` per line ok. |
 | `creditsDuration` | seconds | How long the roll takes (default from the line count). |
@@ -296,10 +310,11 @@ with no table still gets a page (the chrome's "The End" and the two buttons).
 | `buttons` | boolean | `false` hides Back-to-title / Play-again. |
 
 The page draws with the panel tokens, so a light `background` needs a text
-colour to go with it. There is no key for that here — set it from the script on
-the line before the ending (`[theme panel-color=#20160c button-color=#20160c]`).
-It goes with the rest of the script layer when the session resets, so
-`after = "title"` does not carry the ending's colours onto the title page.
+colour to go with it: `color` sets the text. The buttons keep the `button-*`
+tokens; to recolour them for one ending, set them from the script on the line
+before it (`[theme button-color=#20160c]`) — that goes with the rest of the
+script layer when the session resets, so `after = "title"` does not carry the
+ending's colours onto the title page.
 
 ### `[saves]`
 
@@ -323,7 +338,7 @@ actions, each backed by a full-stage screen. It exists without any plugin.
 |---|---|---|
 | `enabled` | boolean | `false` = no menu; a host draws its own over `engine.saveSlot()` / `quickSave()` / `setAuto()` … |
 | `entry` | `top-right` (default) \| `top-left` \| `bottom-right` \| `bottom-left` \| `hidden` | Where the ☰ sits; `hidden` keeps Esc and the wheel gesture only. |
-| `items` | string[] | Ids in order: `save`, `load`, `quicksave`, `quickload`, `backlog`, `auto`, `skip`, `settings`, `replays` (shown when the work declares segments), `title`, `restart`. Default: all. Unknown ids are reported. |
+| `items` | string[] | Ids in order: `save`, `load`, `quicksave`, `quickload`, `backlog`, `auto`, `skip`, `settings`, `replays` (shown when the work declares segments — a gallery of their pictures), `title`, `restart`; `ui:<id>` toggles a panel. A plugin's entry by `<plugin>:<item>` (the plugin's full id or its id's last segment, `journal:open`) sits where it is listed, and `plugins` marks where the plugins' entries the list does not name go — without it they follow the list *(since 0.19.0)*. Default: all, with `plugins` after `backlog`. Unknown ids are reported, as is a plugin entry no active plugin contributes. |
 | `wheelBacklog` | boolean | Wheel-up over the stage opens the backlog (default true). |
 
 Back-to-title and Restart ask through the engine's own confirm box (never the
@@ -341,7 +356,7 @@ persisted per work and restored on the next visit.
 |---|---|---|
 | `autoDelay` | seconds | Auto mode's pause after each line (plus a little per character; never before a voice clip ends). Default 1.5. |
 | `skipMode` | `read` (default) \| `all` | What skip passes: lines seen before (skip ends at the first unread one) or everything. Holding **Ctrl** skips while held. Both modes stop at a choice. |
-| `show` | string[] | Rows in order: `textSpeed`, `autoDelay`, `skipMode`, `volumes` (music / ambience / SFX / voice), `language` (when the work ships more than one), `fullscreen`, `dialogOpacity`, `uiScale`. Default: all. |
+| `show` | string[] | Rows in order: `textSpeed`, `autoDelay`, `skipMode`, `volumes` (music / ambience / SFX / voice), `language` (when the work ships more than one), `fullscreen`, `dialogOpacity`, `uiScale`, `keys` (the key list the player can rebind, after the plugin settings). Default: all. |
 | `textSpeedRange` | `[min, max]` cps | The text-speed slider: linear in characters per second from `min` to `max` (default `[10, 100]`); the notch past `max` is **instant** (`textSpeed = 0`). |
 
 ### `[keys]`
@@ -368,6 +383,18 @@ that draws its own chrome — `[menu] enabled = false`, `screens.menu = false` �
 binds its own keys over the engine API). A bound key is consumed (`F5` does not
 reload the page, `Tab` does not move focus), and every binding is ignored while
 a text field has focus.
+
+Plugins add their own bindings (`contributes.keybindings`) to the same table.
+Give one a different default with a table named after the plugin's id (a
+first-party `app.nilvn.*` plugin also answers to its short name) —
+`[keys."com.example.weather"] toggle = "w"`, the same naming as `[plugins.<id>]`. A plugin binding whose key is already
+taken (by an action above or an earlier plugin) stays unbound and is reported.
+
+The player can rebind everything except `menu` in the settings screen (the
+`keys` row): click a binding, press the new key (Esc cancels, Backspace
+clears). A key the player assigns is taken away from whichever binding held it,
+and "Reset keys" returns to the config's bindings. The player's keys persist per
+work with the other settings.
 
 ### `[ui.<id>]`
 
@@ -437,7 +464,7 @@ The page draws a bar over `progress-bg` / `progress-color`; plugins hear
 ### `[choices]`
 
 The choices prompt. Layout and behaviour keys are read directly; the look keys
-map onto `choice-*` theme tokens (config.ts `choicesTheme`).
+map onto `choice-*` theme tokens (`choicesTheme(cfg, resolve)`, exported, applies the same mapping).
 
 ```toml
 [choices]
@@ -448,7 +475,8 @@ width = "30cqw"            # choice-width (each button's minimum width)
 gap = "2cqh"               # choices-gap
 skin = "@ui/btn.png"       # choice-skin; with slice = 12 a nine-slice (choice-skin-slice)
 slice = 12
-chosenStyle = "dim"        # none | dim — options taken in an earlier run (sys.chosen)
+chosenStyle = "dim"        # none | dim | mark — options taken in an earlier run (sys.chosen)
+chosenMark = "✓"           # mark's badge (choice-chosen-mark)
 timer = 8                  # seconds before the prompt picks timerDefault by itself
 timerDefault = 1           # counted from 1 among the shown options (default: the first enabled one)
 ```
@@ -462,7 +490,8 @@ config values are the default for every other prompt.
 | `skin` (+ `slice`, `sliceWidth`) | `choice-skin` / `choice-skin-slice`; a skin also clears `choice-bg` and `choice-border` unless they are given. |
 | `background` / `border` / `radius` / `color` / `size` / `hover` | `choice-bg` / `choice-border` / `choice-radius` / `choice-color` / `choice-size` / `choice-hover` |
 | `width` / `gap` | `choice-width` / `choices-gap` |
-| `chosenBackground` / `chosenColor` | `choice-chosen-bg` / `choice-chosen-color` |
+| `chosenBackground` / `chosenColor` | `choice-chosen-bg` / `choice-chosen-color` (`chosenStyle = "dim"`) |
+| `chosenMark` | `choice-chosen-mark`: the badge `chosenStyle = "mark"` adds after such an option, which otherwise keeps its usual look — plain text, quoted for you. *(since 0.19.0)* |
 | `disabledBackground` / `disabledColor` | `choice-disabled-bg` / `choice-disabled-color` |
 | `timerBackground` / `timerColor` | `choice-timer-bg` / `choice-timer-color` |
 
@@ -494,6 +523,8 @@ position = "center"        # center | top | bottom
 ok = "@ui.input.ok"        # button labels (@key or literal); default: the chrome's OK / Cancel
 cancel = "@ui.input.cancel"
 fieldSize = "3.4cqh"       # the text field: fieldBackground / fieldColor / fieldBorder / fieldRadius / fieldSize
+promptColor = "#2b2118"    # the prompt text, e.g. on a light paper skin
+buttonColor = "#2b2118"    # the Cancel button (buttonBackground too); OK keeps the button-on look
 ```
 
 | Key | Token |
@@ -501,6 +532,7 @@ fieldSize = "3.4cqh"       # the text field: fieldBackground / fieldColor / fiel
 | `skin` (+ `slice`, `sliceWidth`) | `input-box-skin` / `input-box-skin-slice`; a skin also clears `input-box-bg` and `input-box-border` unless they are given. |
 | `background` / `border` / `radius` | `input-box-bg` / `input-box-border` / `input-box-radius` |
 | `fieldBackground` / `fieldColor` / `fieldBorder` / `fieldRadius` / `fieldSize` | `input-bg` / `input-color` / `input-border` / `input-radius` / `input-size` |
+| `promptColor` / `buttonBackground` / `buttonColor` *(since 0.19.0)* | `input-prompt-color` / `input-button-bg` / `input-button-color` (default: the panel text and the ordinary button look) |
 
 The two buttons sit in one row, **Cancel first, then OK**; OK stays disabled
 while `pattern` does not match what is typed.
@@ -560,6 +592,10 @@ override for the current language wins, then `en`, then the engine's catalog.
 | `ui.settings.uiScale` | Text size |
 | `ui.settings.on` | On |
 | `ui.settings.off` | Off |
+| `ui.settings.keys` | Keys |
+| `ui.keys.press` | Press a key… (Esc cancels, Backspace clears) |
+| `ui.keys.reset` | Reset keys |
+| `ui.keys.<action>` | The action names in the key list: Advance, Menu, Skip while held, Skip, Auto, Quick save, Quick load, Backlog, Save, Load, Settings, Fullscreen |
 | `ui.saves.autoSlot` | Auto |
 | `ui.saves.quickSlot` | Quick |
 | `ui.saves.empty` | Empty |
@@ -573,6 +609,7 @@ override for the current language wins, then `en`, then the engine's catalog.
 | `ui.backlog.empty` | No dialogue yet |
 | `ui.backlog.playVoice` | Play voice |
 | `ui.replays.locked` | Locked — reach this part of the story first |
+| `ui.replays.lockedShort` | Locked |
 | `ui.msg.restartConfirm` | Restart? Unsaved progress will be lost. |
 | `ui.msg.toTitleConfirm` | Back to the title? Unsaved progress will be lost. |
 | `ui.dialog.ok` | OK |
@@ -583,11 +620,12 @@ override for the current language wins, then `en`, then the engine's catalog.
 
 ## Languages
 
-The config file declares no languages: content catalogs are runtime data. Pass
-them to `createEngine({ catalogs, lang, defaultLang, languages })`, or play a
-[script package](script-package.md), which carries them. The repository's
-`bundle.mjs` reads an optional `catalogs.json` next to the config and injects it
-this way.
+The config file declares no catalogs: content catalogs are runtime data. A work
+written in one language other than English only needs `[game] lang` (above). For
+several, pass the catalogs to `createEngine({ catalogs, lang, defaultLang, languages })`, or play a
+[script package](script-package.md), which carries them: `nilvn pack` reads a
+`catalogs.json` beside the config (`{ "<lang>": { "<key>": "<text>" } }`) into
+the package.
 
 ## Reading the config at runtime
 

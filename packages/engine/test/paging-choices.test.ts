@@ -152,6 +152,23 @@ describe('choices: disabled, chosen, layout, timer', () => {
     d.destroy()
   })
 
+  it('chosenStyle = "mark" keeps the usual look and adds the chosen-mark badge; chosenMark sets its text', async () => {
+    const store = new MemorySaveStore()
+    await store.set(GLOBALS_KEY, { v: 1, vars: { 'sys.chosen': ['b'] } } satisfies GlobalsPayload)
+    const e = engineWith({}, store)
+    applyConfig(e, { choices: { chosenStyle: 'mark', chosenMark: 'seen "1"' } })
+    expect(e.theme['choice-chosen-mark']).toBe('"seen \\"1\\""')
+    e.loadSource('[choice A -> a]\n[choice B -> b]\n[label a]\n[label b]\n')
+    void e.start()
+    await until(() => buttons(e).length === 2)
+    expect(buttons(e).map((b) => [b.classList.contains('chosen'), b.classList.contains('marked')])).toEqual([
+      [false, false],
+      [false, true],
+    ])
+    expect(e.diagnostics).toEqual([])
+    e.destroy()
+  })
+
   it('the [choices] section sets position / layout classes, tokens and the skin; unknown keys are reported', async () => {
     const e = engineWith()
     applyConfig(e, { choices: { position: 'bottom', layout: 'grid', columns: 3, width: '30cqw', skin: '@ui/btn.png', slice: 12, chosenColor: '#888888', bogus: 1, timer: -1 } as never })

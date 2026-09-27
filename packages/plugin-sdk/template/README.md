@@ -18,7 +18,7 @@ Validate the manifest before shipping:
 
 ```js
 import { validatePluginManifest } from '@nilvn/plugin-sdk'
-const { errors, warnings } = validatePluginManifest(manifest, { engineVersion: '0.14.0' })
+const { errors, warnings } = validatePluginManifest(manifest, { engineVersion: '0.19.0' })
 ```
 
 Full contract: the [`@nilvn/plugin-sdk` README](../README.md) (prose) and

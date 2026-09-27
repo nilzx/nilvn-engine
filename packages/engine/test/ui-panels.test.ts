@@ -166,18 +166,45 @@ describe('hotspots and clickable sprites', () => {
     const hs = e.stage.root.querySelector<HTMLElement>('.nilvn-hotspot[data-id="shop"]')!
     expect(hs.style.cssText).toContain('left: 10%')
     expect(hs.style.width).toBe('25%')
-    expect(e.stage.root.querySelector('.nilvn-hotspot[data-id="gone"]')).toBeNull()
+    const gone = e.stage.root.querySelector<HTMLElement>('.nilvn-hotspot[data-id="gone"]')!
+    expect(gone.hidden).toBe(true) // declared, off while day > 1 is false
     const save = e.saveState()
-    expect(save.stage.hotspots).toEqual([{ id: 'shop', x: 10, y: 20, w: 25, h: 30, onclick: 'set visited = 1' }])
+    expect(save.stage.hotspots).toEqual([
+      { id: 'shop', x: 10, y: 20, w: 25, h: 30, onclick: 'set visited = 1' },
+      { id: 'gone', x: 0, y: 0, w: 5, h: 5, onclick: 'set x = 1', if: 'day > 1' },
+    ])
     hs.click()
     await until(() => e.vars.visited === 1)
     expect(text(e)).toBe('map') // no playhead move: still parked
     e.stage.root.click()
     await until(() => text(e) === 'gone')
-    expect(e.stage.root.querySelector('.nilvn-hotspot')).toBeNull()
+    expect(e.stage.root.querySelector('.nilvn-hotspot[data-id="shop"]')).toBeNull()
     expect(await e.restoreState(save)).toBe(true)
     await until(() => text(e) === 'map')
     expect(e.stage.root.querySelector('.nilvn-hotspot[data-id="shop"]')).not.toBeNull()
+    e.destroy()
+  })
+
+  it('[hotspot] if= follows the variables: a one-shot region turns off after its click, and a restore re-evaluates', async () => {
+    const e = engineWith()
+    e.loadSource('[set got = 0]\n[set day = 1]\n[hotspot key x=10 y=10 w=10 h=10 onclick="set got = got + 1" if=got == 0]\n[hotspot door x=40 y=10 w=10 h=10 onclick="set x = 1" if=day >= 2]\n[hotspot bad x=70 y=10 w=10 h=10 onclick="set y = 1" if=nosuch(1)]\nnarr: map\n')
+    void e.start()
+    await until(() => text(e) === 'map')
+    const el = (id: string): HTMLElement => e.stage.root.querySelector<HTMLElement>(`.nilvn-hotspot[data-id="${id}"]`)!
+    expect([el('key').hidden, el('door').hidden, el('bad').hidden]).toEqual([false, true, true])
+    const save = e.saveState()
+    el('key').click()
+    await until(() => e.vars.got === 1)
+    expect(el('key').hidden).toBe(true) // the click's own [set] turned it off
+    el('key').click()
+    await tick(10)
+    expect(e.vars.got).toBe(1)
+    e.setVar('day', 2)
+    expect(el('door').hidden).toBe(false)
+    expect(await e.restoreState(save)).toBe(true)
+    await until(() => text(e) === 'map')
+    expect([el('key').hidden, el('door').hidden]).toEqual([false, true])
+    expect(e.diagnostics.filter((d) => d.message.includes('if=nosuch(1)'))).toHaveLength(1)
     e.destroy()
   })
 

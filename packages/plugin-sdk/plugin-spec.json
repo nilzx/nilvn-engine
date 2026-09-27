@@ -7,9 +7,9 @@
     "guide": "packages/plugin-sdk/README.md",
     "commands": "packages/engine/docs/commands.md",
     "engineApi": "packages/engine/docs/api.md",
-    "engineTypes": "packages/engine/src/types.ts",
-    "coreManifest": "packages/core/src/plugin-manifest.ts",
-    "sdk": "packages/plugin-sdk/src/index.ts",
+    "engineTypes": "@nilvn/engine type declarations (PluginContext, the capability interfaces, EngineHooks)",
+    "coreManifest": "@nilvn/core type declarations (PluginManifest, PluginContributions)",
+    "sdk": "@nilvn/plugin-sdk exports (README \"Exports\")",
     "template": "packages/plugin-sdk/template/",
     "firstPartyPlugins": "https://github.com/nilzx/nilvn-plugins"
   },
@@ -26,7 +26,7 @@
       {
         "name": "name",
         "type": "string",
-        "desc": "Display name as an i18n id resolved through `messages` (plugin.<slug>.name).",
+        "desc": "Display name as an i18n id resolved through `messages` (plugin.<slug>.name; slug = the last id segment by convention — a plugin’s messages are its own, so two plugins never clash).",
         "required": true
       },
       {
@@ -96,6 +96,12 @@
         "required": false
       },
       {
+        "name": "assets",
+        "type": "string[]",
+        "desc": "Resource files relative to plugin.json (no \"..\"): the complete list an exporter copies, and the only paths ctx.asset() resolves.",
+        "required": false
+      },
+      {
         "name": "messages",
         "type": "{ [lang]: { [id]: text } }",
         "desc": "The plugin’s own UI-chrome strings; `ctx.t(id)` resolves them in the work language.",
@@ -147,8 +153,14 @@
       },
       {
         "name": "saveSlice",
-        "type": "boolean",
-        "desc": "The plugin owns a SaveState.ext[id] slice (needs the save.slice permission).",
+        "type": "boolean | { version }",
+        "desc": "The plugin owns a SaveState.ext[id] slice (needs the save.slice permission); version = the slice shape version (default 1), equal to the module stateVersion.",
+        "required": false
+      },
+      {
+        "name": "keybindings",
+        "type": "{ id, default, label?, when? }[]",
+        "desc": "Keys in the engine's key table (needs input.keys): default in the [keys] format ('w', 'Ctrl+S', a list, false); when = playing (default) | always. A default already bound elsewhere stays unbound with a diagnostic; the author moves it with [keys.<short name or id>] <id> = …, the player in the settings screen.",
         "required": false
       },
       {
@@ -184,13 +196,13 @@
       {
         "name": "config",
         "type": "ConfigFieldSchema[]",
-        "desc": "Plugin settings: { key, type, default, label, options?, min?, max?, step?, scope? }. The author sets them in the config file’s [plugins.<id>] table (short first-party names work) or the studio; the plugin reads ctx.config.get(key). scope = \"player\" rows also appear in the in-game settings panel and persist per work (the author’s value is the default). Unknown author keys are one diagnostic.",
+        "desc": "Plugin settings: { key, type, default, label, options?, items?, min?, max?, step?, scope? } (type list = a TOML array, author scope only). The author sets them in the config file’s [plugins.<id>] table (short first-party names work) or the studio; the plugin reads ctx.config.get(key). scope = \"player\" rows also appear in the in-game settings panel and persist per work (the author’s value is the default). Unknown author keys are one diagnostic.",
         "required": false
       },
       {
         "name": "menuItems",
         "type": "MenuItemDef[]",
-        "desc": "{ id, label (i18n id), when?: playing | always } — entries in the in-game system menu; the module wires each with ctx.screen.menuItem(id, onSelect) (needs ui.screen).",
+        "desc": "{ id, label (i18n id) } — entries in the in-game system menu, shown while playing; the module wires each with ctx.screen.menuItem(id, onSelect) (needs ui.screen).",
         "required": false
       },
       {
@@ -209,6 +221,18 @@
         "name": "actorFields",
         "type": "ActorFieldDef[]",
         "desc": "{ key, type, label? } — fields an actor declaration may carry for this plugin ([actors.<id>] key = … / [actor id key=…]); the engine files them under the actor’s ext[pluginId] and the plugin reads ctx.actorField(actorId, key).",
+        "required": false
+      },
+      {
+        "name": "services",
+        "type": "ServiceDef[]",
+        "desc": "{ id, version } — services this plugin offers other plugins, provided with ctx.services.provide(id, api). A consumer lists this plugin in its dependencies and calls ctx.services.get(thisId, id, range?).",
+        "required": false
+      },
+      {
+        "name": "themeTokens",
+        "type": "ThemeTokenDef[]",
+        "desc": "{ name, default, label? } — the plugin’s own theme tokens, named <short name>-… (weather-drop for com.example.weather). While the plugin is active the default sits on the stage root as --nilvn-<name>; a work’s [theme] / [theme …] sets it like an engine token, and the plugin’s CSS reads var(--nilvn-<name>).",
         "required": false
       }
     ]
@@ -290,6 +314,27 @@
       "status": "active",
       "version": 1,
       "description": "Fields an actor declaration may carry for this plugin ([actors.<id>] / [actor …]), reached as ctx.actorField(actorId, key)."
+    },
+    {
+      "key": "keybindings",
+      "side": "engine",
+      "status": "active",
+      "version": 1,
+      "description": "Keyboard bindings in the engine’s key table (id, default key, label, when); handled through ctx.input.on (needs input.keys), rebindable by the player."
+    },
+    {
+      "key": "services",
+      "side": "engine",
+      "status": "active",
+      "version": 1,
+      "description": "Services this plugin offers other plugins (id + semver version), provided through ctx.services.provide; a consumer lists the provider in dependencies and calls ctx.services.get."
+    },
+    {
+      "key": "themeTokens",
+      "side": "engine",
+      "status": "active",
+      "version": 1,
+      "description": "The plugin’s own theme tokens (--nilvn-<short>-*) with their defaults: set by the work’s [theme] like the engine’s, read by the plugin’s styles and ctx.theme."
     },
     {
       "key": "rendererLayers",
@@ -390,6 +435,396 @@
       "description": "AI providers (roadmap §6)."
     }
   ],
+  "schemas": {
+    "paramTypes": [
+      "string",
+      "number",
+      "boolean",
+      "enum",
+      "asset:bg",
+      "asset:bgm",
+      "asset:se",
+      "asset:sprite",
+      "actor",
+      "face",
+      "color",
+      "expr",
+      "variable",
+      "panel",
+      "key",
+      "script"
+    ],
+    "configTypes": [
+      "string",
+      "number",
+      "boolean",
+      "enum",
+      "asset:bg",
+      "asset:bgm",
+      "asset:se",
+      "asset:sprite",
+      "actor",
+      "face",
+      "color",
+      "expr",
+      "variable",
+      "panel",
+      "key",
+      "script",
+      "list"
+    ],
+    "commandCategories": [
+      "stage",
+      "audio",
+      "fx",
+      "flow",
+      "text"
+    ],
+    "shapes": {
+      "CommandSchema": [
+        {
+          "name": "name",
+          "type": "string",
+          "desc": "The command, used as [name …].",
+          "required": true
+        },
+        {
+          "name": "label",
+          "type": "string",
+          "desc": "i18n id (plugin messages) for the editor insert menu.",
+          "required": true
+        },
+        {
+          "name": "category",
+          "type": "stage | audio | fx | flow | text",
+          "desc": "Where the editor files the command.",
+          "required": true
+        },
+        {
+          "name": "hint",
+          "type": "string",
+          "desc": "One-line help (an i18n id or text).",
+          "required": false
+        },
+        {
+          "name": "icon",
+          "type": "string",
+          "desc": "An emoji for the insert menu.",
+          "required": false
+        },
+        {
+          "name": "params",
+          "type": "ParamSchema[]",
+          "desc": "The typed parameters, in order.",
+          "required": true
+        },
+        {
+          "name": "ifFalse",
+          "type": "skip | handle",
+          "desc": "What a false trailing if= does (default skip; handle = the command runs with ctx.cond === false).",
+          "required": false
+        }
+      ],
+      "ParamSchema": [
+        {
+          "name": "key",
+          "type": "string",
+          "desc": "The parameter name: [cmd key=value]. A positional param is still named here (forms, lint) but arrives in ctx.args[positional].",
+          "required": true
+        },
+        {
+          "name": "label",
+          "type": "string",
+          "desc": "i18n id (plugin messages).",
+          "required": true
+        },
+        {
+          "name": "type",
+          "type": "ParamType",
+          "desc": "One of `schemas.paramTypes` (asset / actor / face / … drive editor pickers).",
+          "required": true
+        },
+        {
+          "name": "positional",
+          "type": "number",
+          "desc": "The argument index (0, 1, …): the value is written as a bare word at that position ([weather rain] → ctx.args[0]) instead of key=value.",
+          "required": false
+        },
+        {
+          "name": "required",
+          "type": "boolean",
+          "desc": "The editor and the authoring lint require it; the runtime does not check.",
+          "required": false
+        },
+        {
+          "name": "default",
+          "type": "string | number | boolean",
+          "desc": "Shown and used by the editor; the command still reads its own fallback (str(key, def) / num(key, def)).",
+          "required": false
+        },
+        {
+          "name": "options",
+          "type": "{ value, label }[]",
+          "desc": "The choices of an enum (label = i18n id).",
+          "required": false
+        },
+        {
+          "name": "list",
+          "type": "boolean",
+          "desc": "A positional holding several whitespace-separated values.",
+          "required": false
+        },
+        {
+          "name": "advanced",
+          "type": "boolean",
+          "desc": "Folded behind \"advanced\" in the editor form.",
+          "required": false
+        }
+      ],
+      "ConfigFieldSchema": [
+        {
+          "name": "key",
+          "type": "string",
+          "desc": "The setting: ctx.config.get(key), [plugins.<id>] key = … in the config.",
+          "required": true
+        },
+        {
+          "name": "label",
+          "type": "string",
+          "desc": "i18n id (plugin messages) — the settings row / studio form.",
+          "required": true
+        },
+        {
+          "name": "type",
+          "type": "ParamType | list",
+          "desc": "One of `schemas.configTypes`. In the settings screen: boolean → On / Off, number with min + max → a slider, enum → buttons, anything else → a text field. list (config only, author scope only) is a TOML array; ctx.config.get returns an array.",
+          "required": true
+        },
+        {
+          "name": "items",
+          "type": "string | number",
+          "desc": "A list’s item type (default string).",
+          "required": false
+        },
+        {
+          "name": "default",
+          "type": "string | number | boolean | array",
+          "desc": "The value until the author or player sets one (ctx.config.get returns it). A list’s default is an array.",
+          "required": false
+        },
+        {
+          "name": "options",
+          "type": "{ value, label }[]",
+          "desc": "Enum choices.",
+          "required": false
+        },
+        {
+          "name": "min / max / step",
+          "type": "number",
+          "desc": "Number range: values are clamped into it; a player row needs min and max to render as a slider.",
+          "required": false
+        },
+        {
+          "name": "scope",
+          "type": "author | player",
+          "desc": "author (default): the config file only; player: also a row in the game’s settings screen, persisted per work (the author’s value is the default). A list is author-only.",
+          "required": false
+        }
+      ],
+      "KeybindingDef": [
+        {
+          "name": "id",
+          "type": "string",
+          "desc": "Local to the plugin; the key table calls it <plugin id>:<id>, the author’s override is [keys.<short name or id>] <id> = …, and ctx.input.on(id, fn) handles it.",
+          "required": true
+        },
+        {
+          "name": "default",
+          "type": "string | string[] | false",
+          "desc": "The [keys] format: \"w\", \"Ctrl+S\", a list, or false (unbound until someone binds it).",
+          "required": true
+        },
+        {
+          "name": "label",
+          "type": "string",
+          "desc": "i18n id (plugin messages) for the settings screen’s key list (default: the id).",
+          "required": false
+        },
+        {
+          "name": "when",
+          "type": "playing | always",
+          "desc": "playing (default): while the story plays with no system menu, panel or plugin screen open. always: also on the title and ending pages and while a plugin screen is open — never while a system menu panel is open or a text field has focus. For a title-only key, use always and check ctx.session in the handler.",
+          "required": false
+        }
+      ],
+      "MenuItemDef": [
+        {
+          "name": "id",
+          "type": "string",
+          "desc": "Wired with ctx.screen.menuItem(id, onSelect) (titleItems: titleItem). The menu closes before onSelect runs; onSelect gets no arguments.",
+          "required": true
+        },
+        {
+          "name": "label",
+          "type": "string",
+          "desc": "i18n id (plugin messages).",
+          "required": true
+        },
+        {
+          "name": "when",
+          "type": "—",
+          "desc": "Deprecated and ignored (a validator warning): the system menu only opens while playing. A title-page entry is a titleItems entry.",
+          "required": false
+        }
+      ],
+      "HudDef": [
+        {
+          "name": "id",
+          "type": "string",
+          "desc": "ctx.screen.hud(id) returns the corner container (shown only while playing).",
+          "required": true
+        },
+        {
+          "name": "slot",
+          "type": "top-left | top-right | bottom-left | bottom-right",
+          "desc": "The corner (default top-left).",
+          "required": false
+        }
+      ],
+      "ActorFieldDef": [
+        {
+          "name": "key",
+          "type": "string",
+          "desc": "[actors.<id>] key = … / [actor … key=…]; read with ctx.actorField(actorId, key).",
+          "required": true
+        },
+        {
+          "name": "type",
+          "type": "ParamType",
+          "desc": "The studio form control.",
+          "required": true
+        },
+        {
+          "name": "label",
+          "type": "string",
+          "desc": "i18n id.",
+          "required": false
+        }
+      ],
+      "ServiceDef": [
+        {
+          "name": "id",
+          "type": "string",
+          "desc": "Local to the plugin (letters, digits, - and _); consumers ask for (plugin id, id).",
+          "required": true
+        },
+        {
+          "name": "version",
+          "type": "string",
+          "desc": "The service interface’s own semver version (\"1.0.0\"); a consumer’s range is checked against it.",
+          "required": true
+        }
+      ],
+      "ThemeTokenDef": [
+        {
+          "name": "name",
+          "type": "string",
+          "desc": "Lower-case words joined by dashes, starting with the plugin’s short name and a dash (the id’s last segment: weather- for com.example.weather); the custom property is --nilvn-<name>. May not reuse an engine token or another active plugin’s.",
+          "required": true
+        },
+        {
+          "name": "default",
+          "type": "string",
+          "desc": "One CSS value (no ; { }); may reference other tokens, e.g. var(--nilvn-accent).",
+          "required": true
+        },
+        {
+          "name": "label",
+          "type": "string",
+          "desc": "i18n id (the studio’s theme form).",
+          "required": false
+        }
+      ],
+      "TextEffectDef": [
+        {
+          "name": "name",
+          "type": "string",
+          "desc": "Used inline as {name:text}; implemented in the module’s textEffects.",
+          "required": true
+        },
+        {
+          "name": "label",
+          "type": "string",
+          "desc": "i18n id.",
+          "required": false
+        },
+        {
+          "name": "preview",
+          "type": "string",
+          "desc": "Sample text for the editor.",
+          "required": false
+        }
+      ],
+      "ObjectKindSchema": [
+        {
+          "name": "id",
+          "type": "string",
+          "desc": "The kind id.",
+          "required": true
+        },
+        {
+          "name": "label",
+          "type": "string",
+          "desc": "i18n id.",
+          "required": true
+        },
+        {
+          "name": "transformable",
+          "type": "boolean",
+          "desc": "Whether it takes the transform schema.",
+          "required": true
+        },
+        {
+          "name": "icon",
+          "type": "string",
+          "desc": "An emoji.",
+          "required": false
+        }
+      ],
+      "EffectSchema": [
+        {
+          "name": "name",
+          "type": "string",
+          "desc": "The effect, implemented in the module’s effects.",
+          "required": true
+        },
+        {
+          "name": "label",
+          "type": "string",
+          "desc": "i18n id.",
+          "required": true
+        },
+        {
+          "name": "appliesToKinds",
+          "type": "string[]",
+          "desc": "Object kinds it targets.",
+          "required": true
+        },
+        {
+          "name": "command",
+          "type": "string",
+          "desc": "The command that applies it (its CommandSchema drives the form).",
+          "required": true
+        },
+        {
+          "name": "targetParams / fanout / hint / icon",
+          "type": "…",
+          "desc": "Editor wiring: params pointing the command at the chosen object; an enum param to expand into one entry per option.",
+          "required": false
+        }
+      ]
+    }
+  },
   "permissions": [
     {
       "id": "stage.read",
@@ -598,6 +1033,13 @@
       "description": "setTimeout / setInterval / requestAnimationFrame, cleared on dispose."
     },
     {
+      "id": "input.keys",
+      "group": "ui",
+      "side": "engine",
+      "status": "active",
+      "description": "Keyboard bindings declared in contributes.keybindings, handled through ctx.input.on; the player can rebind them in the settings."
+    },
+    {
       "id": "storage.local",
       "group": "data",
       "side": "engine",
@@ -651,7 +1093,7 @@
       {
         "name": "permissions",
         "type": "Permission[]",
-        "desc": "Authoritative only without a manifest; must match the manifest’s engine-side permissions when one exists.",
+        "desc": "Only for a module with no plugin.json (a bare [use ./x.js] or a host-registered module). With a manifest, write permissions there only; if both are given and their engine-side sets differ, the manifest wins with a diagnostic.",
         "required": false
       },
       {
@@ -693,7 +1135,7 @@
       {
         "name": "hooks",
         "type": "EngineHooks",
-        "desc": "onReady / onSessionChange(state, prev) / onLabel(label) / onDialogue / onDialogueDone / onReveal / onChoices / onChoose / onCommand / onEnd / onSaved(state) / onRestored(state) / onSettingsChange(key, value) / onVarChange(name, value) / onError — each receives the plugin context last.",
+        "desc": "onReady / onSessionChange(state, prev) / onLabel(label) / onDialogue / onDialogueDone / onReveal / onChoices / onChoose / onCommand / onEnd / onSaved(state) / onRestored(state) / onSettingsChange(key, value) / onVarChange(name, value) / onPreload(done, total, ref) / onError — each receives the plugin context last.",
         "required": false
       },
       {
@@ -711,15 +1153,21 @@
       {
         "name": "saveState(ctx) / restoreState(ctx, data)",
         "type": "…",
-        "desc": "The SaveState.ext[id] slice (needs save.slice).",
+        "desc": "The SaveState.ext[id] slice (needs save.slice); restoreState always receives the current stateVersion shape.",
+        "required": false
+      },
+      {
+        "name": "stateVersion / migrateState(data, from)",
+        "type": "number / …",
+        "desc": "Slice shape version (default 1). An older saved slice goes through migrateState first; without it, or from a newer version, the slice is dropped with a diagnostic and loading continues.",
         "required": false
       }
     ],
     "context": [
       {
-        "name": "id / permissions / lang / actors",
+        "name": "id / permissions / lang / session / actors",
         "type": "readonly",
-        "desc": "Identity, granted permissions, the work language, the actor table.",
+        "desc": "Identity, granted permissions, the work language, where the session is (idle / title / playing / ending — onSessionChange announces each change), the actor table.",
         "required": false
       },
       {
@@ -729,9 +1177,15 @@
         "required": false
       },
       {
+        "name": "asset(path)",
+        "type": "string | undefined",
+        "desc": "One of the plugin’s own files (listed in manifest assets) → URL: through the package for a carried plugin, relative to plugin.json / the module for a URL-loaded one.",
+        "required": false
+      },
+      {
         "name": "t(id, params?)",
         "type": "string",
-        "desc": "The plugin’s own `messages`, then the engine chrome catalog, in the work language.",
+        "desc": "In the work language: the author’s [strings] first (a work may rename a plugin’s text), then the plugin’s own `messages`, then the engine chrome catalog; {name} placeholders filled from params.",
         "required": false
       },
       {
@@ -777,6 +1231,12 @@
         "required": false
       },
       {
+        "name": "services",
+        "type": "ServicesCap",
+        "desc": "Always present: provide(id, api) → withdraw() offers a declared contributes.services entry (each function of api becomes a method); get(pluginId, serviceId, range?) → the provider’s methods, every one async, arguments and results structured-cloned both ways (data only, no functions or DOM). get needs the provider in dependencies; it is undefined when the range does not match or nothing is provided, and a call after the provider withdrew rejects.",
+        "required": false
+      },
+      {
         "name": "storage",
         "type": "StorageCap?",
         "desc": "storage.local: get / set / remove / keys — a key-value store namespaced per work and plugin (async, JSON values), backed by the engine’s SaveStore.",
@@ -785,13 +1245,13 @@
       {
         "name": "screen",
         "type": "ScreenCap?",
-        "desc": "ui.screen: open(id, title, render) / close(id?) full-stage screens in the engine’s panel chrome; menuItem(id, onSelect) / titleItem(id, onSelect) wire contributes.menuItems / titleItems; hud(id) → the contributes.hud container. All released on dispose.",
+        "desc": "ui.screen: open(id, title, render) → Promise resolved when that screen closes (any way) / close(id?) / isOpen(id?) full-stage screens in the engine’s panel chrome; menuItem(id, onSelect) / titleItem(id, onSelect) wire contributes.menuItems / titleItems; hud(id) → the contributes.hud container. All released on dispose.",
         "required": false
       },
       {
         "name": "dialog",
         "type": "DialogCap?",
-        "desc": "ui.dialog: confirm(message) → Promise<boolean>, alert(message), toast(message) — the engine’s own boxes, never the browser’s.",
+        "desc": "ui.dialog: confirm(message) → Promise<boolean>, alert(message), prompt(message, { default?, maxlength?, pattern?, type?: text | number, min?, max?, step?, lines? }) → Promise<string | null>, toast(message) — the engine’s own boxes, never the browser’s.",
         "required": false
       },
       {
@@ -809,7 +1269,13 @@
       {
         "name": "vars",
         "type": "VarsCap?",
-        "desc": "vars.read: get / has / all; vars.write adds set (a stub without it).",
+        "desc": "vars.read: get / has / all over the plugin’s own variables (keys without the prefix), global(name) for an author variable, namespace; vars.write adds set (a stub without it). They are stored under the full id (namespace, - → _: com.example.weather.intensity) — what saves hold and what always works in scripts. Scripts may also use the short prefix (a third-party id’s last segment: weather.intensity) while no other active plugin shares it; plugins that share one all lose it, each with a diagnostic.",
+        "required": false
+      },
+      {
+        "name": "input",
+        "type": "InputCap?",
+        "desc": "input.keys: on(id, fn) runs fn when a contributes.keybindings binding is pressed (auto-repeat excluded); released on dispose. label(id) is the key it has now as the settings screen shows it (\"F\", \"Ctrl+S\"; \"\" when unbound).",
         "required": false
       },
       {
@@ -863,6 +1329,12 @@
         "required": false
       },
       {
+        "name": "condExpr",
+        "type": "string | undefined",
+        "desc": "For an ifFalse: 'handle' command only: the if= expression as written. Hand it to the stage (showSprite’s spec.if) and the engine re-evaluates it on every variable change — the sprite is drawn and clickable only while it holds.",
+        "required": false
+      },
+      {
         "name": "str(keyOrIndex, def?) / num(keyOrIndex, def?) / numOpt(keyOrIndex)",
         "type": "…",
         "desc": "Argument accessors (positional index or named key); numOpt yields undefined for an absent / non-numeric param instead of a default.",
@@ -903,6 +1375,7 @@
         "clearSprites",
         "setProp",
         "animate",
+        "stopAnimations",
         "setBand",
         "setFace",
         "setName",
@@ -931,7 +1404,9 @@
       "vars.read": [
         "get",
         "has",
-        "all"
+        "all",
+        "global",
+        "namespace"
       ],
       "vars.write": [
         "set"
@@ -978,6 +1453,7 @@
       "ui.screen": [
         "open",
         "close",
+        "isOpen",
         "menuItem",
         "titleItem",
         "hud"
@@ -985,6 +1461,7 @@
       "ui.dialog": [
         "confirm",
         "alert",
+        "prompt",
         "toast"
       ],
       "timer": [
@@ -1000,6 +1477,10 @@
         "set",
         "remove",
         "keys"
+      ],
+      "input.keys": [
+        "on",
+        "label"
       ],
       "project.read": [
         "state (editor)"
@@ -1025,6 +1506,182 @@
         "refresh (editor)"
       ]
     },
+    "signatures": [
+      {
+        "name": "stage.setBackground",
+        "type": "({ url?, color?, ref? }, fadeSec = 0) => Promise<void>",
+        "desc": "`url` resolved (`ctx.resolve` / `ctx.asset`); `ref` = the unresolved path a save should keep.",
+        "required": false
+      },
+      {
+        "name": "stage.showChar / showActor",
+        "type": "(id, url, { at?, fade?, face?, ref?, y?, scale?, rotation? }) / (id, face?, { at?, fade?, src?, y?, scale?, rotation? }) => Promise<void>",
+        "desc": "`showChar` shows a raw image as character `id`; prefer `showActor`, which goes through the actor table like `[char]`.",
+        "required": false
+      },
+      {
+        "name": "stage.moveChar / hideChar / clearChars / focusChar",
+        "type": "(id, at, timeSec = 0.45) / (id, fadeSec = 0.3) / (fadeSec = 0.3) / (speaker | null)",
+        "desc": "`at` is `left` / `center` / `right` or a percentage.",
+        "required": false
+      },
+      {
+        "name": "stage.showSprite",
+        "type": "(id, spec, fadeSec = 0.3) => Promise<void>",
+        "desc": "`spec`: `{ url, ref?, frames, fps, loop, at?, height?, y?, scale?, rotation?, onclick?, if? }` — `url` is the resolved single-row sheet, `frames` / `fps` its frame count and rate, `loop` must be given (`[sprite]` defaults it to true, the call does not), `height` a percentage of the stage height (default 30), `onclick` script commands, `if` a live condition (see `condExpr`). The object is `sprite:<id>`.",
+        "required": false
+      },
+      {
+        "name": "stage.hideSprite / clearSprites",
+        "type": "(id, fadeSec = 0.3) / (fadeSec = 0)",
+        "desc": "",
+        "required": false
+      },
+      {
+        "name": "stage.getProp / setProp",
+        "type": "(objId, prop) / (objId, prop, value)",
+        "desc": "`prop` is one of `x` `y` (pixels, or `\"12%\"` of the object's own box) `scale` `rotation` (degrees) `opacity` `visible` `zIndex`, and on the camera `hue` `invert` `saturate` `brightness` `contrast` `grayscale`.",
+        "required": false
+      },
+      {
+        "name": "stage.animate",
+        "type": "(objId, frames, { durationSec, easing?, iterations?, compose?, key?, commit? }) => Promise<void>",
+        "desc": "`frames`: an array of partial transforms, each with an optional `offset` (0..1) and `easing`; `compose: 'offset'` adds to the resting value instead of replacing it. Resolves at the end, or when stopped. The resting value is untouched — `get` reads the value before, and the object returns to it — unless `commit: true` (an `absolute`, finite animation), which makes the last frame the resting pose that `get` reads and a save keeps. `key` names the animation on its object: a second one with the same key replaces the first, so re-applying an effect never stacks. `key` and `commit` *(since 0.19.0)*.",
+        "required": false
+      },
+      {
+        "name": "stage.stopAnimations",
+        "type": "(objId, key?)",
+        "desc": "Stops what `animate` started on the object — all, or the one with `key` — and the object returns to its resting pose; an `iterations: Infinity` animation runs until then. Show / hide fades and keyframe loops are not touched. An animation is not part of a save: a loop that must survive one is `startLoop`. *(since 0.19.0)*",
+        "required": false
+      },
+      {
+        "name": "stage.getBand / setBand / getFace / setFace",
+        "type": "(objId) / (objId, 'world' | 'front' | 'back') / (objId) / (objId, face)",
+        "desc": "",
+        "required": false
+      },
+      {
+        "name": "stage.setName / showDialog / showIndicator / setWindowSkin",
+        "type": "(name?, color?, textColor?) / (show) / (on) / (objId, url?, ref?)",
+        "desc": "The dialogue box.",
+        "required": false
+      },
+      {
+        "name": "stage.fadeScreen / transitionScreen / flash",
+        "type": "(to, sec, color = '#000') / (to, sec, { shape?, dir?, color?, mask?, softness? }) / (color, durationSec) => Promise<void>",
+        "desc": "Full-screen covers: `to` 1 = covered, 0 = clear.",
+        "required": false
+      },
+      {
+        "name": "stage.applyEffect",
+        "type": "(name, objId, params) => Promise<void>",
+        "desc": "Runs a registered effect on an object; `params` is a `Record<string, string>`.",
+        "required": false
+      },
+      {
+        "name": "stage.playFrames / stopFrames / startLoop / stopLoop / runningLoops",
+        "type": "(durationSec, tracks) / () / (objId, durationSec, entry, body, intoEase?, bridge?) / (objId, exit, outEase?) / ()",
+        "desc": "Keyframe playback; `tracks` / `entry` / `body` / `exit` take the keyframe wire strings or decoded objects.",
+        "required": false
+      },
+      {
+        "name": "stage.hasObject / hasChar / charFace / snapshot",
+        "type": "(objId) / (id) / (id) / ()",
+        "desc": "Reads (`stage.read`).",
+        "required": false
+      },
+      {
+        "name": "effect handle",
+        "type": "id, kind, get(prop), set(prop, value), animate(frames, opts), stopAnimations(key?), getBand(), setBand(band), getFace(), setFace(face)",
+        "desc": "What apply(handle, params, ctx) receives, bound to one object. `id` is the full object id (`character:yuki`), `kind` its kind (`character`); the rest are the stage verbs above without the `objId`, and nothing else.",
+        "required": false
+      },
+      {
+        "name": "hook onReady / onEnd",
+        "type": "—",
+        "desc": "Then the plugin context, last.",
+        "required": false
+      },
+      {
+        "name": "hook onSessionChange",
+        "type": "`state`, `prev` (`idle` / `title` / `playing` / `ending`)",
+        "desc": "Then the plugin context, last.",
+        "required": false
+      },
+      {
+        "name": "hook onLabel",
+        "type": "`label`",
+        "desc": "Then the plugin context, last.",
+        "required": false
+      },
+      {
+        "name": "hook onDialogue / onDialogueDone",
+        "type": "`node`: `{ speaker?, face?, segments, textKey?, line }`",
+        "desc": "Then the plugin context, last.",
+        "required": false
+      },
+      {
+        "name": "hook onReveal",
+        "type": "`char`, `index` (within the line), `speaker`",
+        "desc": "Then the plugin context, last.",
+        "required": false
+      },
+      {
+        "name": "hook onChoices",
+        "type": "`items` (`{ text, textKey?, target, cond?, disabled? }[]`, the shown ones), `handles` (`ChoiceHandle[]`: `index`, `addClass(name)`, `setVar(name, value)`)",
+        "desc": "Then the plugin context, last.",
+        "required": false
+      },
+      {
+        "name": "hook onChoose",
+        "type": "`item`, `index`",
+        "desc": "Then the plugin context, last.",
+        "required": false
+      },
+      {
+        "name": "hook onCommand",
+        "type": "`name`, `args`, `params`",
+        "desc": "Then the plugin context, last.",
+        "required": false
+      },
+      {
+        "name": "hook onSaved / onRestored",
+        "type": "`state` (the `SaveState`)",
+        "desc": "Then the plugin context, last.",
+        "required": false
+      },
+      {
+        "name": "hook onSettingsChange",
+        "type": "`key`, `value`",
+        "desc": "Then the plugin context, last.",
+        "required": false
+      },
+      {
+        "name": "hook onVarChange",
+        "type": "`name` (the full name), `value`",
+        "desc": "Then the plugin context, last.",
+        "required": false
+      },
+      {
+        "name": "hook onPreload",
+        "type": "`done`, `total`, `ref`",
+        "desc": "Then the plugin context, last.",
+        "required": false
+      },
+      {
+        "name": "hook onError",
+        "type": "`info` (an `EngineDiagnostic`: `phase`, `message`, `line?`, `plugin?`)",
+        "desc": "Then the plugin context, last.",
+        "required": false
+      },
+      {
+        "name": "write verb misuse",
+        "type": "—",
+        "desc": "Every write verb that returns a promise resolves when its fade or animation ends; a verb called with arguments it cannot use reports a diagnostic against your plugin and does nothing — it never throws back into your code.",
+        "required": false
+      }
+    ],
     "lifecycle": [
       "register(manifest / module) → validate (id grammar · apiVersion · engine range · dependencies · permission catalog) → activate(ctx) → running → deactivate(ctx) → dispose",
       "Every contribution and resource registered through ctx is released on deactivate; a plugin must not hold globals.",
@@ -1032,14 +1689,17 @@
       "N consecutive command failures (default 3) isolate the plugin; one success resets the count.",
       "reload = saveState slice → deactivate → (re-import cache-busted for path plugins) → activate → restoreState; any failure rolls back to the previous module.",
       "activation.engine: eager (default) | onCommand (first execution of one of its commands) | manual (enablePlugin / setPlugins only).",
-      "A running engine (finished game) never hot-swaps its command set; the editor toggles in edit mode and rebuilds the preview per run."
+      "A running engine (finished game) never hot-swaps its command set; the editor toggles in edit mode and rebuilds the preview per run.",
+      "A script package carries a third-party plugin under plugins/<id>/ with every file in its by-ref asset table (nilvn.json plugins[].entry = the plugin.json); the engine imports the module from the URL the package loader serves, so the engine entry must be one self-contained ES module (no relative imports). A carried plugin reloads in place (no re-import)."
     ],
     "proxyRules": [
       "Capability methods are async or pure; return values and parameters must be structured-cloneable.",
       "No DOM handles cross the boundary — TextSpan / ChoiceHandle / StageObjectHandle are proxyable handle objects (index / id + methods).",
-      "ui.layer hands a same-realm first-party plugin the element; a sandboxed plugin receives a container id instead.",
       "A denied capability is undefined on the context, never an exception; stage write verbs under stage.read only are reporting stubs.",
-      "Third-party plugins default-deny net:* and fs.*; those permissions are reserved until the host mediates them."
+      "Third-party plugins default-deny net:* and fs.*; those permissions are reserved until the host mediates them.",
+      "In a sandbox, synchronous reads of live state become async: stage hasObject / getProp / getBand / getFace / hasChar / charFace / snapshot / runningLoops, saves.saveState, settings.resolveText, backlog.entries. Reads of slow-changing data (vars, theme, config, lang, session, actors, resolve, asset, t, volumes) are served from a host-pushed mirror and stay synchronous.",
+      "ctx.services calls are async both ways and structured-clone their arguments and results already, so a service interface needs no change to cross a sandbox.",
+      "Same-realm only (unavailable in a sandbox, declarative equivalents to come): ctx.listen, ui.layer / ui.onStage, the HTMLElement of screen.open render and screen.hud, custom RecordableProp descriptors (standard channel names are fine), showChar opts.faceUrl (use showActor)."
     ]
   },
   "editor": {
@@ -1119,7 +1779,7 @@
       "name": "plugin.neon.name",
       "description": "plugin.neon.desc",
       "version": "1.0.0",
-      "engine": ">=0.18 <1",
+      "engine": ">=0.19 <1",
       "entries": {
         "engine": "./engine.js"
       },
@@ -1173,11 +1833,11 @@
         "[boom strength=12] — a short camera rumble"
       ]
     },
-    "engineModule": "// engine.js — the runtime half named by plugin.json \"entries.engine\"\nexport default {\n  id: 'com.example.neon',\n  permissions: ['stage.write'],\n  textEffects: { neon: (span) => span.addClass('fx-neon') },\n  commands: {\n    async boom({ num, plugin }) {\n      const frames = []\n      for (let i = 0; i < 8; i++) frames.push({ x: (Math.random() - 0.5) * num('strength', 12), y: 0 })\n      frames.push({ x: 0, y: 0 })\n      await plugin.stage?.animate('camera', frames, { durationSec: 0.4, easing: 'linear', compose: 'offset' })\n    },\n  },\n  activate(ctx) { ctx.onDispose(() => {/* release anything acquired here */}) },\n}\n",
+    "engineModule": "// engine.js — the runtime half named by plugin.json \"entries.engine\"\nexport default {\n  id: 'com.example.neon',\n  // permissions live in plugin.json\n  textEffects: { neon: (span) => span.addClass('fx-neon') },\n  commands: {\n    async boom({ num, plugin }) {\n      const frames = []\n      for (let i = 0; i < 8; i++) frames.push({ x: (Math.random() - 0.5) * num('strength', 12), y: 0 })\n      frames.push({ x: 0, y: 0 })\n      await plugin.stage?.animate('camera', frames, { durationSec: 0.4, easing: 'linear', compose: 'offset' })\n    },\n  },\n  activate(ctx) { ctx.onDispose(() => {/* release anything acquired here */}) },\n}\n",
     "use": [
       "[use ./plugins/neon/plugin.json]",
       "[use com.example.neon]  ; once registered by the host",
-      "[use ./plugins/neon/engine.js]  ; a bare module (inline permissions)"
+      "[use ./plugins/neon/engine.js]  ; a bare module (no plugin.json: it must declare its own permissions)"
     ]
   }
 }

@@ -351,6 +351,19 @@ export class ChunkResidency {
     return this.manifest.chunks.find((c) => c.id === owner)?.next[0]
   }
 
+  /** Whether leaving `idx` by natural advance ends the script: it is the LAST
+   *  node of a chunk the manifest gives no fall-through successor (the last
+   *  script file, the last scene). Whatever chunk a jump appended physically
+   *  after it is not its successor. False without a manifest (flat play: the
+   *  physical end decides). */
+  endsAfter(idx: number): boolean {
+    if (!this.manifest) return false
+    const owner = this.chunkOwning(idx)
+    if (owner === undefined) return false
+    if (idx !== this.chunkBase.get(owner)! + this.chunkLen.get(owner)! - 1) return false
+    return (this.manifest.chunks.find((c) => c.id === owner)?.next.length ?? 1) === 0
+  }
+
   /** Where a resident-or-evicted chunk's nodes start. */
   baseOf(chunkId: string): number | undefined {
     return this.chunkBase.get(chunkId)

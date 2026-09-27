@@ -13,6 +13,7 @@ import type { Actor, Lang, Project, WorkConfig } from './ir.js'
 import { isAssetRef } from './serialize.js'
 import { isChunkManifest, type ChunkManifest, type ManifestAsset } from './chunk.js'
 import { buildChunkedExport, type BuildChunkedOptions, type ChunkFile } from './chunk-build.js'
+import { normalizePluginPath } from './plugin-manifest.js'
 
 /** Script-package format version. Bumped only when nilvn.json's shape changes
  *  incompatibly; the embedded chunk manifest keeps its own `format`. */
@@ -42,8 +43,6 @@ export interface PackageActor {
   /** Plugin actor fields by plugin id (`contributes.actorFields`), e.g.
    *  `ext['app.nilvn.voicefx'].voice`. */
   ext?: Record<string, Record<string, unknown>>
-  /** @deprecated — the voicefx pitch; the engine moves it under `ext`. */
-  voice?: number
 }
 
 /** One layer of a layered sprite in the package (the engine's `ActorLayerDef`). */
@@ -244,4 +243,32 @@ export function configAssetRefs(config: WorkConfig | undefined): string[] {
 /** Fill the by-ref asset table (`chunks.assets`). Returns a new manifest. */
 export function fillPackageAssets(manifest: PackageManifest, assets: Record<string, ManifestAsset>): PackageManifest {
   return { ...manifest, chunks: { ...manifest.chunks, assets } }
+}
+
+/** Where a carried plugin's files live inside a package. */
+export const PACKAGE_PLUGIN_DIR = 'plugins'
+
+/** One file of a plugin carried inside a package: its path relative to the
+ *  plugin's `plugin.json` and its size in bytes. */
+export interface PackagePluginFile {
+  path: string
+  bytes: number
+}
+
+/** Index a third-party plugin the package carries with it. Every file (the
+ *  `plugin.json` itself included) goes under `plugins/<id>/` and into the by-ref
+ *  asset table (ref = the package-relative path, `kind: 'plugin'`), so each
+ *  package form — directory, zip, single file, `.nvpk` — serves it through the
+ *  loader it already has. Returns the `nilvn.json` plugin entry and the asset
+ *  entries to merge into `chunks.assets`; the producer writes each file's bytes
+ *  at its `url`. `files` must include `plugin.json`, the engine module and every
+ *  `styles` / `assets` path, spelled relative to plugin.json. Pure. */
+export function packagePluginAssets(id: string, files: PackagePluginFile[]): { plugin: PackagePlugin; assets: Record<string, ManifestAsset> } {
+  const dir = `${PACKAGE_PLUGIN_DIR}/${id}/`
+  const assets: Record<string, ManifestAsset> = {}
+  for (const f of files) {
+    const ref = dir + normalizePluginPath(f.path)
+    assets[ref] = { url: ref, bytes: f.bytes, kind: 'plugin' }
+  }
+  return { plugin: { id, entry: dir + 'plugin.json' }, assets }
 }

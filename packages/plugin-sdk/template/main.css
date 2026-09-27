@@ -1,5 +1,6 @@
 /* Styles listed in plugin.json "styles": injected while the plugin is active and
-   removed when it is deactivated. Scope every rule to your own classes. */
+   removed when it is deactivated. Scope every rule to your own classes, and take
+   colours from the theme tokens (var(--nilvn-…)) rather than writing literals. */
 .nilvn-ch.fx-neon.on {
-  text-shadow: 0 0 0.5em #0ff;
+  text-shadow: 0 0 0.5em var(--nilvn-accent);
 }

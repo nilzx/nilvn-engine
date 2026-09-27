@@ -189,6 +189,29 @@ npx vite build      # dist/: index.html + your bundle + public/ copied verbatim
 Upload `dist/` to any static host. Saves and settings live in the player's
 browser (`localStorage`, namespaced by the work); nothing needs a server.
 
+Or pack the work itself — no page code, no bundler:
+
+```bash
+npx nilvn pack public   # dist-pack/<name>/ (a folder to upload), <name>.nvs, <name>.html
+```
+
+The `.html` is the whole game in one file that opens from disk; the folder and
+the `.nvs` zip are [script packages](script-package.md) — the format NilVN
+Studio exports. `nilvn pack` also reports what would go wrong in play (a
+missing image, a bad line, an unknown alias) before anyone plays it; `--check`
+reports only. See [script-package.md → Packing a config-driven
+work](script-package.md#packing-a-config-driven-work-nilvn-pack).
+
+Before you upload it, let a machine play it:
+
+```bash
+npx nilvn playtest public   # plays to the endings in a headless Chrome and reports
+```
+
+It takes a different option at each prompt on each run and clicks through map
+hubs, and fails on a stall, a covered object or any engine diagnostic; a
+`playtest.mjs` scripts exact routes. See [playtest.md](playtest.md).
+
 ## 8. Small screens
 
 The stage is a fixed 16:9 box. On a portrait phone it fills the width and the
@@ -260,8 +283,8 @@ These run inside the `nilvn-engine` / `nilvn-plugins` repositories and are
 | Command | Where | What |
 |---|---|---|
 | `pnpm dev` | nilvn-plugins | The demo game on http://localhost:5180 (`demo/`). |
-| `pnpm bundle <game-dir> [--dir]` | nilvn-plugins | Pack a game folder into one double-clickable `.html`, or a deployable folder — the same thing NilVN Studio's export does; it builds the engine from source. |
+| `pnpm bundle <game-dir>` | nilvn-plugins | `nilvn pack` over the repository's own build — for the demo game. |
 | `pnpm build` / `pnpm typecheck` / `pnpm test` | both | The packages' own build and checks. |
 
-An npm user deploys with their bundler ([section 7](#7-deploy)) or the CDN
-script ([section 6](#6-no-bundler-the-single-script-build)).
+An npm user deploys with their bundler or `npx nilvn pack` ([section 7](#7-deploy)),
+or the CDN script ([section 6](#6-no-bundler-the-single-script-build)).

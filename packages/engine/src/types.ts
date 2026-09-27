@@ -9,7 +9,7 @@ import type { TrackOptions } from './audio-bus.js'
 // IIFE carries zero @nilvn/core runtime code; only tsc resolves these. The engine is
 // the CONSUMER of the same manifest the editor produces, so both reference core's
 // single definition.
-import type { ChunkManifest, ContentLoader, Permission, PluginManifest } from '@nilvn/core'
+import type { ChunkManifest, ContentLoader, KeybindingDef, Permission, PluginManifest, ServiceDef, ThemeTokenDef } from '@nilvn/core'
 export type { Permission, PluginManifest } from '@nilvn/core'
 
 /** Actor metadata declared via [actor id name=... color=... sprites=path/{face}.png] */
@@ -34,10 +34,6 @@ export interface ActorDef {
    *  `face` is the layer `[char id face]` / `speaker(face):` drive; the others
    *  change through `[char id body=casual extra=blush]`. Wins over `sprites`. */
   layers?: Record<string, ActorLayerDef>
-  /** @deprecated (0.15) — a plugin's actor field: the engine moves it into
-   *  `ext['app.nilvn.voicefx'].voice` once that plugin's manifest declares the
-   *  field (`contributes.actorFields`); read through `ctx.actorField()`. */
-  voice?: number
   /** Plugin-declared fields by plugin id (`contributes.actorFields`): what an
    *  `[actors.<id>]` table or an `[actor …]` line carried for that plugin. */
   ext?: Record<string, Record<string, unknown>>
@@ -131,11 +127,12 @@ export interface ChoicesNode {
 
 export type ScriptNode = DialogueNode | CommandNode | LabelNode | ChoicesNode
 
+/** Resolves true when the animation ran to its end, false when it was cancelled. */
 export type AnimateFn = (
   el: Element,
   keyframes: Keyframe[] | PropertyIndexedKeyframes,
   options?: number | KeyframeAnimationOptions,
-) => Promise<void>
+) => Promise<boolean>
 
 /** Everything a plugin's script command gets to work with (plugin platform v2):
  *  the parsed tag plus the owning plugin's capability context. Nothing here
@@ -166,6 +163,10 @@ export interface CommandContext {
    *  `false` when its manifest declares `ifFalse: 'handle'` — otherwise a false
    *  condition skips it. The `if=` itself never reaches `raw` / `args` / `params`. */
   cond: boolean
+  /** The `if=` expression as written, for an `ifFalse: 'handle'` command only
+   *  (undefined otherwise, or when the tag has none). Hand it to the stage — a
+   *  sprite's `if` — and the engine re-evaluates it on every variable change. */
+  condExpr?: string
 }
 
 /** The context the engine's own built-in commands run with: the plugin surface
@@ -215,8 +216,11 @@ export interface StageObjectHandle {
   get(prop: TransformProp): TransformValue | undefined
   /** Set a transform prop immediately. */
   set(prop: TransformProp, value: TransformValue): void
-  /** Animate this object's transform through keyframes, resolving on finish. */
+  /** Animate this object's transform through keyframes, resolving on finish
+   *  (or when stopped). `opts.key` / `opts.commit`: see `AnimOpts`. */
   animate(keyframes: TransformKeyframe[], opts: AnimOpts): Promise<void>
+  /** Stop what `animate` started on this object (all, or the one with `key`). */
+  stopAnimations(key?: string): void
   /** Read the object's z-band, or undefined if its kind isn't bandable. */
   getBand(): ObjectBand | undefined
   /** Move the object between fixed z-bands. */
@@ -332,13 +336,17 @@ export type SessionState = 'idle' | 'title' | 'playing' | 'ending'
 
 /** What `onSettingsChange` reports: the typewriter speed, a channel volume,
  *  the language, the auto / skip modes and their tuning, the chrome sliders. */
-export type SettingKey = 'textSpeed' | `volume:${VolumeChannel}` | 'lang' | 'auto' | 'skip' | 'autoDelay' | 'skipMode' | 'dialogOpacity' | 'uiScale'
+export type SettingKey = 'textSpeed' | `volume:${VolumeChannel}` | 'lang' | 'auto' | 'skip' | 'autoDelay' | 'skipMode' | 'dialogOpacity' | 'uiScale' | 'keys'
 
 export interface EngineHooks {
   /** Content and plugins are in place (once per engine): a host may show its
    *  title screen. Fired by `prepare()` — which `start()` calls first. */
   onReady?: (ctx: PluginContext) => void
-  /** The session moved between idle / title / playing / ending. */
+  /** The session moved between idle / title / playing / ending — and every
+   *  session ENTRY (new game, restart, load, replay) fires it with `playing`,
+   *  even when `prev` is already `playing`: the moment to reset whatever the
+   *  plugin draws itself. On a load the order is onSessionChange → the plugin's
+   *  restoreState → onRestored. */
   onSessionChange?: (state: SessionState, prev: SessionState, ctx: PluginContext) => void
   /** The playhead reached a `[label]` (by falling through, a jump, or a start
    *  at it) — the anchor for chapter tracking, achievements, galleries. */
@@ -401,6 +409,7 @@ export interface StageCap
     | 'clearSprites'
     | 'setProp'
     | 'animate'
+    | 'stopAnimations'
     | 'setBand'
     | 'setFace'
     | 'setName'
@@ -443,12 +452,33 @@ export interface AudioCap {
   readonly voicePlaying: boolean
 }
 
-/** `vars.read` (+ `vars.write` for `set`; without it `set` is a degraded stub). */
+/** `vars.read` (+ `vars.write`). A plugin's own variables live under its
+ *  namespace (`weather.intensity` for `app.nilvn.weather`): `get` / `has` / `all`
+ *  / `set` take the bare key and read and write there; `global` reads the
+ *  author's variables. */
 export interface VarsCap {
-  get(name: string): unknown
-  has(name: string): boolean
+  /** The full prefix this plugin's keys are stored under (`com.example.weather`,
+   *  `-` → `_`) — what saves hold and what always works in scripts. The short
+   *  prefix (`weather`) is an alias while no other active plugin shares it. */
+  readonly namespace: string
+  get(key: string): unknown
+  has(key: string): boolean
+  /** This plugin's own variables, keyed without the prefix. */
   all(): Readonly<Record<string, unknown>>
-  set(name: string, value: unknown): void
+  set(key: string, value: unknown): void
+  /** An author variable by its full name (persistent first, then the session's). */
+  global(name: string): unknown
+}
+
+/** `input.keys`: handlers for the plugin's `contributes.keybindings`. */
+export interface InputCap {
+  /** Run `fn` when binding `id` is pressed (auto-repeat excluded). Returns the
+   *  unsubscribe; released with the plugin either way. */
+  on(id: string, fn: () => void): () => void
+  /** The key binding `id` has now, as the settings screen shows it (`F`,
+   *  `Ctrl+S`, `J / N`) — the player may have rebound it; `''` when unbound.
+   *  `onSettingsChange('keys', …)` says when it changes. */
+  label(id: string): string
 }
 
 /** `session.save`: the finished-game shell's save / load / restart. */
@@ -507,11 +537,17 @@ export interface ReplayCap {
   onEnd(fn: (() => void) | null): void
 }
 
-/** `ui.layer`: host containers inside the stage root, removed on dispose. Same-
- *  realm first-party plugins receive the element itself; a sandboxed plugin
- *  would receive a container id. */
+/** `ui.layer`: host containers inside the stage root, removed on dispose (same
+ *  realm only — see the proxy rules). */
 export interface UiCap {
-  layer(className?: string): HTMLElement
+  /** A container covering the stage (no positioning or pointer rules of its own:
+   *  give it `position:absolute; inset:0; pointer-events:none` in the plugin's CSS).
+   *  `over: 'overlay'` (default) stacks it above the dialogue box and choices,
+   *  below the fade cover and the full-stage screens (menu panels, title page);
+   *  `over: 'scene'` stacks it above the picture (background, characters,
+   *  sprites) and below the dialogue box — weather, lighting. Each call makes a
+   *  new container; it is not affected by the camera. */
+  layer(className?: string, opts?: { over?: 'scene' | 'overlay' }): HTMLElement
   /** Listen to input on the stage surface (the wheel-to-open-backlog affordance);
    *  removed on dispose. */
   onStage<K extends keyof HTMLElementEventMap>(type: K, fn: (e: HTMLElementEventMap[K]) => void, opts?: AddEventListenerOptions | boolean): () => void
@@ -528,6 +564,26 @@ export interface ThemeCap {
   all(): Readonly<Record<string, string>>
   /** Subscribe to theme changes (either layer); disposed with the plugin. */
   onChange(fn: (theme: Readonly<Record<string, string>>) => void): () => void
+}
+
+/** A service's calls as a consumer sees them: every method async. */
+export type ServiceApi = Record<string, (...args: never[]) => Promise<unknown>>
+
+/** Services between plugins (`contributes.services`; no permission needed). The
+ *  calls cross a structured clone both ways and are always async, so the same
+ *  interface survives a sandbox: pass and return data, never functions or DOM. */
+export interface ServicesCap {
+  /** Offer a service this plugin declares in `contributes.services` (or the
+   *  module's `services`). Each function of `api` becomes a method; a sync
+   *  function is fine, callers get a promise either way. Withdrawn when the
+   *  plugin is released, or by the returned function. */
+  provide(id: string, api: Record<string, (...args: never[]) => unknown>): () => void
+  /** Another plugin's service. The provider must be listed in this plugin's
+   *  `dependencies`; `range` (semver) is checked against the service's declared
+   *  version. Undefined — with a diagnostic when it is this plugin's mistake —
+   *  when that cannot be met or the provider has not provided it. A call after
+   *  the provider withdrew it rejects. */
+  get<T extends object = ServiceApi>(pluginId: string, serviceId: string, range?: string): T | undefined
 }
 
 /** `storage.local`: a key-value store namespaced per work AND plugin (the
@@ -553,10 +609,20 @@ export interface ConfigCap {
 /** `ui.screen`: full-stage screens and chrome entries — everything a plugin adds
  *  to the finished game's shell. Each registration is released on dispose. */
 export interface ScreenCap {
-  /** Open a full-stage panel (the same chrome as the backlog / settings): `render`
-   *  fills its body; Esc or the close button closes it. One plugin screen at a time. */
-  open(id: string, title: string, render: (body: HTMLElement, close: () => void) => void): void
+  /** Open a full-stage panel (the same chrome as the backlog / settings). One
+   *  plugin screen at a time: opening closes any other (and the system menu).
+   *  `title` is display text (pass `ctx.t(...)`); `render` runs once per open with
+   *  an empty body — re-render yourself on a language change. Esc or the close
+   *  button closes it (back to the story, not to the menu); it also closes when
+   *  the session leaves `playing`. Works on the title page (a title item).
+   *  Resolves when this screen closes, whichever way (Esc, the close button,
+   *  `close`, another screen opening, the session leaving `playing`, the
+   *  plugin being released) — a command can `await` it to wait for the player. */
+  open(id: string, title: string, render: (body: HTMLElement, close: () => void) => void): Promise<void>
+  /** Close this plugin's screen (`id`: only that one). */
   close(id?: string): void
+  /** Whether this plugin's screen (`id`: that one) is open — for a key that toggles it. */
+  isOpen(id?: string): boolean
   /** Wire a `contributes.menuItems` entry (its label comes from the manifest). */
   menuItem(id: string, onSelect: () => void): () => void
   /** Wire a `contributes.titleItems` entry: a button on the title page. */
@@ -569,9 +635,11 @@ export interface ScreenCap {
 export interface DialogCap {
   confirm(message: string): Promise<boolean>
   alert(message: string): Promise<void>
-  /** A one-line text box (what `[input]` shows): the trimmed text on OK, `null`
-   *  on cancel. `pattern` is a regular expression the whole value must match. */
-  prompt(message: string, opts?: { default?: string; maxlength?: number; pattern?: string }): Promise<string | null>
+  /** A text box (what `[input]` shows): the trimmed text on OK, `null` on
+   *  cancel. `pattern` is a regular expression the whole value must match;
+   *  `type: 'number'` takes a number within `min` / `max` (still returned as
+   *  text); `lines` above 1 opens a multi-line area. */
+  prompt(message: string, opts?: { default?: string; maxlength?: number; pattern?: string; type?: 'text' | 'number'; min?: number; max?: number; step?: number; lines?: number }): Promise<string | null>
   toast(message: string): void
 }
 
@@ -596,12 +664,25 @@ export interface PluginContext {
   readonly permissions: readonly Permission[]
   /** The work's current content language. */
   readonly lang: string
+  /** Where the session is right now (`idle` / `title` / `playing` / `ending`);
+   *  `onSessionChange` announces each change. A `when: 'always'` key binding
+   *  reads it to act only on the title page. */
+  readonly session: SessionState
   /** The actor table (read-only view). */
   readonly actors: Readonly<Record<string, ActorDef>>
   /** Resolve a resource path (aliases / by-ref asset table / base URL). */
   resolve(path: string): string
-  /** A chrome string: the plugin's own `messages` first, then the engine's
-   *  catalog, in the work's language. `{name}` placeholders are filled from `params`. */
+  /** A URL for one of this plugin's own files, by its path relative to
+   *  plugin.json (`sfx/click.ogg`). The path must be listed in the manifest's
+   *  `assets`; a carried plugin resolves through the package, a URL-loaded one
+   *  relative to its plugin.json / module. Undefined (with a diagnostic) for an
+   *  unlisted path or a plugin with no location (a host-registered module). */
+  asset(path: string): string | undefined
+  /** A chrome string in the work's language: the author's `[strings.<lang>]`
+   *  first (so a work can rename a plugin's text), then the plugin's own
+   *  `messages` (current language, then `en`), then the engine's catalog; an id
+   *  found nowhere comes back as the id itself. `{name}` placeholders are filled
+   *  from `params` (an unknown name stays as written). */
   t(id: string, params?: Record<string, string | number>): string
   /** Report a problem as a `plugin` diagnostic attributed to this plugin. */
   report(message: string, error?: unknown): void
@@ -624,6 +705,8 @@ export interface PluginContext {
   /** A plugin-declared actor field (`contributes.actorFields`) for `actorId`;
    *  undefined when absent. No permission needed. */
   actorField(actorId: string, key: string): unknown
+  /** Services offered to and used from other plugins (no permission needed). */
+  readonly services: ServicesCap
   // ---- capability objects, present iff granted ----
   readonly stage?: StageCap
   readonly audio?: AudioCap
@@ -637,6 +720,7 @@ export interface PluginContext {
   readonly storage?: StorageCap
   readonly screen?: ScreenCap
   readonly dialog?: DialogCap
+  readonly input?: InputCap
 }
 
 /** The runtime half of a plugin (plugin platform v2). Declarative contributions
@@ -664,6 +748,15 @@ export interface EnginePlugin {
   /** Named effects bound to kinds via `appliesToKinds`. */
   effects?: Record<string, EffectDef>
   hooks?: EngineHooks
+  /** Keyboard bindings for a module without a manifest (a manifest's
+   *  `contributes.keybindings` wins). */
+  keybindings?: KeybindingDef[]
+  /** Services it offers, for a module without a manifest (a manifest's
+   *  `contributes.services` wins). */
+  services?: ServiceDef[]
+  /** Its own theme tokens, for a module without a manifest (a manifest's
+   *  `contributes.themeTokens` wins). */
+  themeTokens?: ThemeTokenDef[]
   /** Called once per activation (install, enable, reload). May be async; a
    *  rejection isolates the plugin. */
   activate?(ctx: PluginContext): void | Promise<void>
@@ -673,8 +766,17 @@ export interface EnginePlugin {
    *  under `SaveState.ext[id]`. Keep it JSON-serializable. */
   saveState?(ctx: PluginContext): unknown
   /** Restore this plugin's `ext[id]` slice, AFTER the stage is restored and before
-   *  play resumes. A slice whose plugin is not active is carried through untouched. */
+   *  play resumes. A slice whose plugin is not active is carried through untouched.
+   *  `data` always has the current {@link stateVersion}'s shape. */
   restoreState?(ctx: PluginContext, data: unknown): void
+  /** The shape version of the save slice (a positive integer, default 1). Bump it
+   *  when the slice changes incompatibly; must equal the manifest's
+   *  `contributes.saveSlice.version` when both are given. */
+  stateVersion?: number
+  /** Upgrade a slice saved at version `from` to the current {@link stateVersion}.
+   *  Without it (or when it throws) an older slice is dropped with a diagnostic;
+   *  a slice from a NEWER version is always dropped. */
+  migrateState?(data: unknown, from: number): unknown
 }
 
 /** Host seam for loading plugins by URL — a `plugin.json` package or a bare
@@ -766,7 +868,11 @@ export interface EngineOptions {
   onEnd?: () => void
   /** Content and plugins are in place (see `Engine.prepare` / `ready`). */
   onReady?: () => void
-  /** The session moved between idle / title / playing / ending. */
+  /** The session moved between idle / title / playing / ending — and every
+   *  session ENTRY (new game, restart, load, replay) fires it with `playing`,
+   *  even when `prev` is already `playing`: the moment to reset whatever the
+   *  plugin draws itself. On a load the order is onSessionChange → the plugin's
+   *  restoreState → onRestored. */
   onSessionChange?: (state: SessionState, prev: SessionState) => void
   /** Host-level diagnostic sink (same info as the `onError` plugin hook). */
   onError?: (info: EngineDiagnostic) => void
@@ -809,6 +915,9 @@ export interface AdvConfig {
     textSpeed?: number
     /** Script auto-loaded by start() when none was loaded explicitly */
     entry?: string
+    /** The work's starting language (content and chrome) when the host passes
+     *  no `lang` — a single-language work in Chinese sets `lang = "zh"` here. */
+    lang?: string
     /** Fallback content language (`createEngine({ defaultLang })` from the file). */
     defaultLang?: string
     /** Several script files played in order, each a chunk: labels are global
@@ -870,6 +979,11 @@ export interface TitleConfig {
   logoWidth?: string | number
   /** An image path, or a CSS colour / gradient. */
   background?: string
+  /** The page's text colour (heading, subtitle) — for a light background. */
+  color?: string
+  /** The heading's shadow (a CSS `text-shadow`; `"none"` for none) — a dark
+   *  `color` usually wants a light or no shadow. Default: the theme's `screen-heading-shadow`. */
+  shadow?: string
   bgm?: string
   bgmVolume?: number
   /** Button ids in order: `new`, `continue` (shown when an autosave exists),
@@ -888,6 +1002,10 @@ export interface EndingConfig {
   heading?: string
   subtitle?: string
   background?: string
+  /** The page's text colour (heading, subtitle, credits) — for a light CG. */
+  color?: string
+  /** The heading's shadow (a CSS `text-shadow`; `"none"` for none). Default: the theme's `screen-heading-shadow`. */
+  shadow?: string
   bgm?: string
   bgmVolume?: number
   /** Rolling credits: a multi-line string or a list of lines (`@key` per line ok). */
@@ -971,8 +1089,12 @@ export interface KeysConfig {
   settings?: KeyBinding
   /** Toggle fullscreen. */
   fullscreen?: KeyBinding
+  /** A plugin's bindings by its short name or id (`[keys.weather] toggle = "w"`):
+   *  the author's default for `contributes.keybindings`. */
+  [plugin: string]: KeyBinding | Record<string, KeyBinding> | undefined
 }
-export type KeyAction = keyof KeysConfig
+/** The engine's own keyboard actions. */
+export type KeyAction = 'advance' | 'menu' | 'skipHold' | 'skip' | 'auto' | 'quicksave' | 'quickload' | 'backlog' | 'save' | 'load' | 'settings' | 'fullscreen'
 
 /** `[input]` in nilvn.config.toml — the box the `[input]` command shows. The
  *  look keys map onto `input-*` theme tokens (config.ts `inputTheme`); the box
@@ -995,6 +1117,10 @@ export interface InputConfig {
   fieldBorder?: string
   fieldRadius?: string | number
   fieldSize?: string | number
+  /** The prompt text and the Cancel button: `input-prompt-color` / `input-button-bg` / `input-button-color`. */
+  promptColor?: string
+  buttonBackground?: string
+  buttonColor?: string
   /** Where the box sits on the stage. Default `center`. */
   position?: 'center' | 'top' | 'bottom'
   /** Button labels (`@key` resolves through the catalogs). Default: the chrome's OK / Cancel. */
@@ -1078,10 +1204,13 @@ export interface ChoicesConfig {
   size?: string | number
   hover?: string
   /** How an option taken in an earlier run (`sys.chosen`) is drawn: `dim`
-   *  (`choice-chosen-bg` / `choice-chosen-color`) or `none` (default). */
-  chosenStyle?: 'none' | 'dim'
+   *  (`choice-chosen-bg` / `choice-chosen-color`), `mark` (its usual look plus
+   *  the `choice-chosen-mark` badge) or `none` (default). */
+  chosenStyle?: 'none' | 'dim' | 'mark'
   chosenBackground?: string
   chosenColor?: string
+  /** `choice-chosen-mark` as plain text (`chosenStyle = "mark"`'s badge; default ✓). */
+  chosenMark?: string
   /** `choice-disabled-bg` / `choice-disabled-color` (`[choice … disabled=cond]`). */
   disabledBackground?: string
   disabledColor?: string

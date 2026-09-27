@@ -51,7 +51,7 @@ export { UiPanels } from './ui.js'
 export { ObjectHandle, kindOf, BUILTIN_KINDS, STANDARD_CHANNELS, resolveKind } from './object.js'
 // Plugin platform v2: the runtime manifest mirror + version the host
 // checks `plugin.json` against, and the semver subset it uses.
-export { PLUGIN_API_VERSION, PLUGIN_MANIFEST_FILE, FIRST_PARTY_ID_PREFIX, PERMISSION_IDS, firstPartyShortName, matchPermission, isPluginId, manifestProblems } from './plugin-manifest.js'
+export { PLUGIN_API_VERSION, PLUGIN_MANIFEST_FILE, FIRST_PARTY_ID_PREFIX, PERMISSION_IDS, firstPartyShortName, themeTokenPrefix, matchPermission, isPluginId, manifestProblems } from './plugin-manifest.js'
 export { satisfiesRange, isValidRange, parseSemVer, compareSemVer } from './semver.js'
 export { ENGINE_VERSION } from './version.js'
 export { ENGINE_CAPABILITIES } from './plugin-context.js'
@@ -77,7 +77,8 @@ export { tUI, setUILang, getUILang, uiLangName, CHROME_STRING_IDS } from './i18n
 export { LocalStorageSaveStore, MemorySaveStore, AUTOSAVE_KEY, QUICKSAVE_KEY, SETTINGS_KEY, READ_KEY, UNLOCKS_KEY, PLUGIN_SETTINGS_KEY, GLOBALS_KEY, slotKey, pluginStorageKey, isSlotPayload } from './save-store.js'
 export type { SaveStore, SlotPayload, SettingsPayload, GlobalsPayload } from './save-store.js'
 export { MENU_ITEMS_DEFAULT, SETTINGS_ROWS_DEFAULT, TEXT_SPEED_RANGE_DEFAULT } from './system-menu.js'
-export { KEYS_DEFAULT, matchKey, parseBinding } from './keys.js'
+export { KEYS_DEFAULT, KEY_ACTIONS, formatBinding, matchKey, parseBinding } from './keys.js'
+export type { KeyRow } from './keytable.js'
 export { titleModel, endingModel, screenBackground, TITLE_BUTTONS_DEFAULT } from './chrome.js'
 export type { ChromeHost } from './chrome.js'
 export { evalExpr, truthy, EXPR_FUNCTIONS } from './expr.js'

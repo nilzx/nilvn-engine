@@ -3,59 +3,8 @@
 // lazily minted asset blob URLs). Node env — no DOM needed; URL.createObjectURL
 // is stubbed since Node has no blob URL registry.
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
-import { deflateRawSync } from 'node:zlib'
 import { openPackage, PackageFormatError, ZipContentLoader } from '../src/index'
-import { makePackage } from './package-fixture'
-
-/** A minimal zip writer (STORE, or DEFLATE when `deflate` is set) — enough to
- *  hand the loader a standards-shaped archive without depending on the editor. */
-function zip(entries: { name: string; data: Uint8Array; deflate?: boolean }[]): Uint8Array {
-  const enc = new TextEncoder()
-  const parts: Uint8Array[] = []
-  const central: Uint8Array[] = []
-  let offset = 0
-  for (const e of entries) {
-    const name = enc.encode(e.name)
-    const stored = e.deflate ? new Uint8Array(deflateRawSync(e.data)) : e.data
-    const method = e.deflate ? 8 : 0
-    const lh = new Uint8Array(30 + name.length)
-    const ldv = new DataView(lh.buffer)
-    ldv.setUint32(0, 0x04034b50, true)
-    ldv.setUint16(8, method, true)
-    ldv.setUint32(18, stored.length, true)
-    ldv.setUint32(22, e.data.length, true)
-    ldv.setUint16(26, name.length, true)
-    lh.set(name, 30)
-    parts.push(lh, stored)
-    const ch = new Uint8Array(46 + name.length)
-    const cdv = new DataView(ch.buffer)
-    cdv.setUint32(0, 0x02014b50, true)
-    cdv.setUint16(10, method, true)
-    cdv.setUint32(20, stored.length, true)
-    cdv.setUint32(24, e.data.length, true)
-    cdv.setUint16(28, name.length, true)
-    cdv.setUint32(42, offset, true)
-    ch.set(name, 46)
-    central.push(ch)
-    offset += lh.length + stored.length
-  }
-  const centralSize = central.reduce((s, c) => s + c.length, 0)
-  const eocd = new Uint8Array(22)
-  const edv = new DataView(eocd.buffer)
-  edv.setUint32(0, 0x06054b50, true)
-  edv.setUint16(8, entries.length, true)
-  edv.setUint16(10, entries.length, true)
-  edv.setUint32(12, centralSize, true)
-  edv.setUint32(16, offset, true)
-  const all = [...parts, ...central, eocd]
-  const out = new Uint8Array(all.reduce((s, p) => s + p.length, 0))
-  let at = 0
-  for (const p of all) {
-    out.set(p, at)
-    at += p.length
-  }
-  return out
-}
+import { makePackage, zip } from './package-fixture'
 
 const enc = new TextEncoder()
 function packZip(): Uint8Array {

@@ -37,6 +37,28 @@ describe('the token contract', () => {
     }
   })
 
+  it('the base stylesheet draws no colour of its own: every one comes from a token', () => {
+    freshStage()
+    const css = document.getElementById('nilvn-base-style')!.textContent!
+    const COLOUR = /#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})\b|\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch)\(|\b(?:white|black|red|green|blue|yellow|orange|purple|pink|gray|grey|gold)\b/i
+    // Black that is not a colour choice: the letterbox, the fade cover's start
+    // (every fade sets its own colour), and alpha masks.
+    const ALLOWED = [/^\.nilvn-root$/, /^\.nilvn-fader$/, /^\.nilvn-editing /]
+    const found: string[] = []
+    for (const [, selector, body] of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const sel = selector!.trim()
+      if (ALLOWED.some((re) => re.test(sel))) continue
+      for (const decl of body!.split(';')) {
+        const [prop, ...rest] = decl.split(':')
+        const name = prop!.trim()
+        if (!name || name.startsWith('--') || /mask/.test(name)) continue
+        const value = rest.join(':').replace(/var\([^()]*\)/g, '')
+        if (COLOUR.test(value)) found.push(`${sel} { ${name}: ${rest.join(':')} }`)
+      }
+    }
+    expect(found).toEqual([])
+  })
+
   it('token names are lower-case dashed words', () => {
     for (const k of Object.keys(THEME_TOKENS)) expect(k).toMatch(/^[a-z][a-z0-9-]*$/)
   })
@@ -172,11 +194,11 @@ describe('engine theme API', () => {
   })
 
   it('actor textColor reaches the name tag; [actor] keeps fields it does not mention', async () => {
-    const engine = createEngine({ container: document.createElement('div'), actors: { yuki: { name: 'Yuki', color: '#ff3366', voice: 300 } } })
+    const engine = createEngine({ container: document.createElement('div'), actors: { yuki: { name: 'Yuki', color: '#ff3366', defaultFace: 'smile' } } })
     engine.loadSource('[label s]\n[actor yuki textColor=#ffe2a8]\nyuki: hi\n')
     void engine.start()
     await tick()
-    expect(engine.actors.yuki).toMatchObject({ color: '#ff3366', textColor: '#ffe2a8', voice: 300 })
+    expect(engine.actors.yuki).toMatchObject({ color: '#ff3366', textColor: '#ffe2a8', defaultFace: 'smile' })
     const st = engine.stage.root.querySelector<HTMLElement>('.nilvn-name')!.style
     expect(st.getPropertyValue('--nilvn-name-bg')).toBe('#ff3366')
     expect(st.getPropertyValue('--nilvn-name-color')).toBe('#ffe2a8')

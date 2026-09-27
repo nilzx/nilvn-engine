@@ -1,0 +1,56 @@
+/* com.example.weather — injected while the plugin is active.
+   No colour literals: particles are painted with the work's theme text colour and
+   shaped by the plugin's SVG through a mask (--exw-shape, set by engine.js). */
+
+.exw-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none; /* clicks keep reaching the story underneath */
+  transition: opacity 0.4s ease, visibility 0s;
+}
+
+.exw-layer.is-hidden {
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.3s ease, visibility 0s linear 0.3s;
+}
+
+.exw-p {
+  position: absolute;
+  top: 0;
+  left: var(--x);
+  width: var(--size);
+  aspect-ratio: 1;
+  background: var(--nilvn-text);
+  -webkit-mask: var(--exw-shape) center / contain no-repeat;
+  mask: var(--exw-shape) center / contain no-repeat;
+  animation: exw-fall var(--dur) linear var(--delay) infinite;
+  will-change: transform;
+}
+
+.exw-layer[data-kind="rain"] .exw-p {
+  aspect-ratio: 1 / 5;
+  opacity: 0.45;
+}
+
+.exw-layer[data-kind="snow"] .exw-p {
+  opacity: 0.85;
+  animation-name: exw-sway;
+  animation-timing-function: ease-in-out;
+}
+
+@keyframes exw-fall {
+  from { transform: translate3d(0, -12cqh, 0); }
+  to   { transform: translate3d(var(--drift), 112cqh, 0); }
+}
+
+@keyframes exw-sway {
+  0%   { transform: translate3d(0, -12cqh, 0) rotate(0deg); }
+  50%  { transform: translate3d(var(--drift), 50cqh, 0) rotate(90deg); }
+  100% { transform: translate3d(0, 112cqh, 0) rotate(180deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .exw-p { animation-duration: calc(var(--dur) * 4); }
+}

@@ -124,6 +124,8 @@ export class UiPanels {
       if (!visible) continue
       if (p.title) p.title.textContent = e.chromeString(p.cfg.title, true) ?? ''
       this.render(p, scope)
+      // A HUD whose widgets are all hidden by their `if` draws no empty frame.
+      if (!p.title && !p.body.childElementCount) p.el.style.display = 'none'
     }
   }
 
@@ -172,7 +174,8 @@ export class UiPanels {
         }
         case 'list': {
           const v = w.var !== undefined ? e.getVar(w.var) : undefined
-          const items = Array.isArray(v) ? v : typeof v === 'string' && v ? v.split(',').map((s) => s.trim()) : []
+          // A comma-separated string drops its empty entries (`"key,tea,"` built by [set x = x + "tea,"]).
+          const items = Array.isArray(v) ? v : typeof v === 'string' && v ? v.split(',').map((s) => s.trim()).filter((s) => s !== '') : []
           if (!items.length) {
             const t = el('div', 'nilvn-ui__text nilvn-ui__empty')
             t.textContent = e.chromeString(w.empty, true) ?? ''

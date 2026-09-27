@@ -224,7 +224,7 @@ describe('plugin isolation', () => {
   it('quarantines a plugin after 3 consecutive command failures; its commands become no-ops', async () => {
     const e = await run('[boom]\n[boom]\n[boom]\n[boom]\n[fine]', { plugins: [boomPlugin()] })
     expect(e.isolatedPlugins).toEqual(['test.boom'])
-    expect(e.vars.ok).toBeUndefined() // [fine] ran after isolation → no-op
+    expect(e.getVar('boom.ok')).toBeUndefined() // [fine] ran after isolation → no-op
     const execs = e.diagnostics.filter((d) => d.phase === 'exec' && d.plugin === 'test.boom')
     expect(execs).toHaveLength(3) // the 4th [boom] was silent
     expect(e.diagnostics).toContainEqual(expect.objectContaining({ phase: 'plugin', plugin: 'test.boom', message: expect.stringContaining('isolated') }))
@@ -233,14 +233,14 @@ describe('plugin isolation', () => {
   it('a successful command resets the consecutive count', async () => {
     const e = await run('[boom]\n[boom]\n[fine]\n[boom]\n[boom]\n[fine]', { plugins: [boomPlugin()] })
     expect(e.isolatedPlugins).toEqual([])
-    expect(e.vars.ok).toBe(2)
+    expect(e.getVar('boom.ok')).toBe(2)
   })
 
   it('honors pluginFailureLimit and leaves other plugins untouched', async () => {
     const other: EnginePlugin = { id: 'test.other', permissions: ['vars.write'], commands: { touch({ plugin }) { plugin.vars!.set('touched', true) } } }
     const e = await run('[boom]\n[touch]', { plugins: [boomPlugin(), other], pluginFailureLimit: 1 })
     expect(e.isolatedPlugins).toEqual(['test.boom'])
-    expect(e.vars.touched).toBe(true)
+    expect(e.getVar('other.touched')).toBe(true)
   })
 
   it('a throwing activate() quarantines the plugin instead of failing install', async () => {
@@ -254,7 +254,7 @@ describe('plugin isolation', () => {
     }
     const e = await run('[mark]', { plugins: [bad] })
     expect(e.isolatedPlugins).toEqual(['test.bad'])
-    expect(e.vars.mark).toBeUndefined()
+    expect(e.getVar('bad.mark')).toBeUndefined()
     expect(e.diagnostics[0]).toMatchObject({ phase: 'plugin', plugin: 'test.bad', message: expect.stringContaining('activate') })
   })
 

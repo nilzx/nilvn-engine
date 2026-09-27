@@ -100,7 +100,10 @@ describe('plugin command if=', () => {
 
   it("leaves a built-in command's own if= alone", async () => {
     const e = await run('[set day = 0]\n[hotspot door x=1 y=1 w=5 h=5 onclick="jump a" if=day > 1]\n[set after = 1]', {})
-    expect(e.stage.snapshot().hotspots ?? []).toEqual([])
+    // The hotspot's own if= keeps it declared but off (it would turn on with `day`).
+    expect(e.stage.snapshot().hotspots).toEqual([{ id: 'door', x: 1, y: 1, w: 5, h: 5, onclick: 'jump a', if: 'day > 1' }])
+    expect(e.stage.root.querySelector<HTMLElement>('.nilvn-hotspot[data-id="door"]')!.hidden).toBe(true)
+    expect(e.getVar('after')).toBe(1)
     expect(e.diagnostics).toEqual([])
     e.destroy()
   })

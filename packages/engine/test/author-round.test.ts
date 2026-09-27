@@ -70,9 +70,10 @@ describe('paths and expressions', () => {
     e.loadSource('[set day = 2]\n[hotspot shop x=10 y=20 w=25 h=30 onclick="jump shop" if=day > 1]\n[hotspot gone x=1 y=1 w=1 h=1 onclick="jump shop" if=day > 5]\n[hotspot q x=1 y=1 w=1 h=1 onclick="jump shop" if="day >= 2"]\nnarr: parked\n[label shop]\nnarr: shop\n')
     void e.start()
     await until(() => text(e).includes('parked'))
-    expect(e.stage.root.querySelector('.nilvn-hotspot[data-id="shop"]')).not.toBeNull()
-    expect(e.stage.root.querySelector('.nilvn-hotspot[data-id="q"]')).not.toBeNull()
-    expect(e.stage.root.querySelector('.nilvn-hotspot[data-id="gone"]')).toBeNull()
+    const on = (id: string): boolean => !e.stage.root.querySelector<HTMLElement>(`.nilvn-hotspot[data-id="${id}"]`)!.hidden
+    expect(on('shop')).toBe(true)
+    expect(on('q')).toBe(true)
+    expect(on('gone')).toBe(false)
     e.destroy()
   })
 })

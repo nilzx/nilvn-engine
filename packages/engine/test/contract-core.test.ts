@@ -14,6 +14,7 @@ import {
   PACKAGE_FORMAT as CORE_PACKAGE_FORMAT,
   PACKAGE_MANIFEST_FILE as CORE_MANIFEST_FILE,
   FIRST_PARTY_ID_PREFIX as CORE_FIRST_PARTY_ID_PREFIX,
+  themeTokenPrefix as coreThemeTokenPrefix,
   FORMAT_VERSIONS,
   PERMISSIONS,
   PLUGIN_API_VERSION as CORE_PLUGIN_API_VERSION,
@@ -36,6 +37,7 @@ import {
   PERMISSION_IDS,
   PLUGIN_API_VERSION,
   FIRST_PARTY_ID_PREFIX,
+  themeTokenPrefix,
   ENGINE_CAPABILITIES,
   ENGINE_VERSION,
 } from '../src/index'
@@ -87,6 +89,11 @@ describe('format numbers', () => {
 describe('plugin platform mirrors', () => {
   it('the first-party id namespace is one constant in core and the engine', () => {
     expect(FIRST_PARTY_ID_PREFIX).toBe(CORE_FIRST_PARTY_ID_PREFIX)
+  })
+
+  it('a plugin theme token prefix is the same rule in core and the engine', () => {
+    for (const id of ['com.example.weather', 'app.nilvn.voicefx', 'org.a.my-kit']) expect(themeTokenPrefix(id)).toBe(coreThemeTokenPrefix(id))
+    expect(themeTokenPrefix('com.example.weather')).toBe('weather-')
   })
 
   it('the engine permission catalog mirrors core (id / status / pattern / side)', () => {

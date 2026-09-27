@@ -9,6 +9,7 @@
 import { VOLUME_FIELD, type Engine } from './engine.js'
 import { pluginStorageKey } from './save-store.js'
 import { uiLangName } from './i18n.js'
+import { formatBinding } from './keys.js'
 import type {
   AudioCap,
   BacklogCap,
@@ -22,6 +23,7 @@ import type {
   TimerCap,
   UiCap,
   VarsCap,
+  InputCap,
   StorageCap,
   ScreenCap,
   DialogCap,
@@ -36,6 +38,8 @@ export interface CapHost {
   dispose(fn: () => void): void
   /** Attribute a problem to this plugin (once per message). */
   warn(message: string): void
+  /** The prefix of this plugin's variables (`weather`); '' = none (the engine's own context). */
+  readonly varNs: string
 }
 
 type StageReadVerb = 'hasObject' | 'getProp' | 'getBand' | 'getFace' | 'hasChar' | 'charFace' | 'snapshot'
@@ -52,6 +56,7 @@ type StageWriteVerb =
   | 'clearSprites'
   | 'setProp'
   | 'animate'
+  | 'stopAnimations'
   | 'setBand'
   | 'setFace'
   | 'setName'
@@ -73,6 +78,7 @@ const STAGE_WRITE: readonly StageWriteVerb[] = [
   'clearSprites',
   'setProp',
   'animate',
+  'stopAnimations',
   'setBand',
   'setFace',
   'setName',
@@ -97,7 +103,29 @@ export function makeStageCap(engine: Engine, host: CapHost): StageCap | undefine
     host.warn(`stage.${verb} ignored — "stage.write" was not granted`)
     return Promise.resolve()
   }
-  for (const v of STAGE_WRITE) cap[v] = write ? (stage[v] as (...a: unknown[]) => unknown).bind(stage) : stub(v)
+  // A write verb called wrongly is the plugin's diagnostic, never an exception
+  // thrown back into it (sync or async) — the same rule content follows.
+  const guarded =
+    (verb: string, fn: (...a: unknown[]) => unknown, check?: (...a: unknown[]) => string | undefined) =>
+    (...args: unknown[]): unknown => {
+      const bad = check?.(...args)
+      if (bad) {
+        host.warn(`stage.${verb}: ${bad} — ignored`)
+        return Promise.resolve()
+      }
+      try {
+        const r = fn(...args)
+        return r instanceof Promise ? r.catch((err: unknown) => host.warn(`stage.${verb} failed: ${err instanceof Error ? err.message : String(err)}`)) : r
+      } catch (err) {
+        host.warn(`stage.${verb} failed: ${err instanceof Error ? err.message : String(err)}`)
+        return undefined
+      }
+    }
+  const checks: Partial<Record<StageWriteVerb, (...a: unknown[]) => string | undefined>> = {
+    showSprite: (id, spec) =>
+      typeof id !== 'string' || !id ? 'the first argument is the sprite id (showSprite(id, spec))' : typeof (spec as { url?: unknown } | undefined)?.url !== 'string' ? 'spec.url (the resolved sheet URL) is missing' : undefined,
+  }
+  for (const v of STAGE_WRITE) cap[v] = write ? guarded(v, (stage[v] as (...a: unknown[]) => unknown).bind(stage), checks[v]) : stub(v)
   for (const v of ENGINE_WRITE) {
     cap[v] = write
       ? v === 'applyEffect'
@@ -127,11 +155,50 @@ export function makeAudioCap(engine: Engine, host: CapHost): AudioCap | undefine
 export function makeVarsCap(engine: Engine, host: CapHost): VarsCap | undefined {
   const write = host.granted.has('vars.write')
   if (!write && !host.granted.has('vars.read')) return undefined
+  const ns = host.varNs
+  const prefix = ns ? ns + '.' : ''
+  const exists = (name: string): boolean => Object.prototype.hasOwnProperty.call(engine.globals, name) || Object.prototype.hasOwnProperty.call(engine.vars, name)
   return {
-    get: (name) => engine.getVar(name),
-    has: (name) => Object.prototype.hasOwnProperty.call(engine.globals, name) || Object.prototype.hasOwnProperty.call(engine.vars, name),
-    all: () => engine.scope(),
-    set: write ? (name, value) => engine.setVar(name, value) : (name) => host.warn(`vars.set("${name}") ignored — "vars.write" was not granted`),
+    namespace: ns,
+    get: (key) => {
+      const name = prefix + key
+      // Migration aid: a plugin written before namespaces reading an author variable.
+      if (prefix && !exists(name) && exists(key)) host.warn(`vars.get("${key}") reads this plugin's own "${name}" — use vars.global("${key}") for the author's variable`)
+      return engine.getVar(name)
+    },
+    has: (key) => exists(prefix + key),
+    all: () => {
+      const out: Record<string, unknown> = {}
+      for (const [k, v] of Object.entries(engine.scope())) if (k.startsWith(prefix)) out[k.slice(prefix.length)] = v
+      return out
+    },
+    set: write ? (key, value) => engine.setVar(prefix + key, value) : (key) => host.warn(`vars.set("${key}") ignored — "vars.write" was not granted`),
+    global: (name) => engine.getVar(name),
+  }
+}
+
+/** `input.keys`: handlers for the plugin's declared key bindings. */
+export function makeInputCap(engine: Engine, host: CapHost): InputCap | undefined {
+  if (!host.granted.has('input.keys')) return undefined
+  return {
+    on: (id, fn) => {
+      const off = engine.keyTable.on(host.id, id, fn)
+      if (!off) {
+        host.warn(`input.on("${id}"): no such binding in contributes.keybindings`)
+        return () => {}
+      }
+      host.dispose(off)
+      return off
+    },
+    label: (id) => {
+      const key = `${host.id}:${id}`
+      if (!engine.keyTable.hasPluginBinding(host.id, id)) {
+        host.warn(`input.label("${id}"): no such binding in contributes.keybindings`)
+        return ''
+      }
+      const shown = formatBinding(engine.keyTable.binding(key))
+      return shown === '—' ? '' : shown
+    },
   }
 }
 
@@ -218,11 +285,14 @@ export function makeReplayCap(engine: Engine, host: CapHost): ReplayCap | undefi
 export function makeUiCap(engine: Engine, host: CapHost): UiCap | undefined {
   if (!host.granted.has('ui.layer')) return undefined
   return {
-    layer: (className) => {
+    layer: (className, opts) => {
       const el = document.createElement('div')
       el.className = className ?? ''
       el.dataset.plugin = host.id
-      engine.stage.root.append(el)
+      // `scene`: over the picture, under the dialogue box; `overlay` (default):
+      // over the dialogue and choices, under the fade cover and the full-stage screens.
+      const stage = engine.stage
+      stage.root.insertBefore(el, opts?.over === 'scene' ? stage.dialog : stage.fader)
       host.dispose(() => el.remove())
       return el
     },
@@ -317,9 +387,17 @@ export function makeDialogCap(engine: Engine, host: CapHost): DialogCap | undefi
 /** `ui.screen`: plugin screens and chrome entries, each released on dispose. */
 export function makeScreenCap(engine: Engine, host: CapHost): ScreenCap | undefined {
   if (!host.granted.has('ui.screen')) return undefined
+  let released = false
   return {
-    open: (id, title, render) => engine.openPluginScreen(host.id, id, title, render),
-    close: (id) => engine.closePluginScreen(id),
+    open: (id, title, render) => {
+      if (!released) {
+        released = true
+        host.dispose(() => engine.closePluginScreen(undefined, host.id)) // its screen goes with the plugin
+      }
+      return engine.openPluginScreen(host.id, id, title, render)
+    },
+    close: (id) => engine.closePluginScreen(id, host.id),
+    isOpen: (id) => engine.pluginScreenOpen(host.id, id),
     menuItem: (id, onSelect) => {
       const off = engine.addMenuItem(host.id, id, onSelect)
       host.dispose(off)
@@ -339,7 +417,7 @@ export function makeScreenCap(engine: Engine, host: CapHost): ScreenCap | undefi
 }
 
 /** Build every capability object the record was granted. */
-export function makeCapabilities(engine: Engine, host: CapHost): Pick<PluginContext, 'stage' | 'audio' | 'vars' | 'saves' | 'settings' | 'backlog' | 'replay' | 'ui' | 'timer' | 'storage' | 'screen' | 'dialog'> {
+export function makeCapabilities(engine: Engine, host: CapHost): Pick<PluginContext, 'stage' | 'audio' | 'vars' | 'saves' | 'settings' | 'backlog' | 'replay' | 'ui' | 'timer' | 'storage' | 'screen' | 'dialog' | 'input'> {
   const caps: Record<string, unknown> = {}
   const put = (key: string, value: unknown): void => {
     if (value !== undefined) caps[key] = value
@@ -356,6 +434,7 @@ export function makeCapabilities(engine: Engine, host: CapHost): Pick<PluginCont
   put('storage', makeStorageCap(engine, host))
   put('screen', makeScreenCap(engine, host))
   put('dialog', makeDialogCap(engine, host))
+  put('input', makeInputCap(engine, host))
   return caps as ReturnType<typeof makeCapabilities>
 }
 
@@ -375,5 +454,6 @@ export const ENGINE_CAPABILITIES: readonly Permission[] = [
   'ui.screen',
   'ui.dialog',
   'timer',
+  'input.keys',
   'storage.local',
 ]

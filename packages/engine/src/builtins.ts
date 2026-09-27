@@ -11,6 +11,20 @@ function transitionKind(name: string): TransitionKind {
   if ((TRANSITION_KINDS as readonly string[]).includes(name)) return name as TransitionKind
   throw new Error(`unknown transition "${name}" (fade, crossfade, wipe, slide, circle, blinds, rule)`)
 }
+/** A stage change that takes `fade=` or, with `trans=`, happens instantly
+ *  under an armed scene transition that then reveals it (`[bg]`, `[char]`,
+ *  `[hide]`, `[clear]`). */
+async function withTransition(ctx: BuiltinContext, change: (fade: number) => Promise<unknown>, defaultFade = 0.3): Promise<void> {
+  const trans = ctx.str('trans')
+  if (!trans) {
+    await change(ctx.num('fade', defaultFade))
+    return
+  }
+  ctx.engine.armTransition(transitionKind(trans), transitionOpts(ctx))
+  await change(0)
+  await ctx.engine.commitTransition()
+}
+
 /** The `[trans …]` / `trans=` parameters: `duration` (also the second positional), `dir`, `color`, `mask`, `softness`. */
 function transitionOpts(ctx: CommandContext): SceneTransitionOpts {
   const mask = ctx.str('mask')
@@ -84,18 +98,11 @@ export const builtins: Record<string, BuiltinFn> = {
   async bg(ctx) {
     const first = ctx.str(0)
     const color = ctx.str('color') ?? (first?.startsWith('#') ? first : undefined)
-    const trans = ctx.str('trans')
     if (!color && !first) throw new Error('[bg] needs an image path or color=')
-    if (trans) {
-      ctx.engine.armTransition(transitionKind(trans), transitionOpts(ctx))
-      if (color) await ctx.engine.stage.setBackground({ color }, 0)
-      else await ctx.engine.stage.setBackground({ url: ctx.resolve(first!), ref: first }, 0)
-      await ctx.engine.commitTransition()
-      return
-    }
-    const fade = ctx.num('fade', 0)
-    if (color) await ctx.engine.stage.setBackground({ color }, fade)
-    else await ctx.engine.stage.setBackground({ url: ctx.resolve(first!), ref: first }, fade)
+    await withTransition(ctx, async (fade) => {
+      if (color) await ctx.engine.stage.setBackground({ color }, fade)
+      else await ctx.engine.stage.setBackground({ url: ctx.resolve(first!), ref: first }, fade)
+    }, 0)
   },
 
   // [trans wipe dir=left duration=0.6] — freeze the picture; the scene changes
@@ -114,29 +121,32 @@ export const builtins: Record<string, BuiltinFn> = {
 
   // [char yuki happy at=left fade=0.5] — face/at optional once shown. A layered
   // actor also takes its layers by name: [char yuki body=casual extra=blush].
+  // `trans=` (as on [bg]) changes the character under a scene transition.
   async char(ctx) {
     const id = ctx.str(0)
     if (!id) throw new Error('[char] needs a character id')
-    await ctx.engine.showActor(id, ctx.str(1), {
-      at: ctx.str('at'),
-      fade: ctx.num('fade', 0.3),
-      src: ctx.str('src'),
-      y: optNum(ctx, 'y'),
-      scale: optNum(ctx, 'scale'),
-      rotation: optNum(ctx, 'rotation'),
-      layers: ctx.params,
-    })
+    await withTransition(ctx, (fade) =>
+      ctx.engine.showActor(id, ctx.str(1), {
+        at: ctx.str('at'),
+        fade,
+        src: ctx.str('src'),
+        y: optNum(ctx, 'y'),
+        scale: optNum(ctx, 'scale'),
+        rotation: optNum(ctx, 'rotation'),
+        layers: ctx.params,
+      }),
+    )
   },
 
-  // [hide yuki fade=0.3]
+  // [hide yuki fade=0.3] / [hide yuki trans=wipe]
   async hide(ctx) {
     const id = ctx.str(0)
-    if (id) await ctx.engine.stage.hideChar(id, ctx.num('fade', 0.3))
+    if (id) await withTransition(ctx, (fade) => ctx.engine.stage.hideChar(id, fade))
   },
 
-  // [clear fade=0.3] — hide all characters
+  // [clear fade=0.3] — hide all characters (`trans=` as on [hide])
   async clear(ctx) {
-    await ctx.engine.stage.clearChars(ctx.num('fade', 0.3))
+    await withTransition(ctx, (fade) => ctx.engine.stage.clearChars(fade))
   },
 
   // [wait 1.5]
@@ -216,13 +226,10 @@ export const builtins: Record<string, BuiltinFn> = {
     }
     const onclick = ctx.str('onclick')
     if (!first || !onclick) throw new Error('[hotspot] syntax: [hotspot <id> x= y= w= h= onclick="…" if=cond]')
-    // `if=` runs to the end of the tag (spaces allowed), as a [choice]'s does.
+    // `if=` runs to the end of the tag (spaces allowed), as a [choice]'s does. The
+    // engine re-evaluates it on every variable change: the region comes and goes.
     const { cond } = splitCondition(ctx.raw)
-    if (cond && !truthy(evalExpr(cond, ctx.engine.scope()))) {
-      ctx.engine.stage.hideHotspot(first)
-      return
-    }
-    ctx.engine.stage.showHotspot({ id: first, x: ctx.num('x', 0), y: ctx.num('y', 0), w: ctx.num('w', 10), h: ctx.num('h', 10), onclick })
+    ctx.engine.stage.showHotspot({ id: first, x: ctx.num('x', 0), y: ctx.num('y', 0), w: ctx.num('w', 10), h: ctx.num('h', 10), onclick, if: cond || undefined })
   },
 
   // [if affection >= 1 -> good_end]
@@ -254,16 +261,24 @@ export const builtins: Record<string, BuiltinFn> = {
   },
 
   // [input player prompt=@ui.askName default=Traveler maxlength=12 pattern=\S+ persist=true]
-  // — ask the player for a string and write it to `player`.
+  // — ask the player for a string and write it to `player`. `type=number min= max=
+  // step=` asks for a number (written as one); `lines=4` opens a multi-line area.
   async input(ctx) {
     const name = ctx.str(0) ?? ctx.str('var')
-    if (!name) throw new Error('[input] syntax: [input var prompt= default= maxlength= pattern= persist=true]')
+    if (!name) throw new Error('[input] syntax: [input var prompt= default= maxlength= pattern= persist=true type=number min= max= step= lines=]')
+    const type = ctx.str('type')
+    if (type !== undefined && type !== 'text' && type !== 'number') throw new Error(`[input] type=${type}: expected text or number`)
     await ctx.engine.promptInput(name, {
       prompt: ctx.str('prompt'),
       default: ctx.str('default'),
       maxlength: ctx.numOpt('maxlength'),
       pattern: ctx.str('pattern'),
       persist: ctx.str('persist') === 'true',
+      type,
+      min: ctx.numOpt('min'),
+      max: ctx.numOpt('max'),
+      step: ctx.numOpt('step'),
+      lines: ctx.numOpt('lines'),
     })
   },
 
@@ -308,6 +323,7 @@ export const builtins: Record<string, BuiltinFn> = {
       loop: ctx.str('loop') !== 'false',
       volume: ctx.num('volume', 1),
       fade: ctx.num('fade', 0),
+      restart: ctx.str('restart') === 'true',
     })
   },
 

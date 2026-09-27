@@ -26,6 +26,10 @@ export const SETTINGS_KEY = 'settings'
 export const READ_KEY = 'read'
 /** The unlocked replay segments' key. */
 export const UNLOCKS_KEY = 'unlocks'
+/** The replay scenes' key: `{ [segmentId]: { scene, thumb? } }` — the session as
+ *  normal play reached each replay's start label on the run that unlocked it
+ *  (a `SaveState`), and the background ref on screen when it was unlocked. */
+export const REPLAYS_KEY = 'replays'
 /** The persistent variables' key (`[persist]`, `sys.*`): a `GlobalsPayload`. */
 export const GLOBALS_KEY = 'globals'
 /** The players' plugin settings (`scope: player` config fields) by plugin id. */
@@ -43,6 +47,8 @@ export interface SettingsPayload {
   lang?: string
   dialogOpacity?: number
   uiScale?: number
+  /** The player's key bindings by binding id (`advance`, `<plugin id>:<id>`). */
+  keys?: Record<string, string | string[] | false>
 }
 
 /** What the `globals` key holds: every persistent variable ever written by

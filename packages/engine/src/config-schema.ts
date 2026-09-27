@@ -31,6 +31,7 @@ const bool: ConfigSchema = { type: 'boolean' }
 const len: ConfigSchema = { type: ['string', 'number'] }
 const strList: ConfigSchema = { type: 'array', items: str }
 const anyValue: ConfigSchema = {}
+const binding: ConfigSchema = { type: ['string', 'array', 'boolean'], items: str }
 const table = (values: ConfigSchema): ConfigSchema => ({ type: 'object', additionalProperties: values })
 const obj = (properties: Record<string, ConfigSchema>, additionalProperties: boolean | ConfigSchema = false): ConfigSchema => ({ type: 'object', properties, additionalProperties })
 const oneOf = (...values: readonly string[]): ConfigSchema => ({ type: 'string', enum: values })
@@ -39,7 +40,7 @@ const widget = (type: string, props: Record<string, ConfigSchema>): ConfigSchema
 
 /** `nilvn.config.toml`, section by section. */
 export const CONFIG_SCHEMA: ConfigSchema = obj({
-  game: obj({ title: str, textSpeed: num, entry: str, scripts: strList, defaultLang: str }),
+  game: obj({ title: str, textSpeed: num, entry: str, scripts: strList, lang: str, defaultLang: str }),
   plugins: obj({ use: strList }, { type: 'object' }),
   path: table(str),
   actors: table(
@@ -82,16 +83,18 @@ export const CONFIG_SCHEMA: ConfigSchema = obj({
     nameSize: len,
     indicatorColor: str,
   }),
-  title: obj({ enabled: bool, heading: str, subtitle: str, logo: str, logoWidth: len, background: str, bgm: str, bgmVolume: num, buttons: strList, layout: oneOf('center', 'left', 'right', 'bottom'), version: bool }),
-  ending: table(obj({ enabled: bool, heading: str, subtitle: str, background: str, bgm: str, bgmVolume: num, credits: { type: ['string', 'array'], items: str }, creditsDuration: num, after: oneOf('title', 'restart', 'none'), buttons: bool })),
+  title: obj({ enabled: bool, heading: str, subtitle: str, logo: str, logoWidth: len, background: str, color: str, shadow: str, bgm: str, bgmVolume: num, buttons: strList, layout: oneOf('center', 'left', 'right', 'bottom'), version: bool }),
+  ending: table(obj({ enabled: bool, heading: str, subtitle: str, background: str, color: str, shadow: str, bgm: str, bgmVolume: num, credits: { type: ['string', 'array'], items: str }, creditsDuration: num, after: oneOf('title', 'restart', 'none'), buttons: bool })),
   saves: obj({ autosave: { type: ['string', 'boolean'], enum: ['label', 'line', false] }, pages: num, slotsPerPage: num, thumbnail: oneOf('bg', 'none') }),
   menu: obj({ enabled: bool, entry: oneOf('top-right', 'top-left', 'bottom-right', 'bottom-left', 'hidden'), items: strList, wheelBacklog: bool }),
   settings: obj({ autoDelay: num, skipMode: oneOf('read', 'all'), show: strList, textSpeedRange: { type: 'array', items: num } }),
   keys: obj(
-    Object.fromEntries(['advance', 'menu', 'skipHold', 'skip', 'auto', 'quicksave', 'quickload', 'backlog', 'save', 'load', 'settings', 'fullscreen'].map((k) => [k, { type: ['string', 'array', 'boolean'], items: str }])),
+    Object.fromEntries(['advance', 'menu', 'skipHold', 'skip', 'auto', 'quicksave', 'quickload', 'backlog', 'save', 'load', 'settings', 'fullscreen'].map((k) => [k, binding])),
+    // `[keys.<plugin>]`: a plugin's contributes.keybindings defaults by binding id.
+    table(binding),
   ),
   persist: table(anyValue),
-  input: obj({ ...skinKeys, fieldBackground: str, fieldColor: str, fieldBorder: str, fieldRadius: len, fieldSize: len, position: oneOf('center', 'top', 'bottom'), ok: str, cancel: str }),
+  input: obj({ ...skinKeys, fieldBackground: str, fieldColor: str, fieldBorder: str, fieldRadius: len, fieldSize: len, promptColor: str, buttonBackground: str, buttonColor: str, position: oneOf('center', 'top', 'bottom'), ok: str, cancel: str }),
   choices: obj({
     position: oneOf('center', 'top', 'bottom', 'left', 'right'),
     layout: oneOf('column', 'grid'),
@@ -102,9 +105,10 @@ export const CONFIG_SCHEMA: ConfigSchema = obj({
     color: str,
     size: len,
     hover: str,
-    chosenStyle: oneOf('none', 'dim'),
+    chosenStyle: oneOf('none', 'dim', 'mark'),
     chosenBackground: str,
     chosenColor: str,
+    chosenMark: str,
     disabledBackground: str,
     disabledColor: str,
     timer: num,

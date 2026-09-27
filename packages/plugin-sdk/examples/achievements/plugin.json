@@ -1,0 +1,123 @@
+{
+  "id": "com.example.achievements",
+  "name": "plugin.achievements.name",
+  "description": "plugin.achievements.desc",
+  "version": "1.0.0",
+  "apiVersion": 2,
+  "engine": ">=0.19 <1",
+  "entries": {
+    "engine": "./engine.js"
+  },
+  "permissions": [
+    "storage.local",
+    "ui.screen",
+    "ui.dialog",
+    "input.keys"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "name": "achieve",
+        "label": "plugin.achievements.cmd.achieve.label",
+        "category": "flow",
+        "params": [
+          {
+            "key": "id",
+            "label": "plugin.achievements.cmd.achieve.id",
+            "type": "string",
+            "positional": 0,
+            "required": true
+          }
+        ]
+      }
+    ],
+    "config": [
+      {
+        "key": "list",
+        "type": "list",
+        "default": [
+          "prologue",
+          "first_choice",
+          "true_end"
+        ],
+        "label": "plugin.achievements.cfg.list",
+        "items": "string"
+      },
+      {
+        "key": "toasts",
+        "type": "boolean",
+        "default": true,
+        "scope": "player",
+        "label": "plugin.achievements.cfg.toasts"
+      }
+    ],
+    "menuItems": [
+      {
+        "id": "achievements",
+        "label": "plugin.achievements.menu"
+      }
+    ],
+    "titleItems": [
+      {
+        "id": "achievements",
+        "label": "plugin.achievements.menu"
+      }
+    ],
+    "keybindings": [
+      {
+        "id": "open",
+        "default": "k",
+        "label": "plugin.achievements.key.open",
+        "when": "always"
+      }
+    ]
+  },
+  "styles": [
+    "./main.css"
+  ],
+  "assets": [
+    "assets/badge.svg"
+  ],
+  "messages": {
+    "en": {
+      "plugin.achievements.name": "Achievements",
+      "plugin.achievements.desc": "Achievements that stay unlocked across playthroughs.",
+      "plugin.achievements.cmd.achieve.label": "Unlock achievement",
+      "plugin.achievements.cmd.achieve.id": "Achievement id",
+      "plugin.achievements.cfg.list": "Achievements (ids, comma-separated)",
+      "plugin.achievements.cfg.toasts": "Achievement notifications",
+      "plugin.achievements.menu": "Achievements",
+      "plugin.achievements.key.open": "Achievements",
+      "plugin.achievements.screen.title": "Achievements",
+      "plugin.achievements.screen.progress": "{done} / {total} unlocked",
+      "plugin.achievements.screen.empty": "This work lists no achievements.",
+      "plugin.achievements.screen.locked": "Locked",
+      "plugin.achievements.toast": "Achievement unlocked: {name}",
+      "plugin.achievements.a.prologue": "Opening Night",
+      "plugin.achievements.a.first_choice": "A Fork in the Road",
+      "plugin.achievements.a.true_end": "Dawn"
+    },
+    "zh": {
+      "plugin.achievements.name": "成就",
+      "plugin.achievements.desc": "跨周目保留的成就。",
+      "plugin.achievements.cmd.achieve.label": "解锁成就",
+      "plugin.achievements.cmd.achieve.id": "成就 ID",
+      "plugin.achievements.cfg.list": "成就列表（ID，逗号分隔）",
+      "plugin.achievements.cfg.toasts": "成就通知",
+      "plugin.achievements.menu": "成就",
+      "plugin.achievements.key.open": "成就",
+      "plugin.achievements.screen.title": "成就",
+      "plugin.achievements.screen.progress": "已解锁 {done} / {total}",
+      "plugin.achievements.screen.empty": "本作品没有设置成就。",
+      "plugin.achievements.screen.locked": "未解锁",
+      "plugin.achievements.toast": "解锁成就：{name}",
+      "plugin.achievements.a.prologue": "开幕之夜",
+      "plugin.achievements.a.first_choice": "岔路口",
+      "plugin.achievements.a.true_end": "黎明"
+    }
+  },
+  "authorUsage": [
+    "[achieve true_end] — unlock an achievement (remembered across playthroughs; a toast the first time)",
+    "the list the Achievements screen shows is the plugin setting list = \"id, id, …\"; names come from plugin.achievements.a.<id>"
+  ]
+}

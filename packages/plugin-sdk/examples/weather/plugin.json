@@ -1,0 +1,125 @@
+{
+  "id": "com.example.weather",
+  "name": "plugin.weather.name",
+  "description": "plugin.weather.desc",
+  "version": "1.1.0",
+  "apiVersion": 2,
+  "engine": ">=0.19 <1",
+  "entries": {
+    "engine": "./engine.js"
+  },
+  "permissions": [
+    "ui.layer",
+    "vars.write",
+    "save.slice",
+    "input.keys"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "name": "weather",
+        "label": "plugin.weather.cmd.weather.label",
+        "category": "fx",
+        "params": [
+          {
+            "key": "kind",
+            "label": "plugin.weather.cmd.weather.kind",
+            "type": "enum",
+            "options": [
+              {
+                "value": "rain",
+                "label": "plugin.weather.kind.rain"
+              },
+              {
+                "value": "snow",
+                "label": "plugin.weather.kind.snow"
+              },
+              {
+                "value": "clear",
+                "label": "plugin.weather.kind.clear"
+              }
+            ],
+            "positional": 0,
+            "required": true
+          },
+          {
+            "key": "intensity",
+            "label": "plugin.weather.cmd.weather.intensity",
+            "type": "number"
+          }
+        ]
+      }
+    ],
+    "config": [
+      {
+        "key": "intensity",
+        "type": "number",
+        "default": 0.6,
+        "min": 0,
+        "max": 1,
+        "step": 0.05,
+        "label": "plugin.weather.cfg.intensity"
+      },
+      {
+        "key": "enabled",
+        "type": "boolean",
+        "default": true,
+        "scope": "player",
+        "label": "plugin.weather.cfg.enabled"
+      }
+    ],
+    "keybindings": [
+      {
+        "id": "toggle",
+        "default": "w",
+        "label": "plugin.weather.key.toggle",
+        "when": "playing"
+      }
+    ],
+    "saveSlice": {
+      "version": 2
+    },
+    "hooks": [
+      "onSessionChange"
+    ]
+  },
+  "styles": [
+    "./main.css"
+  ],
+  "assets": [
+    "assets/raindrop.svg",
+    "assets/snowflake.svg"
+  ],
+  "messages": {
+    "en": {
+      "plugin.weather.name": "Weather",
+      "plugin.weather.desc": "Rain and snow falling over the stage.",
+      "plugin.weather.cmd.weather.label": "Weather",
+      "plugin.weather.cmd.weather.kind": "Kind",
+      "plugin.weather.cmd.weather.intensity": "Intensity",
+      "plugin.weather.cfg.intensity": "Default intensity",
+      "plugin.weather.cfg.enabled": "Weather effects",
+      "plugin.weather.key.toggle": "Show / hide weather",
+      "plugin.weather.kind.rain": "Rain",
+      "plugin.weather.kind.snow": "Snow",
+      "plugin.weather.kind.clear": "Clear"
+    },
+    "zh": {
+      "plugin.weather.name": "天气",
+      "plugin.weather.desc": "在舞台上飘落的雨和雪。",
+      "plugin.weather.cmd.weather.label": "天气",
+      "plugin.weather.cmd.weather.kind": "类型",
+      "plugin.weather.cmd.weather.intensity": "强度",
+      "plugin.weather.cfg.intensity": "默认强度",
+      "plugin.weather.cfg.enabled": "天气效果",
+      "plugin.weather.key.toggle": "显示 / 隐藏天气",
+      "plugin.weather.kind.rain": "雨",
+      "plugin.weather.kind.snow": "雪",
+      "plugin.weather.kind.clear": "晴"
+    }
+  },
+  "authorUsage": [
+    "[weather rain] / [weather snow intensity=0.3] / [weather clear] — falling particles over the stage",
+    "a script reads the current kind as weather.kind: [if weather.kind == 'rain' -> umbrella]"
+  ]
+}

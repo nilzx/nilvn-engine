@@ -1,4 +1,4 @@
-import type { AdvConfig, ChoicesConfig, InputConfig, WindowConfig } from './types.js'
+import type { ActorDef, AdvConfig, ChoicesConfig, InputConfig, WindowConfig } from './types.js'
 import type { Engine } from './engine.js'
 import type { ThemeTokens } from './theme.js'
 import { checkConfig } from './config-schema.js'
@@ -16,18 +16,19 @@ export function mergeDefaults(
 
 /** The shape of a script package's `config`: the sections `nilvn.json` carries
  *  itself are not the config's to set — the manifest names the actors, the
- *  enabled plugins, the entry and the language; assets travel by ref, so path
- *  aliases have nothing to point at. Returns the config to apply (those keys
- *  dropped, the manifest's title in place as the title page's heading) and the
- *  paths that were dropped, for the engine to report. */
+ *  enabled plugins, the entry and the language. `[path]` stays: its aliases
+ *  expand onto the package's asset refs (`@bg/sea.svg` → `assets/bg/sea.svg`).
+ *  Returns the config to apply (those keys dropped, the manifest's title in
+ *  place as the title page's heading) and the paths that were dropped, for the
+ *  engine to report. */
 export function packageConfig(cfg: AdvConfig, title: string): { cfg: AdvConfig; ignored: string[] } {
   const ignored: string[] = []
-  const { path, actors, ...rest } = cfg
-  if (path !== undefined) ignored.push('path')
+  const { actors, ...rest } = cfg
   if (actors !== undefined) ignored.push('actors')
   const out: AdvConfig = { ...rest }
-  const { entry, scripts, ...game } = cfg.game ?? {}
+  const { entry, scripts, lang, ...game } = cfg.game ?? {}
   if (entry !== undefined) ignored.push('game.entry')
+  if (lang !== undefined) ignored.push('game.lang')
   if (scripts !== undefined) ignored.push('game.scripts')
   out.game = { ...game, ...(title ? { title } : {}) }
   if (cfg.plugins) {
@@ -47,6 +48,7 @@ export function applyConfig(engine: Engine, cfg: AdvConfig): void {
   for (const p of checkConfig(cfg, { skip: ['window', 'input', 'choices'] })) engine.report({ phase: 'load', message: `config: ${p.path}: ${p.message}` }, true)
   const game = cfg.game ?? {}
   if (typeof game.title === 'string') document.title = game.title
+  if (typeof game.lang === 'string' && game.lang) engine.applyConfigLang(game.lang)
   if (typeof game.defaultLang === 'string' && game.defaultLang) engine.defaultLang = game.defaultLang
   if (typeof game.textSpeed === 'number') engine.textSpeed = game.textSpeed
   if (typeof game.entry === 'string') engine.entry = game.entry
@@ -54,9 +56,16 @@ export function applyConfig(engine: Engine, cfg: AdvConfig): void {
   if (cfg.preload) Object.assign(engine.preloadConfig, cfg.preload)
   if (cfg.ui) engine.ui.define(cfg.ui)
   Object.assign(engine.alias, cfg.path)
-  Object.assign(engine.actors, cfg.actors)
+  // `face` is the file's spelling of the runtime's `defaultFace`.
+  for (const [id, a] of Object.entries(cfg.actors ?? {})) {
+    const { face, ...def } = a as ActorDef & { face?: string }
+    engine.actors[id] = face !== undefined && def.defaultFace === undefined ? { ...def, defaultFace: face } : def
+  }
   Object.assign(engine.macros, cfg.macros)
   mergeDefaults(engine.defaults, cfg.defaults)
+  // Queued before the theme so a plugin's own tokens in [theme] are judged
+  // once its plugin is installed, not reported as unknown now.
+  if (cfg.plugins?.use) engine.queueUse(cfg.plugins.use)
   if (cfg.theme) engine.setTheme(cfg.theme)
   if (cfg.title) Object.assign(engine.titleConfig, cfg.title)
   for (const [id, e] of Object.entries(cfg.ending ?? {})) engine.endingConfig[id] = { ...engine.endingConfig[id], ...e }
@@ -99,7 +108,6 @@ export function applyConfig(engine: Engine, cfg: AdvConfig): void {
   // The menu was built at construction from the defaults: rebuild it so a
   // config loaded afterwards (the documented order) shapes its items and strings.
   engine.refreshMenu()
-  if (cfg.plugins?.use) engine.queueUse(cfg.plugins.use)
 }
 
 /** `[window]` keys → theme tokens. `skin` also clears the default gradient and
@@ -195,6 +203,9 @@ export function inputTheme(input: InputConfig, resolve: (path: string) => string
       case 'fieldBorder': t['input-border'] = str(v); break
       case 'fieldRadius': t['input-radius'] = str(v); break
       case 'fieldSize': t['input-size'] = str(v); break
+      case 'promptColor': t['input-prompt-color'] = str(v); break
+      case 'buttonBackground': t['input-button-bg'] = str(v); break
+      case 'buttonColor': t['input-button-color'] = str(v); break
       case 'position':
         if (v !== 'center' && v !== 'top' && v !== 'bottom') unknown.push(`position=${String(v)}`)
         break
@@ -237,6 +248,8 @@ export function choicesTheme(cfg: ChoicesConfig, resolve: (path: string) => stri
       case 'hover': t['choice-hover'] = str(v); break
       case 'chosenBackground': t['choice-chosen-bg'] = str(v); break
       case 'chosenColor': t['choice-chosen-color'] = str(v); break
+      // plain text, quoted into a CSS `content` string
+      case 'chosenMark': t['choice-chosen-mark'] = `"${String(str(v) ?? '').replace(/["\\]/g, '\\$&')}"`; break
       case 'disabledBackground': t['choice-disabled-bg'] = str(v); break
       case 'disabledColor': t['choice-disabled-color'] = str(v); break
       case 'timerBackground': t['choice-timer-bg'] = str(v); break
@@ -248,7 +261,7 @@ export function choicesTheme(cfg: ChoicesConfig, resolve: (path: string) => stri
         if (v !== 'column' && v !== 'grid') unknown.push(`layout=${String(v)}`)
         break
       case 'chosenStyle':
-        if (v !== 'none' && v !== 'dim') unknown.push(`chosenStyle=${String(v)}`)
+        if (v !== 'none' && v !== 'dim' && v !== 'mark') unknown.push(`chosenStyle=${String(v)}`)
         break
       case 'columns':
       case 'timer':

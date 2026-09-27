@@ -1,0 +1,75 @@
+/* com.example.achievements — injected while the plugin is active.
+   Everything draws with the work's theme tokens (panel / button / accent), so the
+   screen follows the theme; no colour literals. */
+
+.exa-screen {
+  display: flex;
+  flex-direction: column;
+  gap: 2cqh;
+  color: var(--nilvn-panel-color);
+  /* Stage-relative, and following the player's text-size setting like the engine's panels. */
+  font-size: calc(2.4cqh * var(--nilvn-ui-scale, 1));
+}
+
+.exa-progress,
+.exa-empty {
+  margin: 0;
+  opacity: 0.8;
+}
+
+.exa-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(26cqw, 1fr));
+  gap: 1.6cqh;
+}
+
+.exa-item {
+  display: flex;
+  align-items: center;
+  gap: 1.6cqh;
+  padding: 1.4cqh 1.6cqh;
+  background: var(--nilvn-button-bg);
+  color: var(--nilvn-button-color);
+  border: var(--nilvn-button-border);
+  border-radius: 1.2cqh;
+}
+
+.exa-item.is-unlocked {
+  border-color: var(--nilvn-accent);
+}
+
+.exa-badge {
+  width: 6cqh;
+  height: 6cqh;
+  flex: none;
+}
+
+.exa-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.exa-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.exa-state {
+  font-size: 0.8em;
+  color: var(--nilvn-muted);
+}
+
+/* Locked: the same badge and name, greyed out. */
+.exa-item.is-locked .exa-badge {
+  filter: grayscale(1);
+  opacity: 0.35;
+}
+
+.exa-item.is-locked .exa-name {
+  color: var(--nilvn-disabled);
+}

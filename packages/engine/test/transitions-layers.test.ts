@@ -77,6 +77,27 @@ describe('scene transitions', () => {
     e.destroy()
   })
 
+  it('[char] / [hide] / [clear] take trans= as [bg] does: the change lands at once under the transition', async () => {
+    const e = engineWith({ actors: { yuki: { name: 'Yuki', sprites: '@char/yuki-{face}.png', defaultFace: 'smile' } } })
+    const ends: string[] = []
+    const end = e.stage.endTransition.bind(e.stage)
+    e.stage.endTransition = (kind, opts) => {
+      ends.push(kind)
+      return end(kind, opts)
+    }
+    e.loadSource('[char yuki trans=wipe dir=left duration=0]\nnarr: shown\n[hide yuki trans=circle duration=0]\n[char yuki]\n[clear trans=fade duration=0 color=#fff]\n[set c = 1]\n')
+    void e.start()
+    await until(() => text(e) === 'shown')
+    expect(e.stage.root.querySelector('.nilvn-char[data-id="yuki"]')).not.toBeNull()
+    expect(ends).toEqual(['wipe'])
+    e.stage.root.click()
+    await until(() => e.vars.c === 1)
+    expect(ends).toEqual(['wipe', 'circle', 'fade'])
+    expect(snapshot(e)).toBeNull()
+    expect(e.diagnostics.filter((d) => d.phase === 'exec')).toEqual([])
+    e.destroy()
+  })
+
   it('a slide keeps the camera\'s resting `none` out of its keyframes (it is not a transform list)', async () => {
     const e = engineWith()
     const frames: Record<string, string>[][] = []

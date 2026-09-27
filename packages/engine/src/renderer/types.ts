@@ -90,6 +90,9 @@ export interface SpriteSpec {
   /** Script commands (one per line) the engine runs when the sprite is clicked;
    *  the sprite takes pointer events only when set. */
   onclick?: string
+  /** A condition (`[sprite … if=]`), re-evaluated on every variable change:
+   *  while false the sprite is not drawn and takes no click. */
+  if?: string
 }
 
 /** A clickable region of the stage (`[hotspot]`), in percent of the stage. */
@@ -101,6 +104,9 @@ export interface HotspotSpec {
   h: number
   /** Script commands (one per line) run on click. */
   onclick: string
+  /** A condition (`[hotspot … if=]`), re-evaluated on every variable change:
+   *  while false the region is off. Absent = always on. */
+  if?: string
 }
 
 // ---- object transform model ----
@@ -196,6 +202,15 @@ export interface AnimOpts {
    *    (mixed units compose through CSS `calc`), rotation adds, scale and opacity
    *    multiply — each channel composed by its own identity. */
   compose?: 'absolute' | 'offset'
+  /** Names the animation on its object: starting another with the same key
+   *  replaces it (so re-applying an effect never stacks a second copy), and
+   *  `stopAnimations(objId, key)` stops it. */
+  key?: string
+  /** At its natural end (not when stopped), the last frame's channels become the
+   *  object's resting pose — what `getProp` reads and a save keeps. `absolute`
+   *  compose and a finite `iterations` only. Default false: the object returns to
+   *  its resting pose, as any gesture does. */
+  commit?: boolean
 }
 
 /** Shape of a full-screen transition (`Renderer.transitionScreen`). */
@@ -294,6 +309,8 @@ export interface StageState {
     height?: number
     /** Click commands (`[sprite … onclick=]`). */
     onclick?: string
+    /** Its `if=` (`SpriteSpec.if`). */
+    if?: string
     band?: ObjectBand
     y?: number
     scale?: number
@@ -393,6 +410,10 @@ export interface ScreenModel {
   logoWidth?: string
   /** A CSS background (colour, gradient or `url(…)`); the stage shows through when absent. */
   background?: string
+  /** The page's text colour (heading, subtitle, credits); default the theme's `screen-color`. */
+  color?: string
+  /** The heading's `text-shadow`; default the theme's `screen-heading-shadow`. */
+  shadow?: string
   layout?: 'center' | 'left' | 'right' | 'bottom'
   buttons: ScreenButton[]
   /** Rolling credits, one entry per line; empty entries are blank lines. */
@@ -449,6 +470,14 @@ export interface PromptOptions {
   /** A regular expression source the whole value must match for OK to enable. */
   pattern?: string
   position?: 'center' | 'top' | 'bottom'
+  /** `number`: a numeric field (`min` / `max` / `step` bound it; `pattern` is ignored). */
+  type?: 'text' | 'number'
+  min?: number
+  max?: number
+  step?: number
+  /** More than 1: a multi-line text area that many rows tall (Enter adds a line,
+   *  Ctrl / ⌘ + Enter confirms). Text only. */
+  lines?: number
 }
 
 export interface PromptHandle {
@@ -486,8 +515,10 @@ export interface ChoiceView {
   segments: Segment[]
   /** Drawn greyed and not pickable (`[choice … disabled=cond]`). */
   disabled?: boolean
-  /** Drawn as taken in an earlier run (`[choices] chosenStyle`). */
+  /** Drawn as taken in an earlier run (`[choices] chosenStyle = "dim"`). */
   chosen?: boolean
+  /** Its usual look plus a badge for an earlier run (`chosenStyle = "mark"`). */
+  marked?: boolean
 }
 
 export interface ChoicesPromptOptions {
@@ -580,6 +611,9 @@ export interface Renderer {
    *  (non-uniform timing) and `easing` (per-segment), used by recorded animations.
    *  No-op when the object is absent. */
   animate(objId: string, keyframes: AnimFrame[], opts: AnimOpts): Promise<void>
+  /** Stop the animations `animate` started on an object (all, or the one with
+   *  `key`); it returns to its resting pose. */
+  stopAnimations(objId: string, key?: string): void
 
   // ---- fixed z-bands ----
   /** The object's current band, or undefined for non-bandable objects
@@ -671,6 +705,16 @@ export interface Renderer {
   showHotspot(spec: HotspotSpec): void
   hideHotspot(id: string): void
   clearHotspots(): void
+  /** How the renderer evaluates an object's `if` (a hotspot's, a sprite's): the
+   *  engine sets this against its variables. Unset = every condition holds. */
+  evalCondition?: (expr: string) => boolean
+  /** Re-evaluate every object's `if` and turn each on (drawn, clickable,
+   *  probed for reachability) or off (not drawn, clicks pass through). The
+   *  engine calls it whenever a variable changes. */
+  refreshConditions(): void
+  /** The objects the player can click right now: active hotspots
+   *  (`hotspot:<id>`) and shown sprites with an `onclick` (`sprite:<id>`). */
+  clickableIds(): string[]
   /** What a click on a clickable object does: the engine sets this to run the
    *  object's `onclick` commands. `objId` is `hotspot:<id>` or `sprite:<id>`. */
   objectClick?: (objId: string, onclick: string) => void

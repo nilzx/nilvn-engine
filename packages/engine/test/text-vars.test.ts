@@ -163,7 +163,7 @@ describe('persistent variables', () => {
     e.destroy()
   })
 
-  it('the vars capability sees persistent and session variables alike; setGlobal declares', async () => {
+  it('the vars capability keeps its own namespace, reads author variables through global, and honours [persist]', async () => {
     let cap: PluginContext['vars'] | undefined
     const spy: EnginePlugin = {
       id: 'test.cap',
@@ -173,15 +173,19 @@ describe('persistent variables', () => {
       },
     }
     const e = engineWith({ plugins: [spy] })
-    e.loadSource('[persist p = 1]\n[set s = 2]\nnarr: x\n')
+    e.loadSource('[persist p = 1]\n[persist cap.best = 0]\n[set s = 2]\nnarr: x\n')
     void e.start()
     await until(() => text(e) === 'x')
-    expect(cap!.get('p')).toBe(1)
-    expect(cap!.has('p')).toBe(true)
-    expect(cap!.all()).toMatchObject({ p: 1, s: 2 })
+    expect(cap!.namespace).toBe('test.cap')
+    expect(cap!.global('p')).toBe(1)
+    expect(cap!.global('s')).toBe(2)
+    expect(cap!.has('p')).toBe(false)
+    cap!.set('best', 9) // the author declared cap.best persistent
+    expect(e.globals).toMatchObject({ p: 1, 'test.cap.best': 9 })
+    expect(e.getVar('cap.best')).toBe(9) // the short prefix is an alias
+    expect(cap!.get('best')).toBe(9)
+    expect(cap!.all()).toEqual({ best: 9 })
     e.setGlobal('q', 'new')
-    cap!.set('p', 9)
-    expect(e.globals).toMatchObject({ p: 9, q: 'new' })
     expect(e.isPersistent('q')).toBe(true)
     e.destroy()
   })
@@ -220,6 +224,45 @@ describe('[input]', () => {
     await until(() => text(e) === 'D1/D2/D3')
     expect(e.globals).toMatchObject({ a: 'D1' })
     expect(e.vars).toEqual({ b: 'D2', c: 'D3' })
+    e.destroy()
+  })
+
+  it('type=number takes a number within min / max and writes a number; lines= opens a multi-line area', async () => {
+    const e = engineWith()
+    e.loadSource('[input age type=number min=1 max=99 default=20]\n[input note lines=3]\n[set older = age + 1]\nnarr: {$older}|{$note}\n')
+    void e.start()
+    await until(() => modal(e) !== null)
+    expect(field(e).type).toBe('number')
+    expect([field(e).min, field(e).max]).toEqual(['1', '99'])
+    field(e).value = '120'
+    field(e).dispatchEvent(new Event('input'))
+    expect(button(e, 'ok').disabled).toBe(true) // out of range
+    field(e).value = '41'
+    field(e).dispatchEvent(new Event('input'))
+    button(e, 'ok').click()
+    await until(() => modal(e)?.querySelector('textarea') != null)
+    expect(e.vars.age).toBe(41) // a number, not "41"
+    const area = modal(e)!.querySelector('textarea')!
+    expect(area.rows).toBe(3)
+    area.value = 'line one\nline two'
+    area.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await tick(20)
+    expect(modal(e)).not.toBeNull() // plain Enter is a new line
+    area.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', ctrlKey: true, bubbles: true }))
+    await until(() => text(e).startsWith('42|'))
+    expect(e.vars.note).toBe('line one\nline two')
+    e.destroy()
+  })
+
+  it('type=number falls back to its default as a number; a bad type is reported', async () => {
+    const e = engineWith()
+    e.loadSource('[input n type=number default=7]\n[input m type=date]\nnarr: {$n}\n')
+    void e.start()
+    await until(() => modal(e) !== null)
+    button(e, 'cancel').click()
+    await until(() => text(e) === '7')
+    expect(e.vars.n).toBe(7)
+    expect(e.diagnostics.some((d) => d.message.includes('type=date'))).toBe(true)
     e.destroy()
   })
 

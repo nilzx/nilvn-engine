@@ -12,7 +12,7 @@
 // plugins (@nilvn/plugins) are written against exactly this surface.
 
 import type { PluginManifest } from '@nilvn/core'
-import type { EnginePlugin } from '@nilvn/engine'
+import type { EnginePlugin, PluginContext } from '@nilvn/engine'
 
 export {
   PLUGIN_API_VERSION,
@@ -60,6 +60,8 @@ export type {
   TextEffectDef,
   ObjectKindSchema,
   EffectSchema,
+  ServiceDef,
+  ThemeTokenDef,
   SemVer,
 } from '@nilvn/core'
 export type {
@@ -102,6 +104,8 @@ export type {
   ReplayDef,
   UiCap,
   TimerCap,
+  ServicesCap,
+  ServiceApi,
   VolumeChannel,
   PluginLoader,
   PluginState,
@@ -127,4 +131,28 @@ export function definePlugin<T extends EnginePlugin>(plugin: T): T {
 /** Identity helper for a `plugin.json` authored in TS/JS and written out later. */
 export function defineManifest<T extends PluginManifest>(manifest: T): T {
   return manifest
+}
+
+/** Per-activation state for a declarative module. `perActivation(init)` returns
+ *  `state(ctx)`: the state object of that activation, created by `init(ctx)` on
+ *  first use and dropped when the plugin is released. Commands (`plugin`),
+ *  hooks and the save-slice methods get the same `ctx` that `activate` did, so
+ *  they all reach the same object:
+ *
+ *    const state = perActivation(() => ({ kind: 'clear', layer: null }))
+ *    export default definePlugin({
+ *      activate(ctx) { state(ctx).layer = ctx.ui?.layer('rain') ?? null },
+ *      commands: { weather({ str, plugin }) { state(plugin).kind = str(0, 'clear') } },
+ *    })
+ *
+ *  Nothing is shared with the engine: the state stays in the plugin's own realm. */
+export function perActivation<S>(init: (ctx: PluginContext) => S): (ctx: PluginContext) => S {
+  const live = new WeakMap<PluginContext, S>()
+  return (ctx) => {
+    if (live.has(ctx)) return live.get(ctx)!
+    const s = init(ctx)
+    live.set(ctx, s)
+    ctx.onDispose(() => live.delete(ctx))
+    return s
+  }
 }

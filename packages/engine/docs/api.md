@@ -94,12 +94,6 @@ actors, languages and plugin set.
 | `setPluginConfig(id, patch, { player? })` / `pluginConfigValue(id, key)` / `pluginConfigAll(id)` / `onPluginConfigChange(id, fn)` | A plugin's settings: the author's layer, or the player's with `player: true` (persisted); what `ctx.config` reads. |
 | `actorField(actorId, pluginId, key)` | A plugin-declared actor field (`contributes.actorFields`), e.g. voicefx's `voice`. |
 | `finish(endingId?)` | End the run now into an ending (`default` when unnamed): the session enters `ending`, `onEnd` fires. |
-
-**A hidden page has no clock.** Browsers freeze `requestAnimationFrame` and Web
-Animations while a tab is in the background, so a transition, a `[wait]` or a
-`[preload wait=true]` does not settle until the tab is shown again — the playhead
-stops where it was and resumes on its own. Nothing is lost, but an automated run
-has to keep the page visible (or finish the finite animations itself).
 | `session` / `ending` / `onSessionChange(fn)` | Where the session is, which ending was reached, and the subscription (see [Session](#session)). |
 | `destroy()` | Stop everything, release listeners, timers, audio, plugins and the stage DOM. The instance is dead afterwards. |
 | `wait(sec)` / `sleep(ms)` | Delays that resolve early if the session is reset. |
@@ -107,7 +101,7 @@ has to keep the page visible (or finish the finite animations itself).
 | `globals` / `setGlobal(name, value)` / `declarePersist(name, default)` / `isPersistent(name)` | Persistent variables: declared by `[persist]` / the `[persist]` section / `[input persist=true]` (or `declarePersist`), plus the reserved `sys.*` names. Kept in the save store's `globals` key, never in a `SaveState`; `setVar` routes a persistent name here. |
 | `getVar(name)` / `scope()` | One variable (persistent first), and the merged table expressions evaluate against. |
 | `fill(text)` | `{$var}` / `{@key}` placeholders filled with current values — what dialogue, choices, actor names and config strings go through. |
-| `promptInput(name, { prompt, default, maxlength, pattern, persist })` | The `[input]` command: an in-engine text box; resolves to the value written. |
+| `promptInput(name, { prompt, default, maxlength, pattern, persist, type, min, max, step, lines })` | The `[input]` command: an in-engine text box; resolves to the value written (a number for `type: 'number'`). |
 | `choicesConfig` / `inputConfig` | The `[choices]` / `[input]` sections as applied (chosen style, timer; position, labels). |
 | `loadScripts(urls)` / `scripts` | Play several `.nvn` files as chunks (`[game] scripts`): global labels, list-order fall-through, saves addressing the file. `[include]` lines are spliced in (also by `loadScript`). |
 | `call(label)` / `returnFromCall()` | `[call]` / `[return]`: the return stack rides in `SaveState.calls`. |
@@ -120,6 +114,12 @@ has to keep the page visible (or finish the finite animations itself).
 | `resolve(path)` | Resolve a resource path: aliases, then the asset table, then `baseUrl`. |
 | `config` | The parsed config file, if one was loaded. |
 | `theme` / `setTheme(patch)` / `onThemeChange(fn)` | The effective theme overrides, the base-layer writer and its change signal (see [Theming](#theming)). |
+
+**A hidden page has no clock.** Browsers freeze `requestAnimationFrame` and Web
+Animations while a tab is in the background, so a transition, a `[wait]` or a
+`[preload wait=true]` does not settle until the tab is shown again — the playhead
+stops where it was and resumes on its own. Nothing is lost, but an automated run
+has to keep the page visible (or finish the finite animations itself).
 
 The player advances a line with click, Space or Enter; a click during typing
 reveals the rest of the line.
@@ -143,7 +143,9 @@ reveals the rest of the line.
   open the menu's panels. A host that draws its own page passes `screens: false`
   (or `[title] enabled = false`) and keeps the state machine.
 - **`playing`** — every session entry: `start()`, `restart()`, `restoreState()`,
-  a replay.
+  a replay. While playing, `waitingForPlayer` *(since 0.19.0)* is true when
+  a line is fully shown and waits for the player to go on — not while it types, a
+  transition or a command runs, or a prompt is up.
 - **`ending`** — `[end]`, `[ending id]` or running off the end. `engine.ending`
   is the id (`default` unless named); `onEnd` still fires; the ending page for
   that id (`[ending.<id>]`: heading, background, music, rolling credits, what
@@ -152,7 +154,10 @@ reveals the rest of the line.
   `onSessionChange`.
 
 `engine.session` reads the state; `onSessionChange(fn)` (and the
-`onSessionChange` option / plugin hook) receives `(state, prev)`.
+`onSessionChange` option / plugin hook) receives `(state, prev)`. Every session
+entry is announced, even from `playing` to `playing` (`restart()`, loading while
+playing), so a plugin that draws its own things resets them there. On a load the
+order is `onSessionChange` → each plugin's `restoreState` → `onRestored`.
 
 While `playing`, the built-in **system menu** (☰ / Esc, `[menu]` in the config)
 offers save / load / quick save / quick load / backlog / auto / skip / settings /
@@ -217,7 +222,10 @@ speed, the language, the playing music and ambience tracks, the pending
 `save.slice`. `restoreState` returns `false` without
 touching anything when the save is incompatible (wrong version, a label that no
 longer exists, an out-of-range offset). A slice whose plugin is not active is
-carried through to the next save untouched.
+carried through to the next save untouched. `extVersion` records the shape version
+of each slice that is not version 1 (`EnginePlugin.stateVersion`); on load an older
+slice goes through the plugin's `migrateState`, and one it cannot read is dropped
+with a diagnostic without failing the load.
 
 `saveKey` and `buildInfo` are the per-work id and tool version the engine's
 persistence uses to namespace and label saves.
@@ -245,44 +253,153 @@ the defaults. A `''` value removes a token from its layer. An unknown token is a
 diagnostic (`load` from the host / config, `exec` from the script) and is painted
 anyway, so typos surface without breaking the page.
 
-| Token | Default | Draws |
-|---|---|---|
-| `font` | PingFang SC, Hiragino Sans GB, Microsoft YaHei, system-ui | The stage font. |
-| `ui-scale` | `1` | Multiplies every chrome font size (`text-size`, `name-size`, `choice-size`) — the one knob for small screens. |
-| `accent` | `#7c5cff` | The accent colour. Reach: the default of `name-bg` and `button-on-bg`, the sliders' thumbs, the backlog's ▶ buttons, the title / ending pages' primary button through `button-on-bg`. |
-| `text` | `#f4f5fa` | Base text colour of the stage; `text-color` defaults to it. |
-| `dialog-bg` | dark gradient | Dialogue box background (any CSS background). |
-| `dialog-skin` | `none` | An image stretched over the box (`url(…)`), above `dialog-bg`. |
-| `dialog-skin-slice` | `none` | A nine-sliced skin instead: a full CSS `border-image` value (`[window] slice` builds it — `url(…) 40 fill / 40px stretch`). |
-| `dialog-border` | `1px solid rgba(255,255,255,.14)` | Box border (`none` to drop it). |
-| `dialog-radius` | `1.8cqh` | Corner radius. |
-| `dialog-opacity` | `1` | Opacity of the default chrome (background + skin), not of the text. |
-| `dialog-inset` | `3.5%` | Left / right inset. |
-| `dialog-bottom` / `dialog-top` | `3.5cqh` / `auto` | Which edge the box hangs from, and how far. |
-| `dialog-height` | `24cqh` | Minimum height. |
-| `dialog-padding` | `3.6cqh 3cqw 2cqh` | Inner padding. |
-| `text-size` / `text-line-height` | `3.4cqh` / `1.75` | Dialogue text. |
-| `text-color` / `text-shadow` | `var(--nilvn-text)` / soft shadow | Dialogue text. |
-| `name-bg` / `name-color` | `var(--nilvn-accent)` / `#ffffff` | Name-tag background and text. An actor's `color` / `textColor` override these for that speaker. |
-| `name-size` / `name-offset` | `2.7cqh` / `2.4cqw` | Name-tag font size and left offset. |
-| `indicator-color` / `indicator-size` | `rgba(255,255,255,.85)` / `1.4cqh` | The click-to-continue triangle. |
-| `choices-backdrop` | `rgba(5,6,12,.35)` | The veil behind a choices prompt. |
-| `choices-gap` / `choice-width` | `2.6cqh` / `38cqw` | Space between the buttons; each button's minimum width. |
-| `choice-skin` / `choice-skin-slice` | `none` | An image on every button, stretched or nine-sliced (`[choices] skin` / `slice` build them). |
-| `choice-chosen-bg` / `choice-chosen-color` | dimmer gradient / `rgba(255,255,255,.6)` | An option taken in an earlier run (`[choices] chosenStyle = "dim"`). |
-| `choice-disabled-bg` / `choice-disabled-color` | | A `disabled=` option. |
-| `choice-timer-bg` / `choice-timer-color` | | The time-left bar of a timed prompt. |
-| `progress-bg` / `progress-color` | | The loading page's progress bar. |
-| `hud-bg` / `hud-border` / `hud-color` / `hud-radius` / `hud-padding` / `hud-size` | | A `[ui.<id>]` HUD. |
-| `window-bg` / `window-border` / `window-color` / `window-radius` / `window-padding` / `window-width` | the `panel-*` values | A `[ui.<id>]` window. |
-| `bar-bg` / `bar-color` / `bar-height` | | The `bar` widget. |
-| `choice-bg` / `choice-color` / `choice-border` / `choice-hover` / `choice-radius` / `choice-size` | | Choice buttons. |
-| `panel-bg` / `panel-border` / `panel-color` | | Menus, screens and plugin panels. |
-| `button-bg` / `button-color` / `button-border` / `button-hover` | | Buttons on those panels. |
-| `button-on-bg` / `button-on-color` | `var(--nilvn-accent)` / `var(--nilvn-button-color)` | The selected / primary state: an active auto / skip item, the chosen option in a settings row, the current slot page, the title and ending pages' primary button. Set both when your `accent` is light, so the selected text keeps its contrast. |
-| `input-box-bg` / `input-box-border` / `input-box-radius` | the `panel-*` values / `1.4cqh` | The `[input]` box. |
-| `input-box-skin` / `input-box-skin-slice` | `none` | An image behind the `[input]` box, stretched or nine-sliced (`[input] skin` / `slice` build them). |
-| `input-bg` / `input-color` / `input-border` / `input-radius` / `input-size` | | The `[input]` text field. |
+| Token | Draws |
+|---|---|
+| `font` | The stage font. |
+| `ui-scale` | Multiplies every chrome font size (`text-size`, `name-size`, `choice-size`) — the one knob for small screens. |
+| `accent` | The accent colour. Reach: the default of `name-bg` and `button-on-bg`, the sliders' thumbs, the backlog's ▶ buttons, the title / ending pages' primary button through `button-on-bg`. |
+| `text` | Base text colour of the stage; `text-color` defaults to it. |
+| `muted` | Secondary text: hints, captions, a locked or unavailable entry in a plugin screen. Derived from `text`. |
+| `disabled` | A disabled control's text. Derived from `text`. |
+| `dialog-bg` | Dialogue box background (any CSS background). |
+| `dialog-skin` | An image stretched over the box (`url(…)`), above `dialog-bg`. |
+| `dialog-skin-slice` | A nine-sliced skin instead: a full CSS `border-image` value (`[window] slice` builds it — `url(…) 40 fill / 40px stretch`). |
+| `dialog-border` | Box border (`none` to drop it). |
+| `dialog-radius` | Corner radius. |
+| `dialog-opacity` | Opacity of the default chrome (background + skin), not of the text. |
+| `dialog-inset` | Left / right inset. |
+| `dialog-bottom` / `dialog-top` | Which edge the box hangs from, and how far. |
+| `dialog-height` | Minimum height. |
+| `dialog-padding` | Inner padding. |
+| `text-size` / `text-line-height` | Dialogue text. |
+| `text-color` / `text-shadow` | Dialogue text. |
+| `name-bg` / `name-color` | Name-tag background (defaults to `accent`) and text. An actor's `color` / `textColor` override these for that speaker. |
+| `name-size` / `name-offset` | Name-tag font size and left offset. |
+| `name-shadow` | The name tag's drop shadow (a CSS `box-shadow`). *(since 0.19.0)* |
+| `indicator-color` / `indicator-size` | The click-to-continue triangle. |
+| `choices-backdrop` | The veil behind a choices prompt. |
+| `choices-gap` / `choice-width` | Space between the buttons; each button's minimum width. |
+| `choice-skin` / `choice-skin-slice` | An image on every button, stretched or nine-sliced (`[choices] skin` / `slice` build them). |
+| `choice-chosen-bg` / `choice-chosen-color` | An option taken in an earlier run (`[choices] chosenStyle = "dim"`). |
+| `choice-chosen-mark` | The badge after such an option under `chosenStyle = "mark"` — a CSS `content` value (`"\2713"`); `[choices] chosenMark` takes plain text. *(since 0.19.0)* |
+| `choice-disabled-bg` / `choice-disabled-color` | A `disabled=` option (the text defaults to `disabled`). |
+| `choice-timer-bg` / `choice-timer-color` | The time-left bar of a timed prompt. |
+| `progress-bg` / `progress-color` | The loading page's progress bar. |
+| `hud-bg` / `hud-border` / `hud-color` / `hud-radius` / `hud-padding` / `hud-size` | A `[ui.<id>]` HUD. |
+| `window-bg` / `window-border` / `window-color` / `window-radius` / `window-padding` / `window-width` | A `[ui.<id>]` window (colours default to the `panel-*` values). |
+| `bar-bg` / `bar-color` / `bar-height` | The `bar` widget. |
+| `choice-bg` / `choice-color` / `choice-border` / `choice-hover` / `choice-radius` / `choice-size` | Choice buttons. |
+| `choice-glow` | The glow under a hovered option (a CSS `box-shadow`); derived from `choice-hover`. *(since 0.19.0)* |
+| `screen-bg` / `screen-color` / `screen-heading-shadow` | The title / ending / loading pages: the veil behind a page without a `background`, the page's text, and the heading's shadow (`[title]` / `[ending.<id>]` `color` and `shadow` override the last two per page). *(since 0.19.0)* |
+| `panel-bg` / `panel-border` / `panel-color` | Menus, screens and plugin panels. |
+| `button-bg` / `button-color` / `button-border` / `button-hover` | Buttons on those panels. |
+| `divider` / `backdrop` / `panel-shadow` / `danger` | A rule between groups of a panel, the dim layer under a dialog, a floating panel's shadow, a warning (an invalid entry). *(since 0.19.0)* |
+| `button-on-bg` / `button-on-color` | The selected / primary state: an active auto / skip item, the chosen option in a settings row, the current slot page, the title and ending pages' primary button. Set both when your `accent` is light, so the selected text keeps its contrast. |
+| `input-box-bg` / `input-box-border` / `input-box-radius` | The `[input]` box (defaults to the panel look). |
+| `input-box-skin` / `input-box-skin-slice` | An image behind the `[input]` box, stretched or nine-sliced (`[input] skin` / `slice` build them). |
+| `input-bg` / `input-color` / `input-border` / `input-radius` / `input-size` | The `[input]` text field. |
+| `input-prompt-color` / `input-button-bg` / `input-button-color` | The `[input]` box's prompt text and its Cancel button (OK keeps `button-on-*`). *(since 0.19.0)* |
+
+Every token's default, as the base stylesheet declares it (generated from
+`THEME_TOKENS`; values may reference other tokens):
+
+<!-- theme-defaults:start — generated from THEME_TOKENS by packages/engine/test/theme-docs.test.ts -->
+| Token | Default |
+|---|---|
+| `font` | `"PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif` |
+| `ui-scale` | `1` |
+| `accent` | `#7c5cff` |
+| `text` | `#f4f5fa` |
+| `muted` | `color-mix(in srgb, var(--nilvn-text) 60%, transparent)` |
+| `disabled` | `color-mix(in srgb, var(--nilvn-text) 35%, transparent)` |
+| `dialog-bg` | `linear-gradient(180deg,rgba(22,26,42,.82),rgba(10,12,22,.92))` |
+| `dialog-skin` | `none` |
+| `dialog-skin-slice` | `none` |
+| `dialog-border` | `1px solid rgba(255,255,255,.14)` |
+| `dialog-radius` | `1.8cqh` |
+| `dialog-opacity` | `1` |
+| `dialog-inset` | `3.5%` |
+| `dialog-bottom` | `3.5cqh` |
+| `dialog-top` | `auto` |
+| `dialog-height` | `24cqh` |
+| `dialog-padding` | `3.6cqh 3cqw 2cqh` |
+| `text-size` | `3.4cqh` |
+| `text-line-height` | `1.75` |
+| `text-color` | `var(--nilvn-text)` |
+| `text-shadow` | `0 1px 2px rgba(0,0,0,.5)` |
+| `name-bg` | `var(--nilvn-accent)` |
+| `name-color` | `#ffffff` |
+| `name-size` | `2.7cqh` |
+| `name-offset` | `2.4cqw` |
+| `name-shadow` | `0 2px 10px rgba(0,0,0,.35)` |
+| `indicator-color` | `rgba(255,255,255,.85)` |
+| `indicator-size` | `1.4cqh` |
+| `choices-backdrop` | `rgba(5,6,12,.35)` |
+| `choice-bg` | `linear-gradient(180deg,rgba(40,46,74,.92),rgba(24,28,48,.92))` |
+| `choice-color` | `#ffffff` |
+| `choice-border` | `1px solid rgba(255,255,255,.2)` |
+| `choice-hover` | `rgba(140,160,255,.9)` |
+| `choice-glow` | `0 6px 24px color-mix(in srgb, var(--nilvn-choice-hover) 28%, transparent)` |
+| `choice-radius` | `99px` |
+| `choice-size` | `3cqh` |
+| `choice-width` | `38cqw` |
+| `choices-gap` | `2.6cqh` |
+| `choice-skin` | `none` |
+| `choice-skin-slice` | `none` |
+| `choice-chosen-bg` | `linear-gradient(180deg,rgba(40,46,74,.6),rgba(24,28,48,.6))` |
+| `choice-chosen-color` | `rgba(255,255,255,.6)` |
+| `choice-chosen-mark` | `"\2713"` |
+| `choice-disabled-bg` | `rgba(30,33,46,.7)` |
+| `choice-disabled-color` | `var(--nilvn-disabled)` |
+| `choice-timer-bg` | `rgba(255,255,255,.15)` |
+| `choice-timer-color` | `var(--nilvn-accent)` |
+| `progress-bg` | `rgba(255,255,255,.15)` |
+| `progress-color` | `var(--nilvn-accent)` |
+| `hud-bg` | `rgba(10,12,22,.62)` |
+| `hud-border` | `1px solid rgba(255,255,255,.14)` |
+| `hud-color` | `var(--nilvn-panel-color)` |
+| `hud-radius` | `1.2cqh` |
+| `hud-padding` | `1.2cqh 1.6cqw` |
+| `hud-size` | `2.2cqh` |
+| `window-bg` | `var(--nilvn-panel-bg)` |
+| `window-border` | `var(--nilvn-panel-border)` |
+| `window-color` | `var(--nilvn-panel-color)` |
+| `window-radius` | `1.4cqh` |
+| `window-padding` | `2.4cqh 2.4cqw` |
+| `window-width` | `40cqw` |
+| `bar-bg` | `rgba(255,255,255,.15)` |
+| `bar-color` | `var(--nilvn-accent)` |
+| `bar-height` | `1.4cqh` |
+| `screen-bg` | `rgba(8,10,18,.92)` |
+| `screen-color` | `var(--nilvn-panel-color)` |
+| `screen-heading-shadow` | `0 2px 12px rgba(0,0,0,.5)` |
+| `panel-bg` | `rgba(16,18,28,.96)` |
+| `panel-border` | `1px solid rgba(255,255,255,.16)` |
+| `panel-color` | `#f4f5fa` |
+| `button-bg` | `rgba(255,255,255,.08)` |
+| `button-color` | `#ffffff` |
+| `button-border` | `1px solid rgba(255,255,255,.18)` |
+| `button-hover` | `rgba(255,255,255,.16)` |
+| `divider` | `rgba(255,255,255,.1)` |
+| `backdrop` | `rgba(0,0,0,.45)` |
+| `panel-shadow` | `0 1.2cqh 4cqh rgba(0,0,0,.5)` |
+| `danger` | `#e05555` |
+| `button-on-bg` | `var(--nilvn-accent)` |
+| `button-on-color` | `var(--nilvn-button-color)` |
+| `input-box-bg` | `var(--nilvn-panel-bg)` |
+| `input-box-border` | `var(--nilvn-panel-border)` |
+| `input-box-radius` | `1.4cqh` |
+| `input-box-skin` | `none` |
+| `input-box-skin-slice` | `none` |
+| `input-bg` | `rgba(255,255,255,.08)` |
+| `input-color` | `var(--nilvn-panel-color)` |
+| `input-border` | `1px solid rgba(255,255,255,.25)` |
+| `input-radius` | `0.8cqh` |
+| `input-size` | `3cqh` |
+| `input-prompt-color` | `var(--nilvn-panel-color)` |
+| `input-button-bg` | `var(--nilvn-button-bg)` |
+| `input-button-color` | `var(--nilvn-button-color)` |
+<!-- theme-defaults:end -->
 
 Sizes use container units (`cqh` / `cqw` = 1 % of the stage height / width) so
 they scale with the stage, not the viewport. The stage itself is a fixed 16:9 box
@@ -377,7 +494,7 @@ interface EngineDiagnostic {
 
 | Member | Description |
 |---|---|
-| `playTrack(track, url, { loop, volume, fade })` | Start or replace a named looping track. `Engine.MUSIC_TRACK` (`'music'`) is the BGM slot; other names are ambience beds layered under it. |
+| `playTrack(track, url, { loop, volume, fade, restart })` | Start or replace a named looping track. `Engine.MUSIC_TRACK` (`'music'`) is the BGM slot; other names are ambience beds layered under it. A track already playing `url` (same `loop`) carries on and only moves to the new `volume` over `fade`, unless `restart: true` *(since 0.19.0)*. |
 | `playBgm(url, opts)` / `stopBgm(fadeSec)` | The BGM slot. |
 | `stopTrack(track, fadeSec)` / `stopAllTracks(fadeSec)` | Stop one track or every loop. |
 | `playSe(url, volume)` | One-shot sound effect. |
@@ -447,8 +564,9 @@ build on the stage directly.
 | Member | Description |
 |---|---|
 | `replays` | Segments declared by `[replaydef]` (`id`, `title`, start `label`). |
-| `playReplay(segId)` | Play one segment as an isolated, clean-slate session. |
-| `isReplaying()` | The segment id being replayed, or null. |
+| `playReplay(segId)` | Play one segment as a replay. An unlocked segment starts from its **scene** *(since 0.19.0)*: the session as normal play reached the segment's start label on the run that unlocked it — background, characters, music, variables, `[ui]` panels and plugin state, as the player saw them — so a segment that relies on what came before looks the same in the gallery. A segment without a kept scene (unlocked before 0.19) starts clean: fresh session variables, a blank stage, silence, panels at their `show` policy. Either way `sys.replaying` reads true, and the **persistent variables** (`[persist]`, `sys.*`) a replay writes are rolled back when it ends *(since 0.19.0)* — a replay is a memory, not progress. Plugin storage (`ctx.storage`) is the plugin's own and is not rolled back; a plugin that should not count a replay checks `ctx.replay.isReplaying()`. |
+| `replayThumbnail(segId)` | The picture of an unlocked segment — the background on screen when it was unlocked — resolved, or undefined. The menu's gallery shows it. *(since 0.19.0)* |
+| `isReplaying()` | The segment id being replayed, or null. A script reads the same as `sys.replaying`. |
 | `onSegmentSeen(fn)` | Subscribe to "normal play passed a segment's end" — the unlock signal. |
 | `onReplayEnd` | Orchestrator callback when a replay reaches its end (the menu restores the interrupted session here). |
 
@@ -457,6 +575,9 @@ in any chunk, so declare every segment in the **entry** chunk — a preamble at 
 top of the first script, which is the shape NilVN Studio emits. A declaration
 left in a later file is missing from the gallery until play reaches that file,
 which a loaded save can skip past.
+
+A segment's scene and picture are kept with the unlock in the player's storage
+(`SaveStore` key `replays`), beside `unlocks`.
 
 ## Parsing and evaluation
 
@@ -470,6 +591,7 @@ which a loaded save can skip past.
 | `parseSegments(text)` | Inline markup → text / pause / break segments. |
 | `parseTag(inner, line)` | One `[…]` tag → a node (macros expand through it). |
 | `Renderer.showHotspot(spec)` / `hideHotspot(id)` / `clearHotspots()` / `objectClick` | Clickable regions (`HotspotSpec`, saved in `StageState.hotspots`) and the callback the engine installs to run an object's `onclick`; `SpriteSpec.onclick` makes a sprite clickable. |
+| `Renderer.evalCondition` / `refreshConditions()` | An object's `if` (`HotspotSpec.if`, `SpriteSpec.if`): the engine installs the evaluator and calls `refreshConditions()` after every variable change; an object whose condition is false is not drawn and takes no click. *(since 0.19.0)* |
 | `Renderer.beginTransition()` / `endTransition(kind, opts)` / `transitionPending()` / `charLayers(id)` | The scene-transition seam (a frozen snapshot of the camera, revealed with one of the kinds or a rule mask) and a layered character's current values; `transitionScreen` takes `mask` too. |
 | `evalExpr(src, vars)` / `truthy(value)` / `EXPR_FUNCTIONS` | The `[set]` / `[if]` expression evaluator and its function whitelist (`has`, `rand`, `min`, `max`, `floor`, `len`). |
 | `interpolateText(text, host)` / `interpolateSegments(segments, host)` / `displayValue(v)` | The `{$var}` / `{@key}` filling behind `engine.fill()`, for tooling that renders script text outside an engine. |
@@ -489,6 +611,13 @@ which a loaded save can skip past.
 | `WebContentLoader`, `ZipContentLoader`, `InlineContentLoader` | The three bundled loaders. |
 | `PackageFormatError` | Thrown for a file this engine cannot play. |
 | `PACKAGE_FORMAT`, `PACKAGE_MANIFEST_FILE` | The format number and file name (`nilvn.json`). |
+
+`@nilvn/engine/playtest` *(since 0.19.0)* types a playtest file for `nilvn playtest` (`definePlaytest`, `PlaytestDriver`, `PlaytestStep`) — see [playtest.md](playtest.md).
+
+`@nilvn/engine/pack` *(since 0.19.0)* plans a package from a config-driven
+work — `packWork(input)`, `inlinePayload(result, base64)`, `mimeOf(path)`,
+`slugify(title)` — and is what the `nilvn pack` command runs; see
+[script-package.md → Packing a config-driven work](script-package.md#packing-a-config-driven-work-nilvn-pack).
 
 ## The IIFE build
 

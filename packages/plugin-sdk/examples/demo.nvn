@@ -1,0 +1,16 @@
+[label start]
+A quiet evening. While it rains or snows, W hides or shows the weather; K opens the achievements.
+[achieve prologue]
+[weather rain]
+It starts to rain.
+[if weather.kind == 'rain' -> wet]
+(Not shown: the script reads weather.kind and jumps.)
+[label wet]
+The script read weather.kind and knows it is raining.
+[weather snow intensity=0.4]
+The rain turns to snow.
+[achieve first_choice]
+[weather clear]
+The sky clears.
+[achieve true_end]
+That is all. Open the menu (or press K) to see the achievements.

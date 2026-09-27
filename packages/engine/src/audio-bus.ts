@@ -20,6 +20,10 @@ export interface TrackOptions {
   loop?: boolean
   volume?: number
   fade?: number
+  /** Start the file over even when the track is already playing it. Default
+   *  false: the same file on the same track keeps playing and only its volume
+   *  follows (over `fade`), so a scene can state its music without a hiccup. */
+  restart?: boolean
 }
 
 interface TrackSlot {
@@ -58,6 +62,12 @@ export class AudioBus {
    *  silence; the ramp re-derives its target each step so a live master change
    *  mid-fade still lands on the right level. */
   playTrack(track: string, url: string, opts: TrackOptions = {}): void {
+    const cur = this.loopTracks.get(track)
+    const loop = opts.loop ?? true
+    if (!opts.restart && cur && cur.src === url && cur.loop === loop && !cur.audio.ended) {
+      this.retarget(track, cur, opts.volume ?? 1, opts.fade ?? 0)
+      return
+    }
     this.stopTrack(track, 0)
     const audio = this.watchAudio(new Audio(url), `track "${track}"`, url)
     audio.loop = opts.loop ?? true
@@ -80,6 +90,36 @@ export class AudioBus {
       }, 40)
       this.timers.add(timer)
     }
+  }
+
+  /** Move a playing track's authored volume to `base`, over `fadeSec`. */
+  private retarget(track: string, slot: TrackSlot, base: number, fadeSec: number): void {
+    const from = slot.base
+    slot.base = base
+    if (fadeSec <= 0 || from === base) {
+      slot.audio.volume = clamp01(base * this.trackMaster(track))
+      return
+    }
+    const stepFrac = 1 / Math.max(1, (fadeSec * 1000) / 40)
+    let frac = 0
+    const timer = setInterval(() => {
+      if (this.loopTracks.get(track) !== slot || slot.base !== base) {
+        this.clearTimer(timer)
+        return
+      }
+      frac = Math.min(1, frac + stepFrac)
+      slot.audio.volume = clamp01((from + (base - from) * frac) * this.trackMaster(track))
+      if (frac >= 1) this.clearTimer(timer)
+    }, 40)
+    this.timers.add(timer)
+  }
+
+  /** Make the playing tracks exactly `want` (a restored save): a track playing the
+   *  same file keeps playing, the rest start or stop. */
+  syncTracks(want: { track: string; src: string; loop: boolean; volume: number }[]): void {
+    const keep = new Set(want.map((t) => t.track))
+    for (const track of [...this.loopTracks.keys()]) if (!keep.has(track)) this.stopTrack(track, 0)
+    for (const t of want) this.playTrack(t.track, t.src, { loop: t.loop, volume: t.volume })
   }
 
   /** Stop one named track, optionally fading it out. */

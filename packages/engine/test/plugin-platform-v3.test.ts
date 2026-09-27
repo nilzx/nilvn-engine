@@ -7,7 +7,7 @@ import { describe, it, expect, beforeAll } from 'vitest'
 import type { PluginManifest } from '@nilvn/core'
 import { createEngine, MemorySaveStore, PLUGIN_SETTINGS_KEY, type Engine } from '../src/index'
 import { applyConfig } from '../src/config'
-import type { EnginePlugin, PluginContext } from '../src/types'
+import type { ActorDef, EnginePlugin, PluginContext } from '../src/types'
 
 beforeAll(() => {
   Object.defineProperty(HTMLMediaElement.prototype, 'play', { configurable: true, value: () => Promise.resolve() })
@@ -63,6 +63,26 @@ describe('plugin settings', () => {
     e.destroy()
   })
 
+  it('a list setting is an array from TOML, split from a comma string, and never a settings row', async () => {
+    let ctx!: PluginContext
+    const withList: PluginManifest = {
+      ...manifest,
+      contributes: { ...manifest.contributes, config: [...manifest.contributes!.config!, { key: 'ids', type: 'list', default: ['a'], label: 'plugin.weather.cfg.ids' }, { key: 'ns', type: 'list', items: 'number', label: 'plugin.weather.cfg.ns' }] },
+    }
+    const e = make((c) => (ctx = c), { manifests: [withList] })
+    e.loadSource('[label s]\n')
+    await e.prepare()
+    expect(ctx.config.get('ids')).toEqual(['a'])
+    expect(ctx.config.get('ns')).toEqual([])
+    applyConfig(e, { plugins: { use: [], [ID]: { ids: ['x', 'y'], ns: [1, '2', 'z'] } } as never })
+    expect(ctx.config.get('ids')).toEqual(['x', 'y'])
+    expect(ctx.config.get('ns')).toEqual([1, 2])
+    e.setPluginConfig(ID, { ids: 'p, q ,, r' })
+    expect(ctx.config.get('ids')).toEqual(['p', 'q', 'r'])
+    expect(e.activePluginConfigs()[0]!.fields.map((f) => f.key)).toEqual(['intensity', 'on'])
+    e.destroy()
+  })
+
   it('short first-party names map to the app.nilvn. id; unknown author keys are one diagnostic', async () => {
     const e = make(() => {})
     applyConfig(e, { plugins: { use: [], weather: { x: 1 } } as never })
@@ -95,7 +115,8 @@ describe('plugin settings', () => {
     expect(labels).toContain('Intensity')
     expect(labels).toContain('Weather on')
     expect(labels).not.toContain('Kind') // author-only field stays out
-    const onSeg = [...grid.querySelectorAll('.nilvn-menu__seg')].at(-1)!
+    const onRow = [...grid.querySelectorAll('.nilvn-menu__row')].find((r) => r.firstElementChild?.textContent === 'Weather on')!
+    const onSeg = onRow.querySelector('.nilvn-menu__seg')!
     ;(onSeg.firstElementChild as HTMLButtonElement).click() // On
     expect(b.pluginConfigValue(ID, 'on')).toBe(true)
     b.destroy()
@@ -207,13 +228,13 @@ describe('actor fields', () => {
     e.destroy()
   })
 
-  it('voice: the pre-0.15 top-level field still reaches voicefx, and moves under ext once voicefx declares it', async () => {
+  it('voice: a top-level field moves under ext once voicefx declares it, and is no voicefx field without that declaration', async () => {
     const voicefxManifest: PluginManifest = { id: 'app.nilvn.voicefx', name: 'x', version: '1.0.0', entries: { engine: 'bundled' }, contributes: { actorFields: [{ key: 'voice', type: 'number' }] } }
     let ctx!: PluginContext
     const e = createEngine({
       container: document.createElement('div'),
       saveStore: new MemorySaveStore(),
-      actors: { yuki: { name: 'Yuki', voice: 360 } },
+      actors: { yuki: { name: 'Yuki', voice: 360 } as ActorDef },
       registry: [
         {
           id: 'app.nilvn.voicefx',
@@ -227,12 +248,12 @@ describe('actor fields', () => {
     })
     e.loadSource('[label s]\n')
     await e.prepare()
-    expect(e.actors.yuki.voice).toBeUndefined()
+    expect((e.actors.yuki as Record<string, unknown>).voice).toBeUndefined()
     expect(e.actors.yuki.ext).toEqual({ 'app.nilvn.voicefx': { voice: 360 } })
     expect(ctx.actorField('yuki', 'voice')).toBe(360)
-    // A host without the manifest keeps the legacy field readable through the same call.
-    const bare = createEngine({ container: document.createElement('div'), saveStore: new MemorySaveStore(), actors: { rin: { voice: 300 } } })
-    expect(bare.actorField('rin', 'app.nilvn.voicefx', 'voice')).toBe(300)
+    // The pre-0.19 fallback is gone: without the declaration the key is nobody's field.
+    const bare = createEngine({ container: document.createElement('div'), saveStore: new MemorySaveStore(), actors: { rin: { voice: 300 } as ActorDef } })
+    expect(bare.actorField('rin', 'app.nilvn.voicefx', 'voice')).toBeUndefined()
     e.destroy()
     bare.destroy()
   })

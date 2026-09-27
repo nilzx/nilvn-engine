@@ -107,7 +107,7 @@ describe('directory package (fetch)', () => {
 })
 
 describe('the work configuration in a package', () => {
-  it('applies `config` after the asset table is filled, with nilvn.json keeping what it carries', async () => {
+  it('applies `config` after the asset table is filled, with nilvn.json keeping what it carries and [path] kept', async () => {
     const e = newEngine({ textSpeed: 0, registry: [fxFixtures().fx] })
     const data = makePackage()
     data.manifest.config = {
@@ -126,11 +126,11 @@ describe('the work configuration in a package', () => {
     expect(e.autosave).toBe('line')
     expect(e.actors.rin).toBeUndefined() // the manifest names the actors
     expect(e.pluginConfigValue('app.nilvn.fx', 'level')).toBe(2)
+    expect(e.alias['@bg']).toBe('bg') // [path] aliases expand onto the package's refs
     expect(e.diagnostics.map((d) => d.message).sort()).toEqual([
       'config: actors: a script package carries this in nilvn.json — ignored',
       'config: game.entry: a script package carries this in nilvn.json — ignored',
       'config: game.scripts: a script package carries this in nilvn.json — ignored',
-      'config: path: a script package carries this in nilvn.json — ignored',
       'config: plugins.use: a script package carries this in nilvn.json — ignored',
     ])
     await e.start()

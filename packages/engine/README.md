@@ -61,7 +61,14 @@ config rebinds the shell's keyboard (auto, skip, quick save / load, …).
 |---|---|---|
 | Config + script | `loadConfig('./nilvn.config.toml')` then `start()` | Hand-written games: one TOML file declares plugins, actors, path aliases, macros and defaults; the script stays pure story. |
 | Script only | `load('./story.nvn')` or `loadSource(text)` | Quick embeds; the script declares what it needs with `[use]` / `[actor]` / `[alias]`. |
-| Script package | `load('./my-game/')`, `load(zipBytes)`, `load(inlinePackage(payload))` | Works exported by NilVN Studio: `nilvn.json` plus chunked scripts, per-language text and assets — streamed on demand, switchable language, saves. |
+| Script package | `load('./my-game/')`, `load(zipBytes)`, `load(inlinePackage(payload))` | Works exported by NilVN Studio or packed with `npx nilvn pack`: `nilvn.json` plus chunked scripts, per-language text and assets — streamed on demand, switchable language, saves. |
+
+`npx nilvn pack` turns a config-driven work into a package — a folder to
+upload, a `.nvs` zip, or one double-clickable `.html` — and reports what would
+fail in play before anyone plays it
+([script-package.md](docs/script-package.md#packing-a-config-driven-work-nilvn-pack)).
+`npx nilvn playtest` then plays it — explore runs to its endings, or scripted
+routes — in a headless Chrome with real clicks and keys ([playtest.md](docs/playtest.md)).
 
 ## Documentation
 
@@ -76,7 +83,8 @@ config rebinds the shell's keyboard (auto, skip, quick save / load, …).
 | [Theming](docs/api.md#theming) | The `--nilvn-*` token contract: dialogue box, name tag, choices, panels; `[theme]` / `[window]` in the config, `setTheme()`, the `[theme]` command. |
 | [Several files, events, transitions](docs/script-syntax.md#several-files) | `[game] scripts` / `[include]` / `[call]`, clicks that run script commands (panels, hotspots, sprites), `[trans …]` and rule masks. |
 | [Panels and layered sprites](docs/config.md#uiid) | Declarative HUD / windows (`[ui.<id>]`), `[actors.<id>.layers]`, `[choices]`, `[input]`, `[persist]`, `[preload]`; the config schema (`CONFIG_SCHEMA` / `checkConfig`). |
-| [Script packages](docs/script-package.md) | The `nilvn.json` format, the chunk manifest, custom loaders. |
+| [Script packages](docs/script-package.md) | `nilvn pack`, the `nilvn.json` format, the chunk manifest, custom loaders. |
+| [Playtesting](docs/playtest.md) | `nilvn playtest`: explore runs and scripted routes in a headless Chrome, with real input; failures, unreachable objects and diagnostics reported. |
 | [Writing plugins](../plugin-sdk/README.md) | The plugin package format, permissions and capability objects, lifecycle — in `@nilvn/plugin-sdk`. |
 
 ## What the engine guarantees
@@ -127,8 +135,8 @@ pnpm typecheck
 ```
 
 Tests live in `test/` and run with `pnpm test` from the repository root;
-`test/iife-smoke.test.ts` boots the minified bundle. The demo game and the
-single-file game bundler live with the first-party plugins in `@nilvn/plugins`.
+`test/iife-smoke.test.ts` boots the minified bundle. The demo game lives with
+the first-party plugins in `@nilvn/plugins`.
 
 ## License
 

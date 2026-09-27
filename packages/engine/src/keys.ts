@@ -91,7 +91,7 @@ export function matchKey(binding: KeyBinding | undefined, ev: KeyboardEvent): bo
 /** The effective binding for an action: the config's when set (`false` unbinds),
  *  else the default. */
 export function bindingOf(cfg: KeysConfig, action: KeyAction): KeyBinding | undefined {
-  return action in cfg ? cfg[action] : KEYS_DEFAULT[action]
+  return action in cfg ? (cfg[action] as KeyBinding | undefined) : KEYS_DEFAULT[action]
 }
 
 /** Key events from a focused text field belong to that field, not the game. */
@@ -100,4 +100,42 @@ export function isEditableTarget(target: EventTarget | null): boolean {
   if (target.isContentEditable) return true
   const tag = target.tagName
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
+}
+
+/** Every engine action, in the settings screen's order. */
+export const KEY_ACTIONS: readonly KeyAction[] = ['advance', 'menu', 'skipHold', 'skip', 'auto', 'quicksave', 'quickload', 'backlog', 'save', 'load', 'settings', 'fullscreen']
+
+/** A binding's keys in one canonical spelling each (`ctrl+shift+s`), for
+ *  comparing two bindings; unbound → []. */
+export function chordsOf(binding: KeyBinding | undefined): string[] {
+  return parseBinding(binding).map((k) => [k.ctrl && 'ctrl', k.alt && 'alt', k.meta && 'meta', k.shift && 'shift', k.key].filter(Boolean).join('+'))
+}
+
+const DISPLAY: Record<string, string> = { ' ': 'Space', control: 'Ctrl', escape: 'Esc', arrowup: '↑', arrowdown: '↓', arrowleft: '←', arrowright: '→' }
+
+/** One key as a binding spelling (`Space`, `F5`, `A`, `ArrowUp`). */
+function keyName(key: string): string {
+  if (key === ' ') return 'Space'
+  return key.length === 1 ? key.toUpperCase() : key[0]!.toUpperCase() + key.slice(1)
+}
+
+/** The binding a key press spells (`Ctrl+Shift+S`, `Space`, `Control`) — what
+ *  the settings screen stores when the player presses a new key. */
+export function bindingFromEvent(ev: Pick<KeyboardEvent, 'key' | 'ctrlKey' | 'shiftKey' | 'altKey' | 'metaKey'>): string {
+  const key = (KEY_ALIASES[ev.key.toLowerCase()] ?? ev.key.toLowerCase()) || ev.key
+  const mods: string[] = []
+  if (ev.ctrlKey && key !== 'control') mods.push('Ctrl')
+  if (ev.altKey && key !== 'alt') mods.push('Alt')
+  if (ev.metaKey && key !== 'meta') mods.push('Meta')
+  if (ev.shiftKey && key !== 'shift' && ev.key.length !== 1) mods.push('Shift') // a shifted letter already reads as itself
+  return [...mods, keyName(ev.key)].join('+')
+}
+
+/** A binding for display: `Space / Enter`, `Ctrl+S`; unbound → `—`. */
+export function formatBinding(binding: KeyBinding | undefined): string {
+  const keys = parseBinding(binding)
+  if (!keys.length) return '—'
+  return keys
+    .map((k) => [k.ctrl && 'Ctrl', k.alt && 'Alt', k.meta && 'Meta', k.shift && 'Shift', DISPLAY[k.key] ?? keyName(k.key)].filter(Boolean).join('+'))
+    .join(' / ')
 }

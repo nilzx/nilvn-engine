@@ -25,6 +25,12 @@ export function firstPartyShortName(id: string): string | undefined {
   return short && !short.includes('.') ? short : undefined
 }
 
+/** = core `themeTokenPrefix`: a plugin's theme tokens start with its id's last
+ *  segment and a dash (`com.example.weather` → `weather-`). */
+export function themeTokenPrefix(id: string): string {
+  return id.slice(id.lastIndexOf('.') + 1).toLowerCase().replace(/_/g, '-') + '-'
+}
+
 export interface PermissionMirror {
   id: string
   status: 'active' | 'reserved'
@@ -64,6 +70,7 @@ export const PERMISSION_IDS: readonly PermissionMirror[] = [
   { id: 'net:', status: 'reserved', pattern: true, side: 'host' },
   { id: 'clipboard', status: 'reserved', side: 'host' },
   { id: 'timer', status: 'active', side: 'engine' },
+  { id: 'input.keys', status: 'active', side: 'engine' },
   { id: 'storage.local', status: 'active', side: 'engine' },
   { id: 'ai.text', status: 'reserved', side: 'host' },
   { id: 'ai.image', status: 'reserved', side: 'host' },
@@ -93,6 +100,26 @@ export function isPluginId(s: string): boolean {
   return PLUGIN_ID_RE.test(s)
 }
 
+/** Mirrors core's `isPluginRelPath` / `normalizePluginPath`. */
+export function isPluginRelPath(p: unknown): p is string {
+  if (typeof p !== 'string' || p.startsWith('/') || p.endsWith('/') || p.includes('\\') || /^[a-z][a-z0-9+.-]*:/i.test(p)) return false
+  const segs = p.split('/')
+  return !segs.includes('..') && segs.some((seg) => seg !== '' && seg !== '.')
+}
+
+export function normalizePluginPath(p: string): string {
+  return p
+    .split('/')
+    .filter((seg) => seg !== '' && seg !== '.')
+    .join('/')
+}
+
+/** The slice version a manifest declares (`contributes.saveSlice.version`), if any. */
+export function manifestStateVersion(m: PluginManifest | undefined): number | undefined {
+  const s = m?.contributes?.saveSlice
+  return s && typeof s === 'object' ? s.version : undefined
+}
+
 /** Structural check for a fetched `plugin.json` — the subset the runtime needs. */
 export function isPluginManifest(x: unknown): x is PluginManifest {
   if (!x || typeof x !== 'object') return false
@@ -116,5 +143,8 @@ export function manifestProblems(m: PluginManifest, engineVersion = ENGINE_VERSI
     if (!isValidRange(range)) out.push(`invalid range "${range}" for dependency "${dep}"`)
   }
   for (const p of m.permissions ?? []) if (!matchPermission(p)) out.push(`unknown permission "${p}"`)
+  for (const p of m.assets ?? []) if (!isPluginRelPath(p)) out.push(`assets: "${String(p)}" is not a path inside the plugin (relative, no "..")`)
+  const v = manifestStateVersion(m)
+  if (v !== undefined && !(Number.isInteger(v) && v >= 1)) out.push('contributes.saveSlice.version must be a positive integer')
   return out
 }

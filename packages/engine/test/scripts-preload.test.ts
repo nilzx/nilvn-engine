@@ -108,6 +108,20 @@ describe('file chunks', () => {
     await expect(g.prepare()).rejects.toThrow(/missing\.nvn: 404/)
     g.destroy()
   })
+
+  it('a jump to the next file is not a fall-through, and running off the last file ends the story', async () => {
+    serve({
+      'http://game.test/play/a.nvn': '[set o = "a"]\n[jump c]\n',
+      'http://game.test/play/b.nvn': '[set o = o + "b"]\n',
+      'http://game.test/play/c.nvn': '[set o = o + "c"]\n',
+    })
+    const e = engineWith()
+    applyConfig(e, { game: { scripts: ['a.nvn', 'b.nvn', 'c.nvn'] } })
+    await e.start()
+    expect(e.vars.o).toBe('ac')
+    expect(e.session).not.toBe('playing')
+    e.destroy()
+  })
 })
 
 describe('[include]', () => {

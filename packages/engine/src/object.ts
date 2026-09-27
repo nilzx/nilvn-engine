@@ -162,37 +162,47 @@ export const BUILTIN_KINDS: ObjectKind[] = [
 /** A scoped handle over the renderer's generic object surface, bound to one
  *  object id. The single capability surface an effect touches for `objects`. */
 export class ObjectHandle implements StageObjectHandle {
+  // A true private field: the handle goes to plugin effects, which must not
+  // reach the renderer behind it (a TS `private` is still a readable property).
+  readonly #renderer: Renderer
+
   constructor(
-    private readonly renderer: Renderer,
+    renderer: Renderer,
     readonly id: string,
     readonly kind: string,
-  ) {}
+  ) {
+    this.#renderer = renderer
+  }
 
   get(prop: TransformProp): TransformValue | undefined {
-    return this.renderer.getProp(this.id, prop)
+    return this.#renderer.getProp(this.id, prop)
   }
 
   set(prop: TransformProp, value: TransformValue): void {
-    this.renderer.setProp(this.id, prop, value)
+    this.#renderer.setProp(this.id, prop, value)
   }
 
   animate(keyframes: TransformKeyframe[], opts: AnimOpts): Promise<void> {
-    return this.renderer.animate(this.id, keyframes, opts)
+    return this.#renderer.animate(this.id, keyframes, opts)
+  }
+
+  stopAnimations(key?: string): void {
+    this.#renderer.stopAnimations(this.id, key)
   }
 
   getBand(): ObjectBand | undefined {
-    return this.renderer.getBand(this.id)
+    return this.#renderer.getBand(this.id)
   }
 
   setBand(band: ObjectBand): void {
-    this.renderer.setBand(this.id, band)
+    this.#renderer.setBand(this.id, band)
   }
 
   getFace(): string | undefined {
-    return this.renderer.getFace(this.id)
+    return this.#renderer.getFace(this.id)
   }
 
   setFace(face: string): void {
-    this.renderer.setFace(this.id, face)
+    this.#renderer.setFace(this.id, face)
   }
 }

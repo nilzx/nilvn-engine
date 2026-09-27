@@ -2,6 +2,7 @@ node_modules/
 dist/
 dist-demo/
 dist-bundle/
+dist-pack/
 *.log
 *.tsbuildinfo
 .DS_Store

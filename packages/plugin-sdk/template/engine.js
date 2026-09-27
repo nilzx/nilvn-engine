@@ -1,7 +1,7 @@
 // engine.js — the runtime half named by plugin.json "entries.engine"
 export default {
   id: 'com.example.neon',
-  permissions: ['stage.write'],
+  // permissions live in plugin.json
   textEffects: { neon: (span) => span.addClass('fx-neon') },
   commands: {
     async boom({ num, plugin }) {

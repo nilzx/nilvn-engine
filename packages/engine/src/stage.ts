@@ -35,11 +35,18 @@ import type { Segment, TextSpan } from './types.js'
 // working now that the save shape lives with the renderer contract.
 export type { StageState } from './renderer/types.js'
 
+/** How long a title / ending page ignores the player's clicks and key presses
+ *  after it appears (a carried-over key press or double click). */
+const SCREEN_ARM_MS = 600
+
+/** The id prefix of the animations `DomRenderer.animate` starts. */
+const ANIM_ID = 'nilvn-anim:'
+
 export function animate(
   el: Element,
   keyframes: Keyframe[] | PropertyIndexedKeyframes,
   options?: number | KeyframeAnimationOptions,
-): Promise<void> {
+): Promise<boolean> {
   const a = el.animate(keyframes, options)
   // Hidden pages throttle animations and `finished` may never resolve,
   // so race it against a wall-clock fallback that snaps to the end state.
@@ -48,9 +55,9 @@ export function animate(
   const iterations = typeof options === 'object' ? (options.iterations ?? 1) : 1
   return new Promise((resolve) => {
     let timer: ReturnType<typeof setTimeout> | undefined
-    const settle = () => {
+    const settle = (ended: boolean) => {
       clearTimeout(timer)
-      resolve()
+      resolve(ended)
     }
     if (iterations !== Infinity) {
       timer = setTimeout(() => {
@@ -59,15 +66,22 @@ export function animate(
         } catch {
           /* already idle */
         }
-        settle()
+        settle(true)
       }, duration * iterations + delay + 80)
     }
-    a.finished.then(settle, settle)
+    // A cancelled animation (stopAnimations, a keyed replacement) rejects `finished`.
+    a.finished.then(
+      () => settle(true),
+      () => settle(false),
+    )
   })
 }
 
-export async function preloadImage(url: string): Promise<void> {
+/** Load and decode an image before it is shown. `onError` hears a failed load
+ *  (a wrong path) — the decode's own rejection cannot tell that from a slow one. */
+export async function preloadImage(url: string, onError?: () => void): Promise<void> {
   const img = new Image()
+  if (onError) img.addEventListener('error', onError, { once: true })
   img.src = url
   try {
     await img.decode()
@@ -82,6 +96,15 @@ function toLeft(at: string): string {
   if (at in POSITIONS) return `${POSITIONS[at]}%`
   const n = parseFloat(at)
   return Number.isFinite(n) ? `${n}%` : '50%'
+}
+
+/** `chosenStyle = "mark"`'s badge: an element of its own, so the button's own
+ *  pseudo-elements stay free for choice effects (choicefx's sheen is `::after`). */
+function chosenMark(): HTMLElement {
+  const el = document.createElement('span')
+  el.className = 'nilvn-choice__mark'
+  el.setAttribute('aria-hidden', 'true')
+  return el
 }
 
 function div(cls: string): HTMLDivElement {
@@ -349,9 +372,10 @@ const BASE_CSS = `
 .nilvn-snapshot{pointer-events:none}
 .nilvn-sprite.nilvn-clickable{pointer-events:auto;cursor:pointer}
 .nilvn-hotspot{position:absolute;pointer-events:auto;cursor:pointer}
+.nilvn-hotspot[hidden],.nilvn-sprite[hidden]{display:none}
 .nilvn-editing .nilvn-hotspot{outline:1px dashed rgba(255,255,255,.5)}
 .nilvn-ui{position:absolute;z-index:44;pointer-events:auto;box-sizing:border-box;font-size:calc(var(--nilvn-hud-size)*var(--nilvn-ui-scale));color:var(--nilvn-hud-color);background:var(--nilvn-hud-bg);border:var(--nilvn-hud-border);border-radius:var(--nilvn-hud-radius);padding:var(--nilvn-hud-padding);cursor:default}
-.nilvn-ui--window{z-index:46;min-width:var(--nilvn-window-width);font-size:calc(2.6cqh*var(--nilvn-ui-scale));color:var(--nilvn-window-color);background:var(--nilvn-window-bg);border:var(--nilvn-window-border);border-radius:var(--nilvn-window-radius);padding:var(--nilvn-window-padding);box-shadow:0 1.2cqh 4cqh rgba(0,0,0,.45)}
+.nilvn-ui--window{z-index:46;min-width:var(--nilvn-window-width);font-size:calc(2.6cqh*var(--nilvn-ui-scale));color:var(--nilvn-window-color);background:var(--nilvn-window-bg);border:var(--nilvn-window-border);border-radius:var(--nilvn-window-radius);padding:var(--nilvn-window-padding);box-shadow:var(--nilvn-panel-shadow)}
 .nilvn-ui--top-left{top:1.6cqh;left:1.6cqw}.nilvn-ui--top{top:1.6cqh;left:50%;transform:translateX(-50%)}.nilvn-ui--top-right{top:1.6cqh;right:8cqw}
 .nilvn-ui--left{top:50%;left:1.6cqw;transform:translateY(-50%)}.nilvn-ui--center{top:50%;left:50%;transform:translate(-50%,-50%)}.nilvn-ui--right{top:50%;right:1.6cqw;transform:translateY(-50%)}
 .nilvn-ui--bottom-left{bottom:30cqh;left:1.6cqw}.nilvn-ui--bottom{bottom:30cqh;left:50%;transform:translateX(-50%)}.nilvn-ui--bottom-right{bottom:30cqh;right:1.6cqw}
@@ -372,7 +396,7 @@ const BASE_CSS = `
 .nilvn-dialog{position:absolute;left:var(--nilvn-dialog-inset);right:var(--nilvn-dialog-inset);top:var(--nilvn-dialog-top);bottom:var(--nilvn-dialog-bottom);min-height:var(--nilvn-dialog-height);box-sizing:border-box;border-radius:var(--nilvn-dialog-radius);padding:var(--nilvn-dialog-padding);border:var(--nilvn-dialog-border);backdrop-filter:blur(6px);isolation:isolate;transition:opacity .3s}
 .nilvn-dialog::before{content:"";position:absolute;inset:0;z-index:-1;border-radius:inherit;background:var(--nilvn-dialog-skin) center/100% 100% no-repeat,var(--nilvn-dialog-bg);border:0 solid transparent;border-image:var(--nilvn-dialog-skin-slice);opacity:var(--nilvn-dialog-opacity)}
 .nilvn-dialog.nilvn-hidden{opacity:0!important;pointer-events:none}
-.nilvn-name{position:absolute;top:-2cqh;left:var(--nilvn-name-offset);background:var(--nilvn-name-bg);color:var(--nilvn-name-color);font-weight:700;font-size:calc(var(--nilvn-name-size)*var(--nilvn-ui-scale));line-height:1;padding:1.1cqh 1.6cqw;border-radius:99px;box-shadow:0 2px 10px rgba(0,0,0,.35)}
+.nilvn-name{position:absolute;top:-2cqh;left:var(--nilvn-name-offset);background:var(--nilvn-name-bg);color:var(--nilvn-name-color);font-weight:700;font-size:calc(var(--nilvn-name-size)*var(--nilvn-ui-scale));line-height:1;padding:1.1cqh 1.6cqw;border-radius:99px;box-shadow:var(--nilvn-name-shadow)}
 .nilvn-name.nilvn-hidden{display:none}
 .nilvn-text{font-size:calc(var(--nilvn-text-size)*var(--nilvn-ui-scale));line-height:var(--nilvn-text-line-height);letter-spacing:.02em;color:var(--nilvn-text-color);text-shadow:var(--nilvn-text-shadow)}
 .nilvn-ch{opacity:0;display:inline-block;white-space:pre}
@@ -393,7 +417,9 @@ const BASE_CSS = `
 .nilvn-choices__list{display:flex;flex-direction:column;align-items:stretch;gap:var(--nilvn-choices-gap);max-width:90cqw}
 .nilvn-choices__list--grid{display:grid;grid-template-columns:repeat(var(--choices-columns,2),minmax(0,1fr))}
 .nilvn-choice{min-width:var(--nilvn-choice-width);padding:2cqh 3cqw;font:inherit;font-size:calc(var(--nilvn-choice-size)*var(--nilvn-ui-scale));color:var(--nilvn-choice-color);text-align:center;background:var(--nilvn-choice-skin) center/100% 100% no-repeat,var(--nilvn-choice-bg);border:var(--nilvn-choice-border);border-image:var(--nilvn-choice-skin-slice);border-radius:var(--nilvn-choice-radius);cursor:pointer;transition:transform .15s ease,box-shadow .15s ease,border-color .15s ease}
-.nilvn-choice:hover:not(:disabled){transform:translateY(-2px) scale(1.02);border-color:var(--nilvn-choice-hover);box-shadow:0 6px 24px rgba(80,100,255,.25)}
+.nilvn-choice:hover:not(:disabled){transform:translateY(-2px) scale(1.02);border-color:var(--nilvn-choice-hover);box-shadow:var(--nilvn-choice-glow)}
+.nilvn-choice__mark{margin-inline-start:.6em;color:var(--nilvn-muted)}
+.nilvn-choice__mark::before{content:var(--nilvn-choice-chosen-mark)}
 .nilvn-choice.chosen{background:var(--nilvn-choice-skin) center/100% 100% no-repeat,var(--nilvn-choice-chosen-bg);color:var(--nilvn-choice-chosen-color)}
 .nilvn-choice:disabled{background:var(--nilvn-choice-skin) center/100% 100% no-repeat,var(--nilvn-choice-disabled-bg);color:var(--nilvn-choice-disabled-color);cursor:default}
 .nilvn-choices__timer{grid-column:1/-1;height:.8cqh;border-radius:99px;background:var(--nilvn-choice-timer-bg);overflow:hidden}
@@ -401,20 +427,22 @@ const BASE_CSS = `
 @keyframes nilvn-timer{from{width:100%}to{width:0}}
 .nilvn-fader{position:absolute;inset:0;background:#000;opacity:0;pointer-events:none}
 .nilvn-screens{pointer-events:none;z-index:40}
-.nilvn-screen{position:absolute;inset:0;pointer-events:auto;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2.4cqh;padding:6cqh 6cqw;box-sizing:border-box;color:var(--nilvn-panel-color);cursor:default;text-align:center;overflow:hidden}
-.nilvn-screen__bg{position:absolute;inset:0;z-index:-1;background:var(--screen-bg,rgba(8,10,18,.92)) center/cover no-repeat}
+.nilvn-screen{position:absolute;inset:0;pointer-events:auto;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2.4cqh;padding:6cqh 6cqw;box-sizing:border-box;color:var(--nilvn-screen-color);cursor:default;text-align:center;overflow:hidden}
+.nilvn-screen__bg{position:absolute;inset:0;z-index:-1;background:var(--screen-bg,var(--nilvn-screen-bg)) center/cover no-repeat}
 .nilvn-screen--left{align-items:flex-start;text-align:left;padding-left:10cqw}
 .nilvn-screen--right{align-items:flex-end;text-align:right;padding-right:10cqw}
 .nilvn-screen--bottom{justify-content:flex-end;padding-bottom:8cqh}
 .nilvn-screen__logo{max-height:34cqh;max-width:70cqw;display:block}
-.nilvn-screen__heading{margin:0;font-size:calc(8cqh*var(--nilvn-ui-scale));font-weight:800;letter-spacing:.04em;text-shadow:0 2px 12px rgba(0,0,0,.5)}
+.nilvn-screen__heading{margin:0;font-size:calc(8cqh*var(--nilvn-ui-scale));font-weight:800;letter-spacing:.04em;text-shadow:var(--nilvn-screen-heading-shadow)}
 .nilvn-screen__subtitle{margin:0;font-size:calc(3cqh*var(--nilvn-ui-scale));opacity:.8}
 .nilvn-screen__progress{width:min(50cqw,100%);height:1.2cqh;border-radius:99px;background:var(--nilvn-progress-bg);overflow:hidden}
 .nilvn-screen__progress::before{content:"";display:block;height:100%;width:calc(var(--progress,0)*100%);background:var(--nilvn-progress-color);transition:width .15s ease}
 .nilvn-screen__buttons{display:flex;flex-direction:column;gap:1.6cqh;margin-top:2cqh;min-width:28cqw}
+.nilvn-screen__buttons--two{display:grid;grid-template-columns:1fr 1fr;column-gap:1.6cqw;min-width:44cqw}
 .nilvn-screen__button{font:inherit;font-size:calc(3.2cqh*var(--nilvn-ui-scale));padding:1.6cqh 3cqw;color:var(--nilvn-button-color);background:var(--nilvn-button-bg);border:var(--nilvn-button-border);border-radius:99px;cursor:pointer;transition:background .15s ease,transform .15s ease}
 .nilvn-screen__button:hover,.nilvn-screen__button:focus-visible{background:var(--nilvn-button-hover);transform:translateY(-1px);outline:none}
 .nilvn-screen__button--primary{background:var(--nilvn-button-on-bg);color:var(--nilvn-button-on-color);border-color:transparent}
+.nilvn-screen__button--primary:hover,.nilvn-screen__button--primary:focus-visible{background:var(--nilvn-button-on-bg);filter:brightness(1.12)}
 .nilvn-screen__credits{position:relative;width:min(70cqw,100%);height:40cqh;overflow:hidden;mask-image:linear-gradient(transparent,#000 12%,#000 88%,transparent)}
 .nilvn-screen__roll{position:absolute;left:0;right:0;top:100%;font-size:calc(2.8cqh*var(--nilvn-ui-scale));line-height:1.9;white-space:pre-wrap;animation:nilvn-roll var(--roll-duration,12s) linear forwards}
 @keyframes nilvn-roll{to{transform:translateY(calc(-100% - 40cqh))}}
@@ -427,20 +455,20 @@ const BASE_CSS = `
 .nilvn-menu--hidden .nilvn-menu__btn{display:none}
 .nilvn-menu__btn{width:5cqh;height:5cqh;display:flex;align-items:center;justify-content:center;border-radius:50%;background:var(--nilvn-button-bg);border:var(--nilvn-button-border);color:var(--nilvn-button-color);cursor:pointer;backdrop-filter:blur(4px);line-height:1;font:inherit}
 .nilvn-menu__btn:hover{background:var(--nilvn-button-hover)}
-.nilvn-menu__panel{position:absolute;width:30cqw;display:none;flex-direction:column;gap:1.2cqh;padding:2cqh;border-radius:1.4cqh;background:var(--nilvn-panel-bg);border:var(--nilvn-panel-border);color:var(--nilvn-panel-color);box-shadow:0 1.2cqh 4cqh rgba(0,0,0,.5)}
+.nilvn-menu__panel{position:absolute;width:30cqw;max-height:86cqh;overflow-y:auto;overscroll-behavior:contain;box-sizing:border-box;display:none;flex-direction:column;gap:1.2cqh;padding:2cqh;border-radius:1.4cqh;background:var(--nilvn-panel-bg);border:var(--nilvn-panel-border);color:var(--nilvn-panel-color);box-shadow:var(--nilvn-panel-shadow)}
 .nilvn-menu--top-right .nilvn-menu__panel,.nilvn-menu--top-left .nilvn-menu__panel{top:6cqh}
 .nilvn-menu--bottom-right .nilvn-menu__panel,.nilvn-menu--bottom-left .nilvn-menu__panel{bottom:6cqh}
 .nilvn-menu--top-right .nilvn-menu__panel,.nilvn-menu--bottom-right .nilvn-menu__panel{right:0}
 .nilvn-menu--top-left .nilvn-menu__panel,.nilvn-menu--bottom-left .nilvn-menu__panel{left:0}
 .nilvn-menu--hidden .nilvn-menu__panel{top:6cqh;right:1.6cqw}
 .nilvn-menu.on .nilvn-menu__panel{display:flex}
-.nilvn-menu__item{padding:1.2cqh 1.6cqw;border-radius:.9cqh;background:var(--nilvn-button-bg);border:var(--nilvn-button-border);color:var(--nilvn-button-color);font:inherit;font-size:calc(2.4cqh*var(--nilvn-ui-scale));cursor:pointer;text-align:center}
+.nilvn-menu__item{flex-shrink:0;padding:1.2cqh 1.6cqw;border-radius:.9cqh;background:var(--nilvn-button-bg);border:var(--nilvn-button-border);color:var(--nilvn-button-color);font:inherit;font-size:calc(2.4cqh*var(--nilvn-ui-scale));cursor:pointer;text-align:center}
 .nilvn-menu__item:hover{background:var(--nilvn-button-hover)}
 .nilvn-menu__item.on{background:var(--nilvn-button-on-bg);color:var(--nilvn-button-on-color);border-color:transparent}
 .nilvn-menu__item:disabled{opacity:.45;cursor:default}
 .nilvn-menu__grid{display:grid;grid-template-columns:minmax(0,max-content) minmax(6cqw,1fr) max-content;align-items:center;gap:1.2cqh 1cqw;font-size:calc(2.1cqh*var(--nilvn-ui-scale));color:var(--nilvn-panel-color);padding:0 5cqw 3cqh}
 .nilvn-menu__row{display:contents}
-.nilvn-menu__head{grid-column:1/-1;margin-top:1.2cqh;padding-top:1.2cqh;border-top:1px solid rgba(255,255,255,.1);font-weight:700;opacity:.85}
+.nilvn-menu__head{grid-column:1/-1;margin-top:1.2cqh;padding-top:1.2cqh;border-top:1px solid var(--nilvn-divider);font-weight:700;opacity:.85}
 .nilvn-menu__text{grid-column:2/-1;font:inherit;font-size:calc(2.1cqh*var(--nilvn-ui-scale));padding:.6cqh 1cqw;border-radius:.8cqh;background:var(--nilvn-button-bg);border:var(--nilvn-button-border);color:var(--nilvn-button-color)}
 .nilvn-menu__row>span:first-child{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .nilvn-menu__seg{grid-column:2/-1;display:flex;gap:.8cqw}
@@ -449,7 +477,7 @@ const BASE_CSS = `
 .nilvn-menu__vol{flex:1;min-width:0;accent-color:var(--nilvn-accent);cursor:pointer}
 .nilvn-menu__pct{width:7cqw;text-align:right;font-size:1.9cqh;opacity:.7;font-variant-numeric:tabular-nums}
 .nilvn-menu__tip{min-height:2.2cqh;font-size:1.9cqh;opacity:.7;text-align:center}
-.nilvn-menu__ver{margin-top:.4cqh;padding-top:1cqh;border-top:1px solid rgba(255,255,255,.1);font-size:1.7cqh;opacity:.55;text-align:center}
+.nilvn-menu__ver{margin-top:.4cqh;padding-top:1cqh;border-top:1px solid var(--nilvn-divider);font-size:1.7cqh;opacity:.55;text-align:center}
 .nilvn-backlog{position:absolute;inset:0;z-index:60;display:none;flex-direction:column;background:var(--nilvn-panel-bg);color:var(--nilvn-panel-color);backdrop-filter:blur(3px);pointer-events:auto;cursor:default}
 .nilvn-backlog.on{display:flex}
 .nilvn-backlog__bar{flex:none;display:flex;justify-content:flex-end;gap:1cqw;padding:1.6cqh 1.6cqw}
@@ -476,18 +504,31 @@ const BASE_CSS = `
 .nilvn-saves__no{font-size:1.9cqh;font-weight:700;opacity:.8}
 .nilvn-saves__when{font-size:2cqh}
 .nilvn-saves__preview{font-size:2.1cqh;opacity:.85;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
-.nilvn-saves__del{position:absolute;right:.8cqw;top:.6cqh;width:3cqh;height:3cqh;border-radius:50%;border:none;background:rgba(0,0,0,.35);color:var(--nilvn-button-color);font:inherit;font-size:1.8cqh;cursor:pointer;line-height:1}
+.nilvn-saves__del{position:absolute;right:.8cqw;top:.6cqh;width:3cqh;height:3cqh;border-radius:50%;border:none;background:var(--nilvn-backdrop);color:var(--nilvn-button-color);font:inherit;font-size:1.8cqh;cursor:pointer;line-height:1}
 .nilvn-saves__del:hover{background:var(--nilvn-accent)}
-.nilvn-modal{position:absolute;inset:0;z-index:70;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.45);pointer-events:auto;cursor:default}
-.nilvn-modal__box{min-width:36cqw;max-width:70cqw;padding:3cqh 3cqw;border-radius:1.4cqh;background:var(--nilvn-panel-bg);border:var(--nilvn-panel-border);color:var(--nilvn-panel-color);box-shadow:0 1.2cqh 4cqh rgba(0,0,0,.5);text-align:center}
+.nilvn-replays__grid{flex:1;min-height:0;overflow-y:auto;display:grid;grid-template-columns:repeat(3,1fr);gap:1.6cqh 1.4cqw;padding:0 5cqw 3cqh;align-content:start}
+.nilvn-replays__card{position:relative;aspect-ratio:16/9;display:flex;align-items:flex-end;gap:.8cqw;padding:1.2cqh 1.2cqw;overflow:hidden;border-radius:1cqh;background:var(--nilvn-button-bg);border:var(--nilvn-button-border);color:var(--nilvn-button-color);font:inherit;font-size:2.3cqh;text-align:left;cursor:pointer;transition:transform .15s ease,border-color .15s ease}
+.nilvn-replays__card:hover,.nilvn-replays__card:focus-visible{transform:translateY(-2px);border-color:var(--nilvn-accent);outline:none}
+.nilvn-replays__card--locked{cursor:default;align-items:center;justify-content:center;flex-direction:column;color:var(--nilvn-muted)}
+.nilvn-replays__thumb{position:absolute;inset:0;z-index:0;background:center/cover no-repeat}
+.nilvn-replays__thumb::after{content:"";position:absolute;inset:0;background:linear-gradient(transparent 45%,var(--nilvn-backdrop))}
+.nilvn-replays__play,.nilvn-replays__name{position:relative;z-index:1;text-shadow:var(--nilvn-text-shadow)}
+.nilvn-replays__play{flex:none;display:grid;place-items:center;width:4cqh;height:4cqh;border-radius:50%;background:var(--nilvn-button-on-bg);color:var(--nilvn-button-on-color);font-size:1.8cqh;text-shadow:none}
+.nilvn-replays__name{font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nilvn-replays__lock{font-size:3.6cqh}
+.nilvn-modal{position:absolute;inset:0;z-index:70;display:flex;align-items:center;justify-content:center;background:var(--nilvn-backdrop);pointer-events:auto;cursor:default}
+.nilvn-modal__box{min-width:36cqw;max-width:70cqw;padding:3cqh 3cqw;border-radius:1.4cqh;background:var(--nilvn-panel-bg);border:var(--nilvn-panel-border);color:var(--nilvn-panel-color);box-shadow:var(--nilvn-panel-shadow);text-align:center}
 .nilvn-modal__msg{font-size:calc(2.6cqh*var(--nilvn-ui-scale));line-height:1.6;margin-bottom:2.4cqh}
 .nilvn-modal__buttons{display:flex;gap:1.2cqw;justify-content:center}
 .nilvn-modal--top{align-items:flex-start;padding-top:8cqh}
 .nilvn-modal--bottom{align-items:flex-end;padding-bottom:8cqh}
 .nilvn-modal--input .nilvn-modal__box{background:var(--nilvn-input-box-skin) center/100% 100% no-repeat,var(--nilvn-input-box-bg);border:var(--nilvn-input-box-border);border-image:var(--nilvn-input-box-skin-slice);border-radius:var(--nilvn-input-box-radius)}
 .nilvn-modal__input{display:block;width:100%;box-sizing:border-box;margin:0 0 2.4cqh;padding:1.2cqh 1.6cqw;font:inherit;font-size:calc(var(--nilvn-input-size)*var(--nilvn-ui-scale));text-align:center;color:var(--nilvn-input-color);background:var(--nilvn-input-bg);border:var(--nilvn-input-border);border-radius:var(--nilvn-input-radius);outline:none}
+.nilvn-modal--input .nilvn-modal__msg{color:var(--nilvn-input-prompt-color)}
+.nilvn-modal--input .nilvn-screen__button:not(.nilvn-screen__button--primary){background:var(--nilvn-input-button-bg);color:var(--nilvn-input-button-color)}
+.nilvn-modal__input--multi{text-align:start;resize:none;line-height:1.5}
 .nilvn-modal__input:focus{box-shadow:0 0 0 2px var(--nilvn-accent)}
-.nilvn-modal__input[aria-invalid="true"]{box-shadow:0 0 0 2px #e05555}
+.nilvn-modal__input[aria-invalid="true"]{box-shadow:0 0 0 2px var(--nilvn-danger)}
 .nilvn-screen__button:disabled{opacity:.45;cursor:default}
 .nilvn-toast{position:absolute;left:50%;bottom:30cqh;transform:translate(-50%,1cqh);z-index:65;padding:1.2cqh 2.4cqw;border-radius:99px;background:var(--nilvn-panel-bg);border:var(--nilvn-panel-border);color:var(--nilvn-panel-color);font-size:calc(2.2cqh*var(--nilvn-ui-scale));opacity:0;transition:opacity .2s,transform .2s;pointer-events:none}
 .nilvn-toast.on{opacity:1;transform:translate(-50%,0)}
@@ -716,7 +757,7 @@ export class DomRenderer implements Renderer, EditStage {
   private chars = new Map<string, CharSlot>()
   /** The frozen picture a `beginTransition` took, until `endTransition` / restore. */
   private transSnapshot: HTMLElement | null = null
-  private hotspots = new Map<string, { el: HTMLDivElement; spec: HotspotSpec }>()
+  private hotspots = new Map<string, { el: HTMLDivElement; spec: HotspotSpec; active: boolean }>()
   objectClick?: (objId: string, onclick: string) => void
   private sprites = new Map<string, SpriteSlot>()
   /** Resting transform for the `camera` object (singleton, always present). */
@@ -839,22 +880,39 @@ export class DomRenderer implements Renderer, EditStage {
         const modal = div(`nilvn-modal nilvn-modal--input${pos}`)
         modal.addEventListener('click', (e) => e.stopPropagation())
         const box = div('nilvn-modal__box')
-        const field = document.createElement('input')
-        field.type = 'text'
-        field.className = 'nilvn-modal__input'
+        const numeric = opts.type === 'number'
+        const multiline = !numeric && (opts.lines ?? 1) > 1
+        const field = document.createElement(multiline ? 'textarea' : 'input')
+        if (field instanceof HTMLTextAreaElement) field.rows = Math.round(opts.lines!)
+        else if (numeric) {
+          field.type = 'number'
+          field.inputMode = 'decimal'
+          if (opts.min !== undefined) field.min = String(opts.min)
+          if (opts.max !== undefined) field.max = String(opts.max)
+          field.step = opts.step !== undefined ? String(opts.step) : 'any'
+        } else field.type = 'text'
+        field.className = `nilvn-modal__input${multiline ? ' nilvn-modal__input--multi' : ''}`
         field.autocomplete = 'off'
         field.spellcheck = false
         if (opts.default) field.placeholder = opts.default
-        if (opts.maxlength && opts.maxlength > 0) field.maxLength = opts.maxlength
+        if (!numeric && opts.maxlength && opts.maxlength > 0) field.maxLength = opts.maxlength
         let re: RegExp | undefined
-        if (opts.pattern) {
+        if (opts.pattern && !numeric) {
           try {
             re = new RegExp(`^(?:${opts.pattern})$`, 'u')
           } catch {
             re = undefined
           }
         }
-        const valid = (): boolean => !re || field.value.trim() === '' || re.test(field.value.trim())
+        const inRange = (v: string): boolean => {
+          const n = Number(v)
+          return v !== '' && Number.isFinite(n) && (opts.min === undefined || n >= opts.min) && (opts.max === undefined || n <= opts.max)
+        }
+        const valid = (): boolean => {
+          const v = field.value.trim()
+          if (v === '') return !(field instanceof HTMLInputElement && field.validity.badInput)
+          return numeric ? inRange(v) : !re || re.test(v)
+        }
         let done = false
         const finish = (v: string | null): void => {
           if (done) return
@@ -883,7 +941,10 @@ export class DomRenderer implements Renderer, EditStage {
         modal.addEventListener('keydown', (e) => {
           e.stopPropagation()
           if (e.key === 'Escape') finish(null)
-          else if (e.key === 'Enter' && e.target === field) submit()
+          else if (e.key === 'Enter' && e.target === field && (!multiline || e.ctrlKey || e.metaKey)) {
+            e.preventDefault()
+            submit()
+          }
         })
         cancel = () => finish(null)
         this.screenLayer.append(modal)
@@ -899,6 +960,8 @@ export class DomRenderer implements Renderer, EditStage {
     el.addEventListener('click', (e) => e.stopPropagation())
     const bg = div('nilvn-screen__bg')
     if (model.background) el.style.setProperty('--screen-bg', model.background)
+    if (model.color) el.style.color = model.color
+    if (model.shadow) el.style.setProperty(themeVar('screen-heading-shadow'), model.shadow)
     el.append(bg)
     if (model.logo) {
       const img = document.createElement('img')
@@ -936,14 +999,24 @@ export class DomRenderer implements Renderer, EditStage {
       el.append(box)
     }
     if (model.buttons.length) {
-      const bar = div('nilvn-screen__buttons')
+      // More than five buttons (a work's own plus plugin title items) go in two
+      // columns, so the page still fits the stage.
+      const bar = div(`nilvn-screen__buttons${model.buttons.length > 5 ? ' nilvn-screen__buttons--two' : ''}`)
+      // The page focuses its first button as it appears: a key still being mashed
+      // through the last line, or the second half of a double click, would press it
+      // at once and skip the page. The player's own input waits a moment; a host's
+      // or a test's click() does not.
+      const shownAt = performance.now()
       for (const b of model.buttons) {
         const btn = document.createElement('button')
         btn.type = 'button'
         btn.className = `nilvn-screen__button${b.primary ? ' nilvn-screen__button--primary' : ''}`
         btn.dataset.id = b.id
         btn.textContent = b.label
-        btn.addEventListener('click', () => b.onSelect())
+        btn.addEventListener('click', (ev) => {
+          if (ev.isTrusted && performance.now() - shownAt < SCREEN_ARM_MS) return
+          b.onSelect()
+        })
         bar.append(btn)
       }
       el.append(bar)
@@ -1012,7 +1085,7 @@ export class DomRenderer implements Renderer, EditStage {
   async setBackground(opts: { url?: string; color?: string; ref?: string }, fadeSec = 0): Promise<void> {
     const item = div('nilvn-bg-item')
     if (opts.url) {
-      await preloadImage(opts.url)
+      await preloadImage(opts.url, () => this.onAssetError?.('background', opts.url!))
       item.style.backgroundImage = `url("${opts.url}")`
       this.bgRef = opts.ref
     } else {
@@ -1176,13 +1249,14 @@ export class DomRenderer implements Renderer, EditStage {
       const el = div('nilvn-hotspot')
       el.dataset.id = spec.id
       el.addEventListener('click', (ev) => {
-        const cmd = this.hotspots.get(spec.id)?.spec.onclick
+        const cur = this.hotspots.get(spec.id)
+        const cmd = cur?.active ? cur.spec.onclick : undefined
         if (!cmd) return
         ev.stopPropagation()
         this.objectClick?.(`hotspot:${spec.id}`, cmd)
       })
       this.fxLayer.append(el)
-      h = { el, spec }
+      h = { el, spec, active: false }
       this.hotspots.set(spec.id, h)
     }
     h.spec = { ...spec }
@@ -1190,7 +1264,34 @@ export class DomRenderer implements Renderer, EditStage {
     h.el.style.top = `${spec.y}%`
     h.el.style.width = `${spec.w}%`
     h.el.style.height = `${spec.h}%`
-    if (probe && moved) this.checkReachable(h.el, `hotspot:${spec.id}`)
+    const was = h.active
+    h.active = this.conditionHolds(spec.if)
+    h.el.hidden = !h.active
+    if (probe && h.active && (moved || !was)) this.checkReachable(h.el, `hotspot:${spec.id}`)
+  }
+
+  evalCondition?: (expr: string) => boolean
+
+  private conditionHolds(expr: string | undefined): boolean {
+    return !expr || !this.evalCondition || this.evalCondition(expr)
+  }
+
+  refreshConditions(): void {
+    for (const [id, h] of this.hotspots) {
+      if (!h.spec.if) continue
+      const on = this.conditionHolds(h.spec.if)
+      if (on === h.active) continue
+      h.active = on
+      h.el.hidden = !on
+      if (on && !this.rebuilding) this.checkReachable(h.el, `hotspot:${id}`)
+    }
+    for (const [id, slot] of this.sprites) {
+      if (!slot.spec.if) continue
+      const on = this.conditionHolds(slot.spec.if)
+      if (on === !slot.el.hidden) continue
+      slot.el.hidden = !on
+      if (on && slot.spec.onclick && !this.rebuilding) this.checkReachable(slot.el, `sprite:${id}`)
+    }
   }
 
   /** A clickable object the player cannot reach is the one content bug the author
@@ -1212,6 +1313,13 @@ export class DomRenderer implements Renderer, EditStage {
     if (!top || top === el || el.contains(top)) return
     const named = top.closest('[class*="nilvn-"]') ?? top
     this.onObstructed(objId, named.className || named.tagName.toLowerCase())
+  }
+
+  clickableIds(): string[] {
+    const out: string[] = []
+    for (const [id, h] of this.hotspots) if (h.active && h.spec.onclick) out.push(`hotspot:${id}`)
+    for (const [id, slot] of this.sprites) if (slot.spec.onclick && !slot.el.hidden) out.push(`sprite:${id}`)
+    return out
   }
 
   hideHotspot(id: string): void {
@@ -1287,6 +1395,7 @@ export class DomRenderer implements Renderer, EditStage {
     // Measure the sheet so the element box is exactly one frame (width follows the
     // per-frame aspect ratio); decode failures fall back to a square frame.
     const probe = new Image()
+    this.watchImage(probe, `sprite sheet "${id}"`)
     probe.src = spec.url
     try {
       await probe.decode()
@@ -1312,7 +1421,8 @@ export class DomRenderer implements Renderer, EditStage {
     if (spec.onclick && !el.dataset.click) {
       el.dataset.click = '1'
       el.addEventListener('click', (ev) => {
-        const cmd = this.sprites.get(id)?.spec.onclick
+        const cur = this.sprites.get(id)
+        const cmd = cur && !cur.el.hidden ? cur.spec.onclick : undefined
         if (!cmd) return
         ev.stopPropagation()
         this.objectClick?.(`sprite:${id}`, cmd)
@@ -1349,7 +1459,9 @@ export class DomRenderer implements Renderer, EditStage {
     // it appears or moves (the editor re-shows unchanged sprites on every refresh),
     // before the fade — an element at opacity 0 still takes a click.
     const moved = fresh || !prev || prev.at !== spec.at || prev.height !== height || prev.y !== spec.y || prev.scale !== spec.scale || prev.rotation !== spec.rotation
-    if (spec.onclick && moved && !this.rebuilding) this.checkReachable(el, `sprite:${id}`)
+    const wasOff = el.hidden
+    el.hidden = !this.conditionHolds(spec.if)
+    if (spec.onclick && !el.hidden && (moved || wasOff) && !this.rebuilding) this.checkReachable(el, `sprite:${id}`)
     if (fresh && fadeSec > 0) await animate(el, [{ opacity: 0 }, { opacity: 1 }], { duration: fadeSec * 1000, easing: 'ease' })
   }
 
@@ -1450,7 +1562,31 @@ export class DomRenderer implements Renderer, EditStage {
       if (easing !== undefined) frame.easing = easing
       return frame
     })
-    await animate(ref.el, frames, { duration: opts.durationSec * 1000, easing: opts.easing ?? 'ease', iterations: opts.iterations ?? 1 })
+    // Every animation this verb starts carries an id, so stopAnimations can find
+    // it among the element's others (show / hide fades, keyframe loops); a keyed
+    // one first cancels the running animation with the same key.
+    const id = ANIM_ID + (opts.key ?? '')
+    if (opts.key !== undefined) for (const a of ref.el.getAnimations?.() ?? []) if (a.id === id) a.cancel()
+    const ended = await animate(ref.el, frames, { duration: opts.durationSec * 1000, easing: opts.easing ?? 'ease', iterations: opts.iterations ?? 1, id })
+    // `commit`: the last frame's channels become the resting pose, which `getProp`
+    // reads and a save keeps. Only for an animation that ran to its end.
+    if (ended && opts.commit && !offsetMode && (opts.iterations ?? 1) !== Infinity) {
+      const { offset: _o, easing: _e, ...last } = keyframes[keyframes.length - 1]!
+      for (const [prop, value] of Object.entries(last)) if (value !== undefined) (ref.model as Record<TransformProp, TransformValue>)[prop as TransformProp] = value as TransformValue
+      this.applyModel(ref)
+    }
+  }
+
+  /** Stop what `animate` started on an object — every such animation, or the one
+   *  started with `key`. The object returns to its resting pose; the stopped
+   *  animations' promises resolve. Show / hide fades and keyframe loops are not
+   *  touched. */
+  stopAnimations(objId: string, key?: string): void {
+    const ref = this.resolveObject(objId)
+    if (!ref) return
+    for (const a of ref.el.getAnimations?.() ?? []) {
+      if (key === undefined ? a.id.startsWith(ANIM_ID) : a.id === ANIM_ID + key) a.cancel()
+    }
   }
 
   // ---- fixed z-bands ----
@@ -2000,9 +2136,10 @@ export class DomRenderer implements Renderer, EditStage {
     const handles: ChoiceHandle[] = items.map((item, index) => {
       const btn = document.createElement('button')
       btn.type = 'button'
-      btn.className = `nilvn-choice${item.chosen ? ' chosen' : ''}`
+      btn.className = `nilvn-choice${item.chosen ? ' chosen' : ''}${item.marked ? ' marked' : ''}`
       if (item.disabled) btn.disabled = true
       this.layoutSegments(btn, item.segments, true, onSpan)
+      if (item.marked) btn.append(chosenMark())
       btn.addEventListener('click', (e) => {
         e.stopPropagation()
         if (!btn.disabled) settle(index)
@@ -2028,7 +2165,9 @@ export class DomRenderer implements Renderer, EditStage {
       cancel: () => settle(null),
       relabel: (index, segments, on) => {
         const btn = buttons[index]
-        if (btn) this.layoutSegments(btn, segments, true, on ?? onSpan)
+        if (!btn) return
+        this.layoutSegments(btn, segments, true, on ?? onSpan)
+        if (btn.classList.contains('marked')) btn.append(chosenMark())
       },
     }
   }
@@ -2081,7 +2220,7 @@ export class DomRenderer implements Renderer, EditStage {
     } else if (shape === 'blinds') {
       overlay.style.background = 'none'
       const slats = 6
-      const anims: Promise<void>[] = []
+      const anims: Promise<unknown>[] = []
       for (let i = 0; i < slats; i++) {
         const slat = document.createElement('div')
         // +0.1% overlap hides sub-pixel seams between adjacent slats.
@@ -2159,6 +2298,7 @@ export class DomRenderer implements Renderer, EditStage {
             at: pctOr(slot.el.style.left, 50),
             height: slot.spec.height,
             onclick: slot.spec.onclick,
+            if: slot.spec.if,
             band: slot.band,
             ...restingState(slot),
           }))
@@ -2229,7 +2369,7 @@ export class DomRenderer implements Renderer, EditStage {
       for (const s of state.sprites ?? []) {
         await this.showSprite(
           s.id,
-          { url: url(s.url), ref: s.url, frames: s.frames, fps: s.fps, loop: s.loop, at: String(s.at), height: s.height, y: s.y, scale: s.scale, rotation: s.rotation, onclick: s.onclick },
+          { url: url(s.url), ref: s.url, frames: s.frames, fps: s.fps, loop: s.loop, at: String(s.at), height: s.height, y: s.y, scale: s.scale, rotation: s.rotation, onclick: s.onclick, if: s.if },
           0,
         )
         this.applyRestingPose(`sprite:${s.id}`, s)

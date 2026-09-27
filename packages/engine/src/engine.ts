@@ -2,18 +2,19 @@ import { builtins } from './builtins.js'
 import { applyConfig, fetchConfig, mergeDefaults, packageConfig } from './config.js'
 import { isThemeToken, THEME_TOKEN_RE } from './theme.js'
 import { tUI, uiLangName } from './i18n.js'
-import { AUTOSAVE_KEY, QUICKSAVE_KEY, READ_KEY, SETTINGS_KEY, UNLOCKS_KEY, PLUGIN_SETTINGS_KEY, GLOBALS_KEY, LocalStorageSaveStore, isSlotPayload, slotKey, type SaveStore, type SlotPayload, type SettingsPayload, type GlobalsPayload } from './save-store.js'
+import { AUTOSAVE_KEY, QUICKSAVE_KEY, READ_KEY, SETTINGS_KEY, UNLOCKS_KEY, REPLAYS_KEY, PLUGIN_SETTINGS_KEY, GLOBALS_KEY, LocalStorageSaveStore, isSlotPayload, slotKey, type SaveStore, type SlotPayload, type SettingsPayload, type GlobalsPayload } from './save-store.js'
 import type { ConfigFieldSchema } from '@nilvn/core'
 import type { ScreenButton } from './renderer/types.js'
 import { endingModel, titleModel, type ChromeHost } from './chrome.js'
 import { SystemMenu } from './system-menu.js'
-import type { TitleConfig, EndingConfig, MenuConfig, SavesConfig, SettingsConfig, SettingKey, KeysConfig, KeyAction, InputConfig, ChoicesConfig, PreloadConfig } from './types.js'
+import type { TitleConfig, EndingConfig, MenuConfig, SavesConfig, SettingsConfig, SettingKey, KeysConfig, KeyAction, KeyBinding, InputConfig, ChoicesConfig, PreloadConfig } from './types.js'
 import { interpolateSegments, interpolateText, displayValue, type InterpolateHost } from './text.js'
 import { buildFileManifest, expandIncludes, FileScriptLoader, scriptId, type ScriptFile } from './scripts.js'
 import { isImageUrl, scanAssetRefs } from './preload.js'
 import { UiPanels } from './ui.js'
 import { screenBackground } from './chrome.js'
-import { bindingOf, matchKey, isEditableTarget } from './keys.js'
+import { isEditableTarget } from './keys.js'
+import { KeyTable } from './keytable.js'
 import { FIRST_PARTY_ID_PREFIX } from './plugin-manifest.js'
 import type { SessionState, VolumeChannel } from './types.js'
 
@@ -23,7 +24,7 @@ const STANDARD_ACTOR_KEYS = new Set(['name', 'nameKey', 'color', 'textColor', 's
 /** Coerce a raw config value to its field's declared type (TOML and the studio
  *  hand typed values; a string from elsewhere still lands right). */
 function coerceConfig(raw: unknown, field: ConfigFieldSchema): unknown {
-  if (raw === undefined || raw === null) return field.default
+  if (raw === undefined || raw === null) return field.default ?? (field.type === 'list' ? [] : undefined)
   switch (field.type) {
     case 'number': {
       const n = typeof raw === 'number' ? raw : Number(raw)
@@ -36,6 +37,12 @@ function coerceConfig(raw: unknown, field: ConfigFieldSchema): unknown {
       return typeof raw === 'boolean' ? raw : raw === 'true' ? true : raw === 'false' ? false : field.default
     case 'enum':
       return field.options?.some((o) => o.value === String(raw)) ? String(raw) : field.default
+    case 'list': {
+      // A TOML array; a comma-separated string from elsewhere is split.
+      const items = Array.isArray(raw) ? raw : typeof raw === 'string' ? raw.split(',').map((x) => x.trim()).filter(Boolean) : undefined
+      if (!items) return field.default ?? []
+      return field.items === 'number' ? items.map(Number).filter(Number.isFinite) : items.map(String)
+    }
     default:
       return typeof raw === 'string' ? raw : String(raw)
   }
@@ -142,6 +149,9 @@ export interface SaveState {
    *  to the next save untouched, so disabling a plugin never destroys its saved
    *  state. Absent = none, so older saves / loaders are unaffected. */
   ext?: Record<string, unknown>
+  /** The shape version of each `ext` slice whose version is not 1
+   *  (`EnginePlugin.stateVersion`). Absent = every slice is version 1. */
+  extVersion?: Record<string, number>
 }
 
 /**
@@ -170,6 +180,12 @@ export class Engine {
    *  engine's own `sys.endings` / `sys.chosen` lists start empty. */
   readonly globals: Record<string, unknown> = { 'sys.endings': [], 'sys.chosen': [] }
   private readonly persistNames = new Set<string>()
+  /** Plugin variable prefixes: a short name → the full prefix it stands for
+   *  (`weather` → `com.example.weather`), only while unambiguous among the
+   *  active plugins; `varPrefixes` = every active plugin's full prefix. The
+   *  plugin host keeps both current. */
+  private varAliases = new Map<string, string>()
+  private varPrefixes: string[] = []
   /** Everything the store held under `globals`, declared today or not: written
    *  back merged, so a declaration a work drops for a while loses nothing. */
   private storedGlobals: Record<string, unknown> = {}
@@ -262,6 +278,9 @@ export class Engine {
   private nodes: ScriptNode[] = []
   private labels: Record<string, number> = {}
   private pos = 0
+  /** Counts playhead moves made by a jump / call / return, so the run loop can
+   *  tell a jump that lands on the next index from a natural advance. */
+  private moves = 0
   private running = false
   private destroyed = false
   /** Bumped on every run loop; an old loop sees the mismatch and bows out, so
@@ -320,9 +339,19 @@ export class Engine {
   /** ext slices restored from a save whose plugin isn't installed — carried to the
    *  next save untouched (see SaveState.ext). Reset on every session entry. */
   private unclaimedExt: Record<string, unknown> = {}
+  /** The slice versions of {@link unclaimedExt} (non-1 only), carried with them. */
+  private unclaimedExtVersion: Record<string, number> = {}
   /** Orchestrator hook: called when a replay reaches its segment end (the menu
    *  restores the stashed pre-replay session here). Absent → the run finishes. */
   onReplayEnd: (() => void) | null = null
+  /** Each unlocked replay's scene: the session as normal play reached its start
+   *  label on the run that unlocked it (persisted under `REPLAYS_KEY`). */
+  private replayScenes = new Map<string, { scene: SaveState; thumb?: string }>()
+  /** Scenes captured at a start label, kept once the segment's end unlocks it. */
+  private pendingScenes = new Map<string, SaveState>()
+  /** The persistent variables as they were when a replay began: a replay is a
+   *  memory, so whatever it writes there is rolled back when it ends. */
+  private replayGlobals: { globals: Record<string, unknown>; stored: Record<string, unknown> } | null = null
   private warned = new Set<string>()
   private onEndCb?: () => void
   private onReadyCb?: () => void
@@ -355,6 +384,9 @@ export class Engine {
   readonly settingsConfig: SettingsConfig = {}
   /** `[keys]` — bindings that override {@link KEYS_DEFAULT} (`false` unbinds). */
   readonly keysConfig: KeysConfig = {}
+  /** Every binding — the engine's actions and the active plugins' — resolved
+   *  player → author → default; the settings screen rebinds through it. */
+  readonly keyTable = new KeyTable(this.keysConfig, (message) => this.report({ phase: 'plugin', message }))
   /** The in-game system menu (undefined when `screens.menu` / `[menu] enabled` is off). */
   private menu: SystemMenu | undefined
   // ---- auto / skip (inc 4): engine mechanisms the menu only toggles ----
@@ -386,7 +418,7 @@ export class Engine {
   private pluginConfigListeners = new Map<string, Set<(key: string, value: unknown) => void>>()
   private titleExtras = new Map<string, ScreenButton>()
   private hudEls = new Set<HTMLElement>()
-  private pluginScreen: { id: string; el: HTMLElement } | null = null
+  private pluginScreen: { id: string; el: HTMLElement; closed: () => void } | null = null
   /** Listeners fired after a language switch, so the menu re-localizes its chrome. */
   private langListeners = new Set<(lang: string) => void>()
   /** What's parked on screen right now (an awaited dialogue line or a choices
@@ -395,7 +427,7 @@ export class Engine {
   private shown: { kind: 'dialogue'; node: DialogueNode; paged?: boolean } | { kind: 'choices'; node: ChoicesNode; prompt: ChoicePrompt } | null = null
   private keyHandler = (e: KeyboardEvent) => {
     if (isEditableTarget(e.target)) return
-    const hit = (a: KeyAction): boolean => matchKey(bindingOf(this.keysConfig, a), e)
+    const hit = (a: KeyAction): boolean => this.keyTable.hit(a, e)
     if (hit('menu')) {
       if (this.pluginScreen) this.closePluginScreen()
       else this.menu?.onEscape()
@@ -408,6 +440,9 @@ export class Engine {
       else if (this.advanceResolve && this.skipActive(this.parkedReadKey)) this.tapAdvance()
       return
     }
+    const idle = !this.menu?.isOpen()
+    const playing = idle && this.running && this.session === 'playing' && !this.pluginScreen
+    if (this.keyTable.dispatch(e, { playing, idle }, (owner, err) => this.report({ phase: 'plugin', plugin: owner, message: `key handler failed: ${errMsg(err)}`, error: err }))) return
     if (!this.running || this.menu?.isOpen()) return
     if (hit('advance')) {
       e.preventDefault()
@@ -437,7 +472,7 @@ export class Engine {
     }
   }
   private keyUpHandler = (e: KeyboardEvent) => {
-    if (matchKey(bindingOf(this.keysConfig, 'skipHold'), e)) this.skipHeld = false
+    if (this.keyTable.hit('skipHold', e)) this.skipHeld = false
   }
 
   private autoUse: string[]
@@ -466,6 +501,7 @@ export class Engine {
     this.defaultLang = opts.defaultLang ?? 'en'
     this.lang = opts.lang ?? this.defaultLang
     this.languages = opts.languages ?? [this.lang]
+    this.hostLang = { lang: opts.lang !== undefined, defaultLang: opts.defaultLang !== undefined, languages: opts.languages !== undefined }
     Object.assign(this.macros, opts.macros)
     Object.assign(this.assets, opts.assets)
     mergeDefaults(this.defaults, opts.defaults)
@@ -518,6 +554,13 @@ export class Engine {
     }
     if (opts.keys) Object.assign(this.keysConfig, opts.keys)
     this.onSegmentSeen((id) => {
+      const scene = this.pendingScenes.get(id)
+      if (scene) {
+        this.pendingScenes.delete(id)
+        const thumb = this.stage.snapshot().bgRef
+        this.replayScenes.set(id, { scene, ...(thumb ? { thumb } : {}) })
+        void this.saveStore.set(REPLAYS_KEY, Object.fromEntries(this.replayScenes)).catch(() => {})
+      }
       if (this.unlocks.has(id)) return
       this.unlocks.add(id)
       void this.saveStore.set(UNLOCKS_KEY, [...this.unlocks]).catch(() => {})
@@ -538,6 +581,7 @@ export class Engine {
 
     this.stage.root.addEventListener('click', () => this.tap())
     this.stage.objectClick = (objId, onclick) => void this.runInline(onclick, objId)
+    this.stage.evalCondition = (expr) => this.conditionHolds(expr)
     window.addEventListener('keydown', this.keyHandler)
     window.addEventListener('keyup', this.keyUpHandler)
   }
@@ -665,6 +709,7 @@ export class Engine {
     this.saveKey = m.saveKey
     this.buildInfo = m.engine
     if (m.title) this.config = { ...this.config, game: { ...this.config.game, title: m.title } } // the title page's heading
+    this.host.setCarried(m.plugins)
     this.queueUse(m.plugins.map((p) => p.id))
     // The always-warm `base` slice per switchable language (actor names on line
     // one); scene slices stream with their chunks.
@@ -783,6 +828,13 @@ export class Engine {
     this.replay.scan(nodes, this.host.hasCommand('replaydef'))
   }
 
+  /** True while a dialogue line is fully shown and waits for the player to go on
+   *  (a click, Space / Enter) — not while it types, a transition or a command
+   *  runs, or a prompt is up. For custom chrome and automation. */
+  get waitingForPlayer(): boolean {
+    return this.running && this.advanceResolve !== null && !this.typing
+  }
+
   /** The segment id currently playing as an isolated replay, or null. */
   isReplaying(): string | null {
     return this.replay.segment
@@ -803,23 +855,36 @@ export class Engine {
    *  Whoever started it (the menu stashes the interrupted session) takes over via
    *  `onReplayEnd`; with no orchestrator the run simply finishes. */
   endReplay(): void {
-    this.replay.segment = null
+    // The replay's run stops at its end marker, now: whoever takes over may need
+    // a moment (a load awaits its chunk), and the lines after the marker — the
+    // rest of the story, often an [ending] — are not the replay's to play.
+    this.generation++
+    this.leaveReplay()
     const cb = this.onReplayEnd
     if (cb) cb()
     else if (!this.menu?.handleReplayEnd()) this.finish()
   }
 
-  /** Play one authored segment as an isolated replay: a clean-slate session
-   *  (fresh vars, blank stage, silence) starting at the segment's start label.
-   *  The segment's own commands establish its scene. Returns false for an
-   *  unknown segment id. Ends via its `[replayend]` marker → `endReplay`. */
+  /** Play one authored segment as a replay. Once the player has unlocked it,
+   *  it starts from its scene — the session (stage, music, variables, panels,
+   *  plugin state) as normal play reached the segment's start label on the run
+   *  that unlocked it; a segment unlocked before scenes were kept starts clean
+   *  (fresh variables, blank stage, silence). Either way the persistent variables
+   *  are rolled back when the replay ends, and `sys.replaying` reads true
+   *  meanwhile. Returns false for an unknown segment id. Ends via its
+   *  `[replayend]` marker → `endReplay`. */
   async playReplay(segId: string): Promise<boolean> {
     const def = this.replay.find(segId)
     if (!def) return false
+    // Replaying from a replay keeps the persistent variables of the first.
+    if (!this.replayGlobals) this.replayGlobals = { globals: structuredClone(this.globals), stored: structuredClone(this.storedGlobals) }
+    const scene = this.replayScenes.get(segId)?.scene
+    if (scene && (await this.restoreSession(scene, segId))) return true
     this.generation++
     this.loops.cancelRafAnims()
     this.loops.cancelLoops()
     this.vars = {}
+    this.ui.reset() // the interrupted run's [ui show] / [ui hide] decisions come back with it
     this.skipTyping = true
     this.unblock()
     this.audio.stopAllTracks(0)
@@ -832,11 +897,13 @@ export class Engine {
       await this.residency.ensureLoaded(def.label)
     } catch (err) {
       this.report({ phase: 'load', chunk: this.manifest?.labelIndex[def.label], message: `could not load replay "${segId}": ${errMsg(err)}`, error: err })
+      this.leaveReplay()
       return false
     }
     const pos = this.labels[def.label]
     if (pos === undefined) {
       this.report({ phase: 'jump', message: `replay "${segId}" starts at unknown label "${def.label}"` })
+      this.leaveReplay()
       return false
     }
     this.replay.segment = segId
@@ -844,7 +911,43 @@ export class Engine {
     return true
   }
 
+  /** Back to normal play: no segment, and the persistent variables as they were
+   *  before the replay (written back to the store). */
+  private leaveReplay(): void {
+    this.replay.segment = null
+    const saved = this.replayGlobals
+    if (!saved) return
+    this.replayGlobals = null
+    for (const k of Object.keys(this.globals)) if (!(k in saved.globals)) delete this.globals[k]
+    Object.assign(this.globals, saved.globals)
+    this.storedGlobals = saved.stored
+    this.globalsDirty = true
+    this.schedulePersist()
+    this.ui.refresh()
+    this.refreshConditions()
+  }
+
+  /** Normal play reached a replay's start label: keep the session as it is now,
+   *  to become the replay's scene when the segment's end unlocks it. */
+  private captureReplayScenes(label: string): void {
+    if (this.replay.segment) return
+    for (const def of this.replay.replays) if (def.label === label) this.pendingScenes.set(def.id, this.saveState())
+  }
+
   // ---- localization ----
+
+  /** Which language options the host passed itself (a config's `[game]` fills only the rest). */
+  private hostLang = { lang: false, defaultLang: false, languages: false }
+
+  /** `[game] lang`: the work's starting language — unless the host passed
+   *  `lang`; also the fallback and the only language when the host set neither.
+   *  The player's saved choice still wins when settings load. @internal */
+  applyConfigLang(lang: string): void {
+    if (this.hostLang.lang) return
+    this.lang = lang
+    if (!this.hostLang.defaultLang) this.defaultLang = lang
+    if (!this.hostLang.languages && this.languages.length <= 1) this.languages = [lang]
+  }
 
   /** Resolve a catalog key in the current language, falling back to the default
    *  language, then to an empty string. */
@@ -931,18 +1034,24 @@ export class Engine {
     }
   }
 
+  /** A file of the loaded script package by its ref — the by-ref asset table
+   *  only (no alias / base-URL fallback); undefined when the package lacks it. */
+  packageAssetUrl(ref: string): string | undefined {
+    return Object.hasOwn(this.assets, ref) ? this.assets[ref] : undefined
+  }
+
+  /** A path with its alias prefix expanded (`@bg/x.svg` → `assets/bg/x.svg`). */
+  private expandAlias(path: string): string {
+    for (const [key, value] of Object.entries(this.alias)) {
+      if (path === key) return value
+      if (path.startsWith(key + '/')) return value + path.slice(key.length)
+    }
+    return path
+  }
+
   /** Resolve a resource path: alias prefixes, then the asset table, then base URL */
   resolve(path: string): string {
-    for (const [key, value] of Object.entries(this.alias)) {
-      if (path === key) {
-        path = value
-        break
-      }
-      if (path.startsWith(key + '/')) {
-        path = value + path.slice(key.length)
-        break
-      }
-    }
+    path = this.expandAlias(path)
     const inline = this.assets[path] ?? this.assets[path.replace(/^\.\//, '')]
     if (inline) return inline
     // An `@prefix` no `[path]` entry and no `[alias]` declares would otherwise
@@ -1370,7 +1479,7 @@ export class Engine {
     if (!ref) return
     const gen = this.generation
     this.audio.stopBacklog() // stop the current replay immediately on click
-    const url = this.loader ? await this.loader.assetUrl(ref) : this.resolve(ref)
+    const url = this.loader ? await this.loader.assetUrl(this.expandAlias(ref)) : this.resolve(ref)
     // Session moved on during the resolve (a load/restart/destroy bumped the
     // generation, or destroy ran) — drop this stale replay, don't play over the new
     // session. `destroyed` alone would miss restart/restoreState (they don't set it).
@@ -1399,11 +1508,16 @@ export class Engine {
     return () => this.sessionListeners.delete(fn)
   }
 
-  private setSession(state: SessionState): void {
+  /** Move the session to `state`. `entry` = a new run begins (start / restart /
+   *  load / replay): it fires even when the state stays `playing`, so plugins
+   *  that draw their own things can reset them on every session entry. */
+  private setSession(state: SessionState, entry = false): void {
     const prev = this._session
-    if (state === prev) return
+    if (state === prev && !entry) return
     this._session = state
     if (state !== 'ending') this._ending = undefined
+    // A new run: what is clickable now (a load's restored objects) had its chance.
+    if (entry) this.clickableAtLine = new Set(this.stage.clickableIds())
     for (const el of this.hudEls) el.style.display = state === 'playing' ? '' : 'none'
     this.ui.refresh()
     if (state !== 'playing' && this.pluginScreen) this.closePluginScreen()
@@ -1422,7 +1536,13 @@ export class Engine {
     if (this.destroyed) return false
     if (!this.nodes.length && !this.manifest) {
       if (this.scripts.length) await this.loadScripts(this.scripts)
-      else if (this.entry) await this.loadScript(this.entry)
+      else if (this.entry) {
+        // The config's entry: assets, aliases and plugin paths keep resolving from
+        // the config file's directory (as with [game] scripts), wherever it lives.
+        const base = this.baseUrl
+        await this.loadScript(this.entry)
+        this.baseUrl = base
+      }
     }
     if (this.destroyed) return false
     // Chunked play (lazy): make only the ENTRY chunk (the one defining the
@@ -1455,11 +1575,15 @@ export class Engine {
       this.autoUse = []
       await this.usePlugins(names)
       if (this.destroyed) return false
+      const pending = [...this.pendingThemeTokens]
+      this.pendingThemeTokens.clear()
+      if (pending.length) this.checkThemeTokens(pending, 'load')
       // The load-time scan may have run before [use] plugins installed their
       // commands (loadSource precedes start); re-scan now that they have.
       // Idempotent per id, and still a no-op when abreplay stays uninstalled.
       this.scanReplayDefs(this.nodes)
     }
+    for (const ref of this.menu?.unfilledRefs() ?? []) this.report({ phase: 'load', message: `[menu] item "${ref}" — no active plugin contributes it` }, true)
     if (!this.persistedLoaded) {
       this.persistedLoaded = true
       await this.loadPersisted()
@@ -1509,7 +1633,8 @@ export class Engine {
     this.pendingTrans = null
     this.ui.reset()
     this.unclaimedExt = {}
-    this.replay.segment = null
+    this.unclaimedExtVersion = {}
+    this.leaveReplay()
     this.audio.stopAllTracks(0)
     this.audio.stopVoice()
     this.resetBacklog()
@@ -1686,6 +1811,13 @@ export class Engine {
   languageName(lang: string): string {
     return uiLangName(lang)
   }
+  /** The picture of an unlocked replay (the background on screen when it was
+   *  unlocked), resolved; undefined without one. */
+  replayThumbnail(segId: string): string | undefined {
+    const ref = this.replayScenes.get(segId)?.thumb
+    return ref ? this.resolve(ref) : undefined
+  }
+
   /** Whether the player has passed this replay segment's end in normal play. */
   isUnlocked(segId: string): boolean {
     return this.unlocks.has(segId)
@@ -1713,6 +1845,7 @@ export class Engine {
   /** Park on a shown line: a tap, or — in skip / auto mode — the engine's own clock. */
   private async waitAdvanceOrAuto(readKey: string, textLen: number, stopVoice = true): Promise<void> {
     const gen = this.generation
+    this.clickableAtLine = new Set(this.stage.clickableIds())
     if (this.skipActive(readKey)) {
       await this.sleep(this.skipHeld ? 30 : 60) // a beat per line keeps the page responsive
       if (gen !== this.generation) return
@@ -1743,6 +1876,19 @@ export class Engine {
 
   // ---- persisted player state: settings, read lines, unlocks, slots ----
 
+  /** The player binds a key (engine action or `<plugin id>:<id>`); the key
+   *  leaves any other binding that held it. Persisted with the settings. */
+  assignKey(id: string, binding: KeyBinding): void {
+    this.keyTable.assign(id, binding)
+    this.settingChanged('keys', id)
+  }
+
+  /** Drop the player's key changes (back to the author's / default keys). */
+  resetKeys(): void {
+    this.keyTable.reset()
+    this.settingChanged('keys', '')
+  }
+
   private settingChanged(key: SettingKey, value: number | string): void {
     this.fire('onSettingsChange', key, value)
     if (this.loadingSettings) return
@@ -1764,6 +1910,7 @@ export class Engine {
       lang: this.lang,
       dialogOpacity: this._dialogOpacity,
       uiScale: this._uiScale,
+      ...(Object.keys(this.keyTable.player).length ? { keys: this.keyTable.player } : {}),
     }
     try {
       if (this.settingsDirty) {
@@ -1810,12 +1957,19 @@ export class Engine {
         for (const [ch, v] of Object.entries(s.volumes ?? {})) if (typeof v === 'number') this.setVolume(ch as VolumeChannel, v)
         if (typeof s.dialogOpacity === 'number') this.setDialogOpacity(s.dialogOpacity)
         if (typeof s.uiScale === 'number') this.setUiScale(s.uiScale)
+        if (s.keys && typeof s.keys === 'object') this.keyTable.player = { ...s.keys }
         if (typeof s.lang === 'string' && s.lang !== this.lang && this.languages.includes(s.lang)) await this.setLanguage(s.lang)
       }
       const read = await store.get(READ_KEY)
       if (Array.isArray(read)) for (const k of read) if (typeof k === 'string') this.readSet.add(k)
       const unlocks = await store.get(UNLOCKS_KEY)
       if (Array.isArray(unlocks)) for (const k of unlocks) if (typeof k === 'string') this.unlocks.add(k)
+      const scenes = await store.get(REPLAYS_KEY)
+      if (scenes && typeof scenes === 'object') {
+        for (const [id, r] of Object.entries(scenes as Record<string, { scene?: SaveState; thumb?: unknown }>)) {
+          if (r?.scene?.v === 2 && r.scene.at) this.replayScenes.set(id, { scene: r.scene, ...(typeof r.thumb === 'string' ? { thumb: r.thumb } : {}) })
+        }
+      }
       const g = (await store.get(GLOBALS_KEY)) as GlobalsPayload | undefined
       if (g && typeof g === 'object' && g.v === 1 && g.vars && typeof g.vars === 'object') {
         this.storedGlobals = { ...g.vars }
@@ -1945,7 +2099,7 @@ export class Engine {
     const out: { id: string; name: () => string; t: (id: string) => string; fields: ConfigFieldSchema[] }[] = []
     for (const id of this.activePlugins) {
       const m = this.host.manifestOf(id)
-      const fields = (m?.contributes?.config ?? []).filter((f) => f.scope === 'player')
+      const fields = (m?.contributes?.config ?? []).filter((f) => f.scope === 'player' && f.type !== 'list')
       if (!fields.length) continue
       // Labels are the plugin's own i18n ids: resolve through ITS context (its manifest messages).
       const t = (msgId: string): string => this.host.contextOf(id)?.t(msgId) ?? this.t(msgId)
@@ -1970,7 +2124,7 @@ export class Engine {
       const a = actor as ActorDef & Record<string, unknown>
       for (const { pluginId, key } of fields) {
         if (!(key in a) || key === 'ext') continue
-        if (STANDARD_ACTOR_KEYS.has(key) && key !== 'voice') continue
+        if (STANDARD_ACTOR_KEYS.has(key)) continue
         const ext = (a.ext ??= {})
         const table = (ext[pluginId] ??= {})
         if (!(key in table)) table[key] = a[key]
@@ -1979,15 +2133,9 @@ export class Engine {
     }
   }
 
-  /** A plugin's actor field (`ext[pluginId][key]`), with the pre-0.15 top-level
-   *  `voice` still honoured for voicefx. */
+  /** A plugin's actor field (`ext[pluginId][key]`). */
   actorField(actorId: string, pluginId: string, key: string): unknown {
-    const a = this.actors[actorId] as (ActorDef & Record<string, unknown>) | undefined
-    if (!a) return undefined
-    const v = a.ext?.[pluginId]?.[key]
-    if (v !== undefined) return v
-    if (key === 'voice' && pluginId === 'app.nilvn.voicefx') return a.voice
-    return undefined
+    return this.actors[actorId]?.ext?.[pluginId]?.[key]
   }
 
   // ---- chrome contributions (`menuItems` / `titleItems` / `hud` / plugin screens) ----
@@ -1996,7 +2144,7 @@ export class Engine {
   addMenuItem(pluginId: string, id: string, onSelect: () => void): () => void {
     const def = this.host.manifestOf(pluginId)?.contributes?.menuItems?.find((m) => m.id === id)
     const label = (): string => (def ? (this.host.contextOf(pluginId)?.t(def.label) ?? def.label) : id)
-    return this.menu?.addItem(`${pluginId}:${id}`, label, onSelect, def?.when ?? 'playing') ?? (() => {})
+    return this.menu?.addItem(`${pluginId}:${id}`, label, onSelect) ?? (() => {})
   }
   /** @internal */
   addTitleItem(pluginId: string, id: string, onSelect: () => void): () => void {
@@ -2033,7 +2181,7 @@ export class Engine {
     }
   }
   /** @internal */
-  openPluginScreen(pluginId: string, id: string, title: string, render: (body: HTMLElement, close: () => void) => void): void {
+  openPluginScreen(pluginId: string, id: string, title: string, render: (body: HTMLElement, close: () => void) => void): Promise<void> {
     this.closePluginScreen()
     this.menu?.closeAll()
     const wrap = this.stage.chrome.overlay('nilvn-backlog nilvn-screen-plugin on')
@@ -2054,15 +2202,30 @@ export class Engine {
     const body = document.createElement('div')
     body.className = 'nilvn-backlog__list'
     wrap.append(bar, body)
-    this.pluginScreen = { id: `${pluginId}:${id}`, el: wrap }
+    let closed!: () => void
+    const done = new Promise<void>((resolve) => (closed = resolve))
+    this.pluginScreen = { id: `${pluginId}:${id}`, el: wrap, closed }
     render(body, () => this.closePluginScreen())
+    return done
   }
   /** @internal */
-  closePluginScreen(id?: string): void {
+  /** Whether a plugin screen is open (of `pluginId`, and `id` when given). */
+  pluginScreenOpen(pluginId?: string, id?: string): boolean {
+    const open = this.pluginScreen?.id
+    if (!open) return false
+    if (pluginId !== undefined && !open.startsWith(`${pluginId}:`)) return false
+    return id === undefined || open.endsWith(`:${id}`)
+  }
+
+  /** Close the open plugin screen — only `pluginId`'s own (and only `id` when
+   *  given) when either is passed; neither = whichever is open (Esc, sessions). */
+  closePluginScreen(id?: string, pluginId?: string): void {
     if (!this.pluginScreen) return
-    if (id !== undefined && !this.pluginScreen.id.endsWith(`:${id}`)) return
-    this.pluginScreen.el.remove()
+    if (!this.pluginScreenOpen(pluginId, id)) return
+    const { el, closed } = this.pluginScreen
     this.pluginScreen = null
+    el.remove()
+    closed()
   }
 
   /** The snapshot a slot holds: the state plus the line on screen as its caption. */
@@ -2188,13 +2351,13 @@ export class Engine {
 
   /** The node-execution loop. Guarded by `generation` so a load() can abandon a
    *  stale loop and resume from a saved position without double-running nodes. */
-  private async runLoop(startPos: number): Promise<void> {
+  private async runLoop(startPos: number, announce = true): Promise<void> {
     if (this.destroyed) return
     const gen = ++this.generation
     this.pos = startPos
     this.running = true
     this.stage.chrome.hideScreen()
-    this.setSession('playing')
+    this.setSession('playing', announce)
     let steps = 0
     while (this.running && gen === this.generation) {
       // A script that loops without ever waiting ([label]/[jump] cycles, [set] storms)
@@ -2242,6 +2405,7 @@ export class Engine {
       this.pos = idx + 1
       this.resumeIndex = idx
       this.current = node
+      const moves = this.moves
       try {
         await this.exec(node)
       } catch (err) {
@@ -2251,8 +2415,10 @@ export class Engine {
       }
       // The last node of a chunk, left by natural advance: continue in the chunk's
       // fall-through successor even when it is not the physically next one (a
-      // jump appended chunks out of story order — script files keep list order).
-      if (gen === this.generation && this.pos === idx + 1) {
+      // jump appended chunks out of story order — script files keep list order);
+      // a chunk without one (the last file) ends the script there.
+      if (gen === this.generation && this.pos === idx + 1 && this.moves === moves) {
+        if (this.residency.endsAfter(idx)) break
         const next = this.residency.fallThroughFrom(idx)
         if (next !== undefined) {
           try {
@@ -2346,9 +2512,17 @@ export class Engine {
     for (const fn of this.themeListeners) fn(theme)
   }
 
+  /** Unknown tokens a config set before its `[use]` plugins were installed:
+   *  judged once they are (a plugin may declare them). */
+  private pendingThemeTokens = new Set<string>()
+
   private checkThemeTokens(keys: string[], phase: 'load' | 'exec', line?: number): void {
     for (const k of keys) {
-      if (isThemeToken(k)) continue
+      if (isThemeToken(k) || this.host.declaresThemeToken(k)) continue
+      if (phase === 'load' && this.autoUse.length && THEME_TOKEN_RE.test(k)) {
+        this.pendingThemeTokens.add(k)
+        continue
+      }
       const message = THEME_TOKEN_RE.test(k)
         ? `unknown theme token "${k}" (see THEME_TOKENS) — set as --nilvn-${k} anyway`
         : `invalid theme token "${k}" (lower-case words joined by dashes)`
@@ -2379,7 +2553,7 @@ export class Engine {
       // Per-plugin slices (running loops live in ext.animstudio now), plus any
       // slices restored from a save whose plugin isn't installed — carried
       // through untouched so disabling a plugin never destroys its saved state.
-      ext: this.collectExt(),
+      ...this.collectExt(),
     }
     this.fire('onSaved', state)
     return state
@@ -2388,15 +2562,29 @@ export class Engine {
   /** Assemble SaveState.ext: unclaimed carry-through first, then every installed
    *  plugin's saveState slice. Undefined when there is nothing to store, so saves
    *  without plugin state stay byte-identical to pre-ext ones. */
-  private collectExt(): Record<string, unknown> | undefined {
-    const ext: Record<string, unknown> = { ...this.unclaimedExt, ...this.host.saveSlices() }
-    return Object.keys(ext).length ? ext : undefined
+  private collectExt(): Pick<SaveState, 'ext' | 'extVersion'> {
+    const own = this.host.saveSlices()
+    const ext: Record<string, unknown> = { ...this.unclaimedExt, ...own.ext }
+    const extVersion: Record<string, number> = { ...this.unclaimedExtVersion }
+    for (const id of Object.keys(own.ext)) {
+      if (own.versions[id] !== undefined) extVersion[id] = own.versions[id]
+      else delete extVersion[id]
+    }
+    return {
+      ext: Object.keys(ext).length ? ext : undefined,
+      ...(Object.keys(extVersion).length ? { extVersion } : {}),
+    }
   }
 
   /** Restore a saved snapshot and resume play from it. Returns false (without
    *  touching anything) when the save is incompatible — wrong version, a
    *  different/re-ordered script, or an out-of-range playhead. */
   async restoreState(state: SaveState): Promise<boolean> {
+    return this.restoreSession(state)
+  }
+
+  /** `restoreState`, or — with `replaySeg` — a replay starting from its scene. */
+  private async restoreSession(state: SaveState, replaySeg?: string): Promise<boolean> {
     if (!state || state.v !== 2 || !state.at) return false
     // Chunked play (lazy): make the saved label's chunk resident before
     // resolving its (label,offset) — a label whose chunk isn't loaded would
@@ -2419,7 +2607,10 @@ export class Engine {
     this.generation++
     this.loops.cancelRafAnims() // abort any in-flight event-frame before the new session
     this.loops.cancelLoops() // and stop running loops; saved ones restart after restore
-    this.replay.segment = null // a load is always a normal-play session
+    // A load is a normal-play session (its persistent variables come back if it
+    // ends a replay); a replay's scene keeps the replay going.
+    if (replaySeg) this.replay.segment = replaySeg
+    else this.leaveReplay()
     this.resetBacklog() // the backlog isn't persisted — a load starts a fresh backlog
     this.vars = structuredClone(state.vars)
     this.ui.restore(state.ui)
@@ -2434,14 +2625,16 @@ export class Engine {
     }
     this.skipTyping = true
     this.unblock()
-    // Restore audio: stop every playing track + any voice clip, then resume the
-    // saved BGM and ambience beds (if any).
-    this.audio.stopAllTracks(0)
+    // Restore audio: the saved BGM and ambience beds play — one already playing
+    // the same file carries on without a restart — and every other track stops,
+    // as does any voice clip.
     this.audio.stopVoice()
-    if (state.bgm?.src) this.playBgm(state.bgm.src, { loop: state.bgm.loop, volume: state.bgm.volume })
+    const tracks: { track: string; src: string; loop: boolean; volume: number }[] = []
+    if (state.bgm?.src) tracks.push({ track: Engine.MUSIC_TRACK, src: state.bgm.src, loop: state.bgm.loop ?? true, volume: state.bgm.volume ?? 1 })
     for (const t of state.tracks ?? []) {
-      if (t.src && t.track && t.track !== Engine.MUSIC_TRACK) this.playTrack(t.track, t.src, { loop: t.loop, volume: t.volume })
+      if (t.src && t.track && t.track !== Engine.MUSIC_TRACK) tracks.push({ track: t.track, src: t.src, loop: t.loop ?? true, volume: t.volume ?? 1 })
     }
+    this.audio.syncTracks(tracks)
     // Pass a face resolver so a `face` keyframe played after this load still swaps the
     // sprite art (the renderer has no actor templates of its own).
     // A save stores asset REFS; the stage re-resolves them here
@@ -2467,23 +2660,33 @@ export class Engine {
       },
     )
     this.fireTheme() // the saved script theme layer is painted again
+    this.refreshConditions() // conditional regions against the restored variables
     // Plugin state slices run AFTER the stage is restored (e.g. animstudio
     // restarts its loops so each entry pose overrides the mid-phase value the
     // snapshot held —) and before play resumes.
     // Legacy top-level loops first (pre-ext saves)…
     for (const l of state.activeLoops ?? []) this.startLoop(l.objId, l.duration, l.entry, l.body, l.into, false)
+    // A load is a session entry: announce it BEFORE the slices come back, so a
+    // plugin that resets its own drawing on entry does not wipe what its
+    // restoreState is about to put back (order: onSessionChange → restoreState → onRestored).
+    this.setSession('playing', true)
     // …then dispatch each ext slice to its installed owner. Slices with no owner
     // are kept, not dropped: they ride along to the next save untouched.
     this.unclaimedExt = {}
+    this.unclaimedExtVersion = {}
     for (const [name, data] of Object.entries(state.ext ?? {})) {
-      if (!this.host.restoreSlice(name, data)) this.unclaimedExt[name] = data
+      const v = state.extVersion?.[name]
+      const from = Number.isInteger(v) && (v as number) >= 1 ? (v as number) : 1
+      if (this.host.restoreSlice(name, data, from)) continue
+      this.unclaimedExt[name] = data
+      if (from !== 1) this.unclaimedExtVersion[name] = from
     }
     // Chunked play: the save may carry a different language than
     // the session it restores into, and `ensureLoaded` above ran under the OLD
     // language — fill the resident chunks' slices for the restored language before
     // play re-renders, or its first lines would fall back to the default language.
     if (this.manifest) await this.residency.ensureResidentLocales(this.lang)
-    void this.runLoop(pos)
+    void this.runLoop(pos, false)
     this.fire('onRestored', state)
     return true
   }
@@ -2499,6 +2702,7 @@ export class Engine {
     this.loops.cancelRafAnims()
     this.loops.cancelLoops()
     this.unclaimedExt = {} // a clean slate carries no other session's plugin state
+    this.unclaimedExtVersion = {}
     this.vars = {}
     this.callStack = []
     this.pendingTrans = null
@@ -2507,7 +2711,7 @@ export class Engine {
     this.unblock()
     this.audio.stopAllTracks(0)
     this.audio.stopVoice()
-    this.replay.segment = null // back to normal play
+    this.leaveReplay() // back to normal play
     this.resetBacklog() // back to the start ⇒ empty backlog
     await this.stage.restore({ chars: [], text: '', dialog: false })
     this.fireTheme() // the script theme layer was reset with the stage
@@ -2542,6 +2746,7 @@ export class Engine {
       return
     }
     this.pos = idx
+    this.moves++
   }
 
   /** `[call label]`: jump there, remembering the line after the call so
@@ -2580,6 +2785,7 @@ export class Engine {
       return
     }
     this.pos = idx
+    this.moves++
   }
 
   /** Warm assets — images are decoded, everything else fetched into the HTTP
@@ -2612,7 +2818,7 @@ export class Engine {
 
   private async warmAsset(ref: string): Promise<void> {
     try {
-      const url = this.loader ? await this.loader.assetUrl(ref) : this.resolve(ref)
+      const url = this.loader ? await this.loader.assetUrl(this.expandAlias(ref)) : this.resolve(ref)
       if (isImageUrl(url)) await preloadImage(url)
       else {
         const res = await fetch(url)
@@ -2658,14 +2864,38 @@ export class Engine {
     this._ending = id
     this.addToGlobalSet('sys.endings', id)
     this.setSession('ending')
+    this.ui.reset() // a panel the script showed by hand does not stay over the ending page
     this.showEndingScreen(id)
     this.fire('onEnd')
     this.onEndCb?.()
   }
 
+  /** A stage object's `if` (`[hotspot]`, a clickable `[sprite]`) against the
+   *  variables. One that fails to evaluate counts as false, reported once per
+   *  expression. */
+  private conditionHolds(expr: string): boolean {
+    try {
+      return truthy(evalExpr(expr, this.scope()))
+    } catch (err) {
+      if (!this.conditionErrors.has(expr)) {
+        this.conditionErrors.add(expr)
+        this.report({ phase: 'exec', message: `if=${expr}: ${errMsg(err)} — the object stays off`, error: err }, true)
+      }
+      return false
+    }
+  }
+  private conditionErrors = new Set<string>()
+
+  /** Re-evaluate the stage objects' `if` after the variables changed. @internal */
+  refreshConditions(): void {
+    this.stage.refreshConditions()
+  }
+
   /** Write one script variable (what `[set]` and `vars.set` do): plugins hear
    *  `onVarChange`. */
   setVar(name: string, value: unknown): void {
+    name = this.canonicalVar(name)
+    if (this.readonlyVar(name)) return
     if (this.isPersistent(name)) {
       this.setGlobal(name, value)
       return
@@ -2673,11 +2903,15 @@ export class Engine {
     this.vars[name] = value
     this.fire('onVarChange', name, value)
     this.ui.refresh()
+    this.refreshConditions()
   }
 
   /** A variable by name — persistent first, then the session's; `undefined`
    *  when neither has it (expressions read it as 0, `{$var}` shows empty). */
   getVar(name: string): unknown {
+    name = this.canonicalVar(name)
+    const state = this.stateVars()
+    if (Object.hasOwn(state, name)) return state[name]
     return Object.prototype.hasOwnProperty.call(this.globals, name) ? this.globals[name] : this.vars[name]
   }
 
@@ -2690,7 +2924,53 @@ export class Engine {
   /** The table expressions evaluate against: the session's variables under the
    *  persistent ones (a fresh object each call — read, don't write). */
   scope(): Record<string, unknown> {
-    return { ...this.vars, ...this.globals }
+    const out: Record<string, unknown> = { ...this.vars, ...this.globals, ...this.stateVars() }
+    // A plugin's variables also answer to its short prefix (`weather.kind`).
+    for (const [short, full] of this.varAliases) {
+      const p = full + '.'
+      for (const k of Object.keys(out)) if (k.startsWith(p)) out[short + k.slice(full.length)] = out[k]
+    }
+    return out
+  }
+
+  /** A variable name in its canonical spelling: a plugin's short prefix becomes
+   *  its full one (`weather.kind` → `com.example.weather.kind`); a name already
+   *  under a full prefix, or with no alias, is unchanged. */
+  canonicalVar(name: string): string {
+    if (!this.varAliases.size) return name
+    const dot = name.indexOf('.')
+    if (dot <= 0) return name
+    for (const p of this.varPrefixes) if (name.startsWith(p + '.')) return name
+    const full = this.varAliases.get(name.slice(0, dot))
+    return full ? full + name.slice(dot) : name
+  }
+
+  /** @internal The plugin host's current prefixes (see `varAliases`). */
+  setVarPrefixes(aliases: Map<string, string>, prefixes: string[]): void {
+    this.varAliases = aliases
+    this.varPrefixes = prefixes
+    // Names written under a short prefix before its plugin was active (a
+    // `[persist]` declaration, an early `[set]`) move under the full one.
+    for (const [short, full] of aliases) {
+      const move = (table: Record<string, unknown>): void => {
+        for (const k of Object.keys(table)) {
+          if (!k.startsWith(short + '.')) continue
+          const to = full + k.slice(short.length)
+          if (!Object.prototype.hasOwnProperty.call(table, to)) table[to] = table[k]
+          delete table[k]
+        }
+      }
+      move(this.vars)
+      move(this.globals)
+      move(this.storedGlobals)
+      for (const n of [...this.persistNames]) {
+        if (!n.startsWith(short + '.')) continue
+        this.persistNames.delete(n)
+        this.persistNames.add(full + n.slice(short.length))
+      }
+    }
+    this.ui.refresh()
+    this.refreshConditions()
   }
 
   /** Whether `name` persists across sessions: declared with `[persist]` /
@@ -2702,6 +2982,7 @@ export class Engine {
   /** Declare a persistent variable (`[persist]`, the `[persist]` config section,
    *  `[input persist=true]`). The store's value wins; `def` seeds the first run. */
   declarePersist(name: string, def: unknown): void {
+    name = this.canonicalVar(name)
     this.persistNames.add(name)
     if (Object.prototype.hasOwnProperty.call(this.globals, name)) return
     this.globals[name] = Object.prototype.hasOwnProperty.call(this.storedGlobals, name) ? structuredClone(this.storedGlobals[name]) : def
@@ -2710,12 +2991,44 @@ export class Engine {
   /** Write a persistent variable (declaring it if needed) and schedule the
    *  store write; plugins hear `onVarChange`. */
   setGlobal(name: string, value: unknown): void {
+    name = this.canonicalVar(name)
+    if (this.readonlyVar(name)) return
     this.persistNames.add(name)
     this.globals[name] = value
     this.globalsDirty = true
     this.schedulePersist()
     this.fire('onVarChange', name, value)
     this.ui.refresh()
+    this.refreshConditions()
+  }
+
+  /** The objects that were clickable while the last dialogue line waited for the
+   *  player — each had its chance to be clicked. */
+  private clickableAtLine = new Set<string>()
+
+  /** A choices prompt covers the whole stage, so an object that became clickable
+   *  after the last line (no line waited for the player since) can never be
+   *  clicked: report it. The rule the docs give, checked where it is broken. */
+  private checkClickablesUnderChoices(node: ChoicesNode): void {
+    for (const id of this.stage.clickableIds()) {
+      if (this.clickableAtLine.has(id)) continue
+      const [kind, name] = [id.slice(0, id.indexOf(':')), id.slice(id.indexOf(':') + 1)]
+      this.report({ phase: 'exec', message: `${kind} "${name}" can never be clicked: it became clickable after the last line, and the choices prompt covers the stage — give it a line to be clicked on first`, line: node.line, node }, true)
+    }
+  }
+
+  /** What the engine is doing, readable from a script like a variable:
+   *  `sys.replaying` (a replay is playing), `sys.session` (`title` / `playing` /
+   *  `ending` …) and `sys.lang` (the current language). Read-only. */
+  private stateVars(): Record<string, unknown> {
+    return { 'sys.replaying': this.replay.segment !== null, 'sys.session': this._session, 'sys.lang': this.lang }
+  }
+
+  /** A write to a `stateVars` name: reported, ignored. */
+  private readonlyVar(name: string): boolean {
+    if (name !== 'sys.replaying' && name !== 'sys.session' && name !== 'sys.lang') return false
+    this.report({ phase: 'exec', message: `${name} is read-only — it reports what the engine is doing`, line: this.current?.line, node: this.current ?? undefined }, true)
+    return true
   }
 
   /** Add `value` to a persistent list once (`sys.endings`, `sys.chosen`). */
@@ -2732,11 +3045,16 @@ export class Engine {
    *  one (a persisted name comes back on the next run, a second `[input]` offers
    *  the first answer), else `default`: cancel, or OK on an empty field, yields
    *  it. The value is written with `setVar` (persistent when `persist` or
-   *  declared so). Resolves to the value written. */
-  async promptInput(name: string, opts: { prompt?: string; default?: string; maxlength?: number; pattern?: string; persist?: boolean } = {}): Promise<string> {
+   *  declared so) — a number for `type: 'number'`. Resolves to the value written. */
+  async promptInput(
+    name: string,
+    opts: { prompt?: string; default?: string; maxlength?: number; pattern?: string; persist?: boolean; type?: 'text' | 'number'; min?: number; max?: number; step?: number; lines?: number } = {},
+  ): Promise<string | number> {
     const gen = this.generation
+    const numeric = opts.type === 'number'
     const seed = opts.default !== undefined ? this.fill(opts.default) : ''
-    if (opts.persist) this.declarePersist(name, seed)
+    const asValue = (v: string): string | number => (numeric ? (v !== '' && Number.isFinite(Number(v)) ? Number(v) : 0) : v)
+    if (opts.persist) this.declarePersist(name, asValue(seed))
     const current = this.getVar(name)
     const def = current !== undefined && current !== '' ? displayValue(current) : seed
     let pattern = opts.pattern
@@ -2756,12 +3074,17 @@ export class Engine {
       maxlength: opts.maxlength,
       pattern,
       position: cfg.position,
+      type: opts.type,
+      min: opts.min,
+      max: opts.max,
+      step: opts.step,
+      lines: opts.lines,
     })
     this.promptCancel = handle.cancel
     const typed = await handle.result
     this.promptCancel = null
-    if (gen !== this.generation) return def
-    const value = typed === null || typed === '' ? def : typed
+    if (gen !== this.generation) return asValue(def)
+    const value = asValue(typed === null || typed === '' ? def : typed)
     this.setVar(name, value)
     return value
   }
@@ -2781,6 +3104,7 @@ export class Engine {
     if (this.destroyed) return
     this.setSession('idle') // while plugins can still hear it
     this.destroyed = true
+    this.closePluginScreen() // a plugin awaiting its screen hears it close
     this.generation++
     this.loops.destroy()
     this.running = false
@@ -2866,6 +3190,7 @@ export class Engine {
   private exec(node: ScriptNode): void | Promise<void> {
     switch (node.type) {
       case 'label':
+        this.captureReplayScenes(node.name)
         this.fire('onLabel', node.name)
         if (this.autosave === 'label') void this.writeAutosave()
         return
@@ -2911,15 +3236,15 @@ export class Engine {
   }
 
   /** A plugin command runs with its owner's capability context only. */
-  private pluginCommandContext(node: { name: string; args: string[]; params: Record<string, string>; raw: string }, plugin: PluginContext, cond = true): CommandContext {
-    return { ...this.tagArgs(node), plugin, cond }
+  private pluginCommandContext(node: { name: string; args: string[]; params: Record<string, string>; raw: string }, plugin: PluginContext, cond = true, condExpr?: string): CommandContext {
+    return { ...this.tagArgs(node), plugin, cond, condExpr }
   }
 
   /** The generic `if=` of a plugin command or macro tag: split off the tag's tail
    *  (so the command never sees it as stray args / params) and evaluated. A broken
    *  condition is a diagnostic and counts as false. Built-in commands keep their own
    *  `if=` ([hotspot], [choice]) and never come through here. */
-  private tagCondition(node: CommandNode): { node: CommandNode; holds: boolean } {
+  private tagCondition(node: CommandNode): { node: CommandNode; holds: boolean; expr?: string } {
     const { head, cond } = splitCondition(node.raw)
     if (cond === undefined) return { node, holds: true }
     const stripped = parseTag(head, node.line) as CommandNode
@@ -2929,7 +3254,7 @@ export class Engine {
     } catch (err) {
       this.report({ phase: 'exec', message: `[${node.name}] if=${cond}: ${errMsg(err)}`, line: node.line, node })
     }
-    return { node: stripped, holds }
+    return { node: stripped, holds, expr: cond }
   }
 
   private async execCommand(input: CommandNode, depth = 0): Promise<void> {
@@ -2945,11 +3270,14 @@ export class Engine {
     // declared `ifFalse: 'handle'` — then it runs with `ctx.cond === false` and
     // decides what "not present" means (a sprite hides).
     let cond = true
+    let condExpr: string | undefined
     if (!builtin) {
       const split = this.tagCondition(node)
       node = split.node
       cond = split.holds
-      if (!cond && (!owned || this.host.commandIfFalse(node.name) !== 'handle')) return
+      const handles = !!owned && this.host.commandIfFalse(node.name) === 'handle'
+      if (!cond && !handles) return
+      if (handles) condExpr = split.expr
     }
     if (!builtin && !owned) return this.execMacro(node, depth)
     // A quarantined plugin's commands are no-ops (already reported at isolation).
@@ -2963,7 +3291,7 @@ export class Engine {
       else {
         const ctx = this.host.contextOf(owner!)
         if (!ctx) return
-        await owned!.value(this.pluginCommandContext(merged, ctx, cond))
+        await owned!.value(this.pluginCommandContext(merged, ctx, cond, condExpr))
       }
     } catch (err) {
       this.report({ phase: 'exec', message: `[${node.name}] failed: ${errMsg(err)}`, line: node.line, node, plugin: owner, error: err })
@@ -3128,12 +3456,17 @@ export class Engine {
       if (effect) this.applyTextEffect(effect, span)
     }
     const cfg = this.choicesConfig
-    const taken = cfg.chosenStyle === 'dim' ? this.globals['sys.chosen'] : undefined
-    const views: ChoiceView[] = items.map((it) => ({
-      segments: this.displaySegments(parseSegments(this.choiceText(it))),
-      disabled: it.disabled ? truthy(evalExpr(it.disabled, scope)) : false,
-      chosen: Array.isArray(taken) && taken.includes(choiceKey(it)),
-    }))
+    const style = cfg.chosenStyle
+    const taken = style === 'dim' || style === 'mark' ? this.globals['sys.chosen'] : undefined
+    const views: ChoiceView[] = items.map((it) => {
+      const was = Array.isArray(taken) && taken.includes(choiceKey(it))
+      return {
+        segments: this.displaySegments(parseSegments(this.choiceText(it))),
+        disabled: it.disabled ? truthy(evalExpr(it.disabled, scope)) : false,
+        chosen: was && style === 'dim',
+        marked: was && style === 'mark',
+      }
+    })
     if (views.every((v) => v.disabled)) {
       this.report({ phase: 'exec', message: 'every option of this prompt is disabled — shown enabled so the story can go on', line: node.line, node }, true)
       for (const v of views) v.disabled = false
@@ -3142,6 +3475,7 @@ export class Engine {
     this.nextChoices = null
     const timer = over.timer ?? cfg.timer
     const timerDefault = over.timerDefault ?? cfg.timerDefault
+    this.checkClickablesUnderChoices(node)
     const prompt = this.stage.showChoices(views, onSpan, {
       timer: timer && timer > 0 ? timer : undefined,
       timeoutIndex: timerDefault !== undefined ? timerDefault - 1 : undefined,

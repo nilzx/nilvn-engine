@@ -129,6 +129,24 @@ purpose-built evaluator, never by `eval`, so a script cannot reach into the page
 [set roll = rand(1, 6)]
 ```
 
+### Plugin variables
+
+*(since 0.19.0)* A plugin's variables live under its full id: the weather plugin
+`com.example.weather` writes `com.example.weather.kind`. A script may use that
+name, which always works, or the short one made of the id's last segment —
+`weather.kind` — for reading and writing alike:
+
+```
+[if weather.kind == 'rain' -> umbrella]
+The sky is {$weather.kind} today.
+```
+
+The short name works while no other active plugin's id ends in the same segment
+(and the segment is not `sys`). When two active plugins share one, neither gets
+the short name — whatever order they were enabled in — and each reports a
+diagnostic naming its full prefix; use the full names then. A first-party plugin
+(`app.nilvn.textfx`) uses its short name (`textfx`) the same way.
+
 ### Persistent variables
 
 A variable declared with `[persist]` (or the `[persist]` section of the config
@@ -149,6 +167,13 @@ The engine keeps two persistent lists itself, under the reserved `sys.` names:
 and `sys.chosen` — every choice ever taken, by its target label (its text when it
 has none). Read them with `has()`.
 
+Three more `sys.` names read what the engine is doing *(since 0.19.0)*:
+`sys.replaying` (true while a replay from the gallery plays — skip a question
+the player already answered, or a counter a replay should not bump),
+`sys.session` (`playing`, or `title` / `ending` in a panel's `if`) and `sys.lang`
+(the current language). They are read-only: a `[set]` on one is reported and
+ignored.
+
 ### Asking the player
 
 `[input var …]` opens an in-engine text box and writes the answer to `var`:
@@ -165,7 +190,13 @@ accepting the default is one keypress rather than a select-all. When the variabl
 already holds a value (a persisted name on the next run, the first answer on a
 second ask) that value becomes the placeholder, and the fallback, instead. `maxlength` caps the length; `pattern` is a regular
 expression the whole value must match before OK enables; `persist=true` declares
-the variable persistent. The box's look and button labels come from the
+the variable persistent.
+
+`type=number` asks for a number: `min` / `max` bound it (OK stays disabled
+outside them), `step` sets the spinner's step, and the variable gets a number,
+not text (`[input age type=number min=1 max=99 default=20]`, then
+`[if age >= 18 -> adult]`). `lines=4` opens a multi-line area four rows tall;
+Enter starts a new line and Ctrl / ⌘ + Enter confirms. *(since 0.19.0)* The box's look and button labels come from the
 `[input]` section of the config file (see [config.md](config.md#input)).
 
 ## Macros and defaults
@@ -235,9 +266,15 @@ narr: Where to?
 The parked line is an ordinary line: a tap ends it and play goes on below, so
 a map loops back to itself (the `[jump map]`) until a hotspot moves the
 playhead. A `[hotspot]`'s `if=` runs to the end of the tag, as a `[choice]`'s
-does; so does the `if=` every plugin command takes — a one-shot clickable sprite
-is `[sprite star @fx/star.png onclick="…" if=!seen_star]`, gone once the scene
-re-runs with `seen_star` set (see [commands.md](commands.md#plugin-commands)).
+does, and it stays live: the engine re-evaluates it whenever a variable changes,
+so the region turns on and off with the story without being declared again —
+`home` above appears the moment `day` passes 1, and a one-shot region
+(`onclick="set got_key = true" if=!got_key`) turns off after its own click. *(since 0.19.0)*
+A clickable sprite works the same way:
+`[sprite star @fx/star.png onclick="set seen_star = true" if=!seen_star]` is
+drawn and clickable only while `seen_star` is false (see
+[commands.md](commands.md#plugin-commands)); the `if=` of other plugin commands
+is checked once, when the tag runs.
 
 **Keep clickable regions clear of the chrome.** The dialogue box, a `[ui.<id>]`
 panel and the HUD are drawn over the stage and take the click, so a hotspot
@@ -249,6 +286,14 @@ answers there; a clickable sprite gets the same probe when it appears or moves
 (`sprite "id": "…" covers its centre` — a character standing in front of a sprite
 on the `back` band counts). Check your own by hit-testing the point a player would aim at
 (`document.elementFromPoint`), not by clicking the element.
+
+A choices prompt is modal: while it is up it covers the whole stage, so no
+hotspot or clickable sprite takes a click, wherever it sits. Give every clickable a
+line to be clicked on before the prompt, and offer a choice for anything the story
+needs. The engine checks this when a prompt opens *(since 0.19.0)*: an object
+that became clickable after the last line — shown, or its `if=` turned true, with
+no line waiting for the player since — is reported (`hotspot "shell" can never be
+clicked: …`).
 
 ## Transitions
 
@@ -315,8 +360,12 @@ in the config file (or `engine.loadScripts([...])`) plays them in order as
   a label defined in two files is reported and the first wins;
 - a file's name (without extension) is itself a label naming its first line
   (`[jump day1]`);
-- a file falls through into the next one in the list when it runs off its end;
+- a file falls through into the next one in the list when it runs off its end,
+  whichever file play jumped in from; the last file in the list ends the story;
 - a save addresses the file's chunk, so a fresh load of the work resumes there.
+
+`nilvn pack` turns the files into a [script package](script-package.md#packing-a-config-driven-work-nilvn-pack)
+that plays by the same rules.
 
 `[include path]` pastes another file in where the line stands — before parsing,
 when the file loads (`load`, `loadScript`, `[game] entry` / `scripts`). Paths

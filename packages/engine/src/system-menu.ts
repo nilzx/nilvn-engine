@@ -5,9 +5,11 @@
 // `engine.t()` and re-localized on a language switch. Everything it does goes
 // through public engine API (slots, auto / skip, settings, replays), so a host
 // that draws its own menu (`[menu] enabled = false`) has the same reach.
+import { isPluginEntryRef, pluginEntryMatches } from './chrome.js'
 import type { Engine, SaveState } from './engine.js'
 import { AUTOSAVE_KEY, QUICKSAVE_KEY, type SlotPayload } from './save-store.js'
 import type { VolumeChannel } from './types.js'
+import { bindingFromEvent } from './keys.js'
 
 /** The text-speed slider's default range (characters per second); one notch past
  *  the top is "instant" (`textSpeed = 0`). `[settings] textSpeedRange` overrides. */
@@ -19,9 +21,9 @@ const CHANNELS: { id: string; key: VolumeChannel }[] = [
   { id: 'ui.settings.vol.voice', key: 'voice' },
 ]
 /** Every menu item, in default order. */
-export const MENU_ITEMS_DEFAULT: readonly string[] = ['save', 'load', 'quicksave', 'quickload', 'backlog', 'auto', 'skip', 'settings', 'replays', 'title', 'restart']
+export const MENU_ITEMS_DEFAULT: readonly string[] = ['save', 'load', 'quicksave', 'quickload', 'backlog', 'plugins', 'auto', 'skip', 'settings', 'replays', 'title', 'restart']
 /** Every settings row, in default order. */
-export const SETTINGS_ROWS_DEFAULT: readonly string[] = ['textSpeed', 'autoDelay', 'skipMode', 'volumes', 'language', 'fullscreen', 'dialogOpacity', 'uiScale']
+export const SETTINGS_ROWS_DEFAULT: readonly string[] = ['textSpeed', 'autoDelay', 'skipMode', 'volumes', 'language', 'fullscreen', 'dialogOpacity', 'uiScale', 'keys']
 
 type PanelId = 'saves' | 'backlog' | 'replays' | 'settings'
 
@@ -52,7 +54,13 @@ export class SystemMenu {
   private tipTimer: number | undefined
   private offs: (() => void)[] = []
   private settingsBody: { sync: () => void; relabel: () => void } | null = null
-  private extras = new Map<string, { btn: HTMLButtonElement; label: () => string; onSelect: () => void; when: 'playing' | 'always' }>()
+  /** Ends an in-progress key capture (the settings screen's rebinding). */
+  private stopCapture: (() => void) | null = null
+  private extras = new Map<string, { btn: HTMLButtonElement; label: () => string; onSelect: () => void }>()
+  /** Where `[menu] items` placed `plugins` (the plugins' entries it does not name). */
+  private pluginSlot: Comment | null = null
+  /** Where `[menu] items` placed a plugin's entry by name (`journal:open`). */
+  private refSlots = new Map<string, Comment>()
 
   constructor(private readonly engine: Engine) {}
 
@@ -67,7 +75,16 @@ export class SystemMenu {
     this.btn = button('nilvn-menu__btn', '☰', () => this.toggle())
     this.panel = el('div', 'nilvn-menu__panel')
     this.tip = el('div', 'nilvn-menu__tip')
+    this.pluginSlot = null
+    this.refSlots.clear()
     for (const id of e.menuConfig.items ?? MENU_ITEMS_DEFAULT) {
+      if (id === 'plugins' || isPluginEntryRef(id)) {
+        const mark = document.createComment(id)
+        if (id === 'plugins') this.pluginSlot = mark
+        else this.refSlots.set(id, mark)
+        this.panel.append(mark)
+        continue
+      }
       const b = this.makeItem(id)
       if (b) {
         this.items.set(id, b)
@@ -111,6 +128,7 @@ export class SystemMenu {
   destroy(): void {
     for (const off of this.offs) off()
     this.offs = []
+    this.stopCapture?.()
     if (this.tipTimer !== undefined) clearTimeout(this.tipTimer)
     this.wrap?.remove()
     for (const p of this.panels.values()) p.wrap.remove()
@@ -128,7 +146,7 @@ export class SystemMenu {
     this.settingsBody = null
     this.verEl = null
     this.mount()
-    for (const [key, x] of extras) this.addItem(key, x.label, x.onSelect, x.when)
+    for (const [key, x] of extras) this.addItem(key, x.label, x.onSelect)
     this.syncItems()
   }
 
@@ -175,19 +193,27 @@ export class SystemMenu {
     for (const id of this.panels.keys()) this.closePanel(id)
   }
 
-  /** A plugin's menu entry (`ctx.screen.menuItem`); returns the remover. */
-  addItem(key: string, label: () => string, onSelect: () => void, when: 'playing' | 'always'): () => void {
+  /** A plugin's menu entry (`ctx.screen.menuItem`), shown while playing; returns the remover. */
+  addItem(key: string, label: () => string, onSelect: () => void): () => void {
     const btn = button('nilvn-menu__item nilvn-menu__item--plugin', label(), () => {
       this.close()
       onSelect()
     })
     btn.dataset.id = key
-    this.panel.insertBefore(btn, this.tip)
-    this.extras.set(key, { btn, label, onSelect, when })
+    // Where `[menu] items` names it, else at its `plugins` slot, else after the
+    // work's own items (before the replay exit and the tip).
+    const named = [...this.refSlots].find(([ref]) => pluginEntryMatches(ref, key))?.[1]
+    this.panel.insertBefore(btn, named ?? this.pluginSlot ?? this.items.get('replayExit') ?? this.tip)
+    this.extras.set(key, { btn, label, onSelect })
     return () => {
       btn.remove()
       this.extras.delete(key)
     }
+  }
+
+  /** `[menu] items` entries naming a plugin entry that no active plugin contributes. */
+  unfilledRefs(): string[] {
+    return [...this.refSlots.keys()].filter((ref) => ![...this.extras.keys()].some((key) => pluginEntryMatches(ref, key)))
   }
 
   /** A plugin's settings changed elsewhere — refresh the open panel's rows. */
@@ -273,7 +299,7 @@ export class SystemMenu {
   private syncItems(): void {
     const e = this.engine
     const replaying = e.isReplaying() !== null
-    for (const x of this.extras.values()) x.btn.style.display = x.when === 'always' || e.session === 'playing' ? '' : 'none'
+    for (const x of this.extras.values()) x.btn.style.display = e.session === 'playing' ? '' : 'none'
     const set = (id: string, on: boolean): void => {
       this.items.get(id)?.classList.toggle('on', on)
     }
@@ -321,7 +347,7 @@ export class SystemMenu {
     const title = el('span', 'nilvn-saves__title')
     const close = button('nilvn-backlog__close', '', () => this.closePanel(id))
     bar.append(title, close)
-    const body = el('div', id === 'saves' ? 'nilvn-saves__body' : 'nilvn-backlog__list')
+    const body = el('div', id === 'saves' ? 'nilvn-saves__body' : id === 'replays' ? 'nilvn-replays__grid' : 'nilvn-backlog__list')
     wrap.append(bar, body)
     this.panels.set(id, { wrap, title, close, body })
   }
@@ -335,6 +361,7 @@ export class SystemMenu {
     this.panels.get(id)!.wrap.classList.add('on')
   }
   private closePanel(id: PanelId): void {
+    if (id === 'settings') this.stopCapture?.()
     this.panels.get(id)!.wrap.classList.remove('on')
   }
   private render(id: PanelId): void {
@@ -493,26 +520,35 @@ export class SystemMenu {
     const p = this.panels.get('replays')!
     p.title.textContent = e.t('ui.menu.replays')
     p.body.replaceChildren()
+    // A gallery: one card per replay — its picture and title once unlocked, a
+    // locked card before.
     e.replays.forEach((r, i) => {
-      const row = el('div', 'nilvn-backlog__row')
-      const body = el('div', 'nilvn-backlog__body')
-      const title = el('div', 'nilvn-backlog__who')
-      if (e.isUnlocked(r.id)) {
-        const play = button('nilvn-backlog__voice', '▶', () => {
-          // Stash the interrupted session; the replay's end (or backing out)
-          // restores it. Replaying FROM a replay keeps the original stash.
-          if (!this.replayStash && e.isReplaying() === null) this.replayStash = e.saveState()
-          this.closePanel('replays')
-          this.close()
-          void e.playReplay(r.id)
-        })
-        play.title = this.replayTitle(r, i)
-        row.append(play)
-        title.textContent = this.replayTitle(r, i)
-      } else title.textContent = `🔒 ${e.t('ui.replays.locked')}`
-      body.append(title)
-      row.append(body)
-      p.body.append(row)
+      const name = this.replayTitle(r, i)
+      if (!e.isUnlocked(r.id)) {
+        const card = el('div', 'nilvn-replays__card nilvn-replays__card--locked')
+        card.append(el('span', 'nilvn-replays__lock', '🔒'), el('span', 'nilvn-replays__name', e.t('ui.replays.lockedShort')))
+        card.title = e.t('ui.replays.locked')
+        p.body.append(card)
+        return
+      }
+      const card = button('nilvn-replays__card', '', () => {
+        // Stash the interrupted session; the replay's end (or backing out)
+        // restores it. Replaying FROM a replay keeps the original stash.
+        if (!this.replayStash && e.isReplaying() === null) this.replayStash = e.saveState()
+        this.closePanel('replays')
+        this.close()
+        void e.playReplay(r.id)
+      })
+      card.dataset.id = r.id
+      const thumb = e.replayThumbnail(r.id)
+      if (thumb) {
+        const pic = el('span', 'nilvn-replays__thumb')
+        pic.style.backgroundImage = `url("${thumb}")`
+        card.append(pic)
+      }
+      card.append(el('span', 'nilvn-replays__play', '▶'), el('span', 'nilvn-replays__name', name))
+      card.title = name
+      p.body.append(card)
     })
   }
 
@@ -567,6 +603,7 @@ export class SystemMenu {
       sync()
       return [input, pct]
     }
+    let wantKeys = false
     for (const id of e.settingsConfig.show ?? SETTINGS_ROWS_DEFAULT) {
       switch (id) {
         case 'textSpeed': {
@@ -661,6 +698,9 @@ export class SystemMenu {
           grid.append(r.row)
           break
         }
+        case 'keys':
+          wantKeys = true // after the plugin blocks: the longest list goes last
+          break
         default:
           e.report({ phase: 'load', message: `[settings] unknown row "${id}" — ignored` }, true)
       }
@@ -718,8 +758,78 @@ export class SystemMenu {
         grid.append(r)
       }
     }
+    if (wantKeys) {
+      const head = el('div', 'nilvn-menu__head', e.t('ui.settings.keys'))
+      relabels.push(() => (head.textContent = e.t('ui.settings.keys')))
+      grid.append(head)
+      for (const k of e.keyTable.rows((id) => e.t(id))) {
+        const r = el('div', 'nilvn-menu__row')
+        r.append(el('span', '', k.label))
+        const s = el('div', 'nilvn-menu__seg')
+        const b = button('nilvn-menu__key', k.display, () => this.captureKey(k.id, b))
+        s.append(b)
+        r.append(s)
+        grid.append(r)
+      }
+      const r = el('div', 'nilvn-menu__row')
+      r.append(el('span', ''))
+      const s = el('div', 'nilvn-menu__seg')
+      s.append(
+        button('', e.t('ui.keys.reset'), () => {
+          e.resetKeys()
+          this.renderSettings()
+        }),
+      )
+      r.append(s)
+      grid.append(r)
+    }
     p.body.replaceChildren(grid)
     this.settingsBody = { sync: () => syncs.forEach((f) => f()), relabel: () => relabels.forEach((f) => f()) }
+  }
+
+  /** Wait for the key the player wants on binding `id`. Esc cancels, Backspace /
+   *  Delete unbinds; a modifier pressed and released on its own binds itself
+   *  (`Control`), one held with another key binds the combination. The capture
+   *  listens ahead of the engine's key handler, so the key does nothing else. */
+  private captureKey(id: string, btn: HTMLButtonElement): void {
+    const e = this.engine
+    const again = btn.classList.contains('on')
+    this.stopCapture?.()
+    if (again) return this.renderSettings() // a second click cancels
+    btn.textContent = e.t('ui.keys.press')
+    btn.classList.add('on')
+    let lone: string | null = null
+    const done = (binding: string | false | null): void => {
+      this.stopCapture?.()
+      if (binding !== null) e.assignKey(id, binding)
+      this.renderSettings()
+    }
+    const down = (ev: KeyboardEvent): void => {
+      ev.preventDefault()
+      ev.stopImmediatePropagation()
+      if (ev.repeat) return
+      if (['Control', 'Shift', 'Alt', 'Meta'].includes(ev.key)) {
+        lone = ev.key
+        return
+      }
+      lone = null
+      if (ev.key === 'Escape') done(null)
+      else if (ev.key === 'Backspace' || ev.key === 'Delete') done(false)
+      else done(bindingFromEvent(ev))
+    }
+    const up = (ev: KeyboardEvent): void => {
+      if (lone === null || ev.key !== lone) return
+      ev.preventDefault()
+      ev.stopImmediatePropagation()
+      done(bindingFromEvent({ key: ev.key, ctrlKey: false, shiftKey: false, altKey: false, metaKey: false }))
+    }
+    window.addEventListener('keydown', down, true)
+    window.addEventListener('keyup', up, true)
+    this.stopCapture = () => {
+      window.removeEventListener('keydown', down, true)
+      window.removeEventListener('keyup', up, true)
+      this.stopCapture = null
+    }
   }
 
   // ---- language ----

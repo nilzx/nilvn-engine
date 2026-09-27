@@ -47,7 +47,7 @@ describe('capability gating', () => {
   it('with only stage.read the write verbs are reporting stubs; vars.set needs vars.write', async () => {
     const p = probe('test.ro', { permissions: ['stage.read', 'vars.read'] })
     const e = newEngine({ plugins: [p.plugin] })
-    e.vars.x = 1
+    e.setVar('ro.x', 1)
     const ctx = p.ctx()
     expect(ctx.stage!.hasObject('camera')).toBe(true) // read works
     await ctx.stage!.setBackground({ color: '#123' }) // no throw, no effect
@@ -127,7 +127,7 @@ describe('hot plug', () => {
     e.loadSource('[mark]\nyuki: hi\n')
     void e.start()
     await until(() => e.stage.textEl.textContent === 'hi')
-    expect(e.vars.mark).toBeUndefined() // unknown command now
+    expect(e.getVar('hot.mark')).toBeUndefined() // unknown command now
     expect(e.diagnostics).toContainEqual(expect.objectContaining({ phase: 'exec', message: expect.stringContaining('unknown command [mark]') }))
     expect(hooked).toBe(0)
 
@@ -137,7 +137,7 @@ describe('hot plug', () => {
     e.loadSource('[mark]\nyuki: again\n')
     void e.start()
     await until(() => e.stage.textEl.textContent === 'again')
-    expect(e.vars.mark).toBe(1)
+    expect(e.getVar('hot.mark')).toBe(1)
     expect(hooked).toBe(1)
     e.destroy()
     expect(disposed).toBe(2)
@@ -214,22 +214,22 @@ describe('hot plug', () => {
     e.loadSource('[use ./plugins/hot.js]\n[bump]')
     await e.start()
     expect(imports).toEqual(['https://example.test/game/plugins/hot.js'])
-    expect(e.vars.v).toBe(1)
+    expect(e.getVar('reload.v')).toBe(1)
 
     version = 2
     expect(await e.reloadPlugin('test.reload')).toBe(true)
     expect(imports[1]).toMatch(/^https:\/\/example\.test\/game\/plugins\/hot\.js\?reload=\d+$/)
-    expect(e.vars.restored).toBe('yes') // the slice crossed the reload
+    expect(e.getVar('reload.restored')).toBe('yes') // the slice crossed the reload
     e.loadSource('[bump]')
     await e.start()
-    expect(e.vars.v).toBe(2)
+    expect(e.getVar('reload.v')).toBe(2)
 
     version = 3
     expect(await e.reloadPlugin('test.reload')).toBe(true) // rolled back to v2 — still active
     expect(e.diagnostics.map((d) => d.message)).toContainEqual(expect.stringContaining('rolled back'))
     e.loadSource('[bump]')
     await e.start()
-    expect(e.vars.v).toBe(2)
+    expect(e.getVar('reload.v')).toBe(2)
     e.destroy()
   })
 })
@@ -280,7 +280,7 @@ describe('[use] resolution', () => {
       'css:https://example.test/game/plugins/pkg/main.css',
     ])
     expect(e.activePlugins).toContain('com.example.pkg')
-    expect(e.vars.greeting).toBe('你好 世界') // the package's own messages, in the work language
+    expect(e.getVar('pkg.greeting')).toBe('你好 世界') // the package's own messages, in the work language
     expect(document.querySelector('style[data-plugin="com.example.pkg"]')?.textContent).toBe('.pkg{color:red}')
     expect(e.missingPlugins).toEqual([])
     e.destroy()
@@ -292,7 +292,7 @@ describe('[use] resolution', () => {
     await e.start()
     expect(e.missingPlugins).toEqual(['./a/plugin.json'])
     expect(e.diagnostics.map((d) => d.message)).toContainEqual(expect.stringContaining('requires engine >=99'))
-    expect(e.vars.greeting).toBeUndefined()
+    expect(e.getVar('pkg.greeting')).toBeUndefined()
     e.destroy()
 
     const e2 = newEngine({ pluginLoader: loaderFor(manifest(), { ...pkgModule, id: 'com.example.other' }), baseUrl: 'https://example.test/', textSpeed: 0 })
@@ -325,7 +325,7 @@ describe('activation modes and dependencies', () => {
     e.loadSource('[set x = 1]\n[lazy]')
     await e.start()
     expect(lazyActivated).toBe(1)
-    expect(e.vars.lazy).toBe(true)
+    expect(e.getVar('lazy.lazy')).toBe(true)
     expect(manualActivated).toBe(0)
     expect(e.pluginState('test.manual')).toBe('registered')
     expect(await e.enablePlugin('test.manual')).toBe(true)

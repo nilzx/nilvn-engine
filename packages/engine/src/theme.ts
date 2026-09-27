@@ -20,6 +20,9 @@ export const THEME_TOKENS: Readonly<Record<string, string>> = Object.freeze({
   'ui-scale': '1',
   accent: '#7c5cff',
   text: '#f4f5fa',
+  // secondary text (hints, captions, a locked entry) and a disabled control, derived from `text`
+  muted: 'color-mix(in srgb, var(--nilvn-text) 60%, transparent)',
+  disabled: 'color-mix(in srgb, var(--nilvn-text) 35%, transparent)',
   // dialogue box
   'dialog-bg': 'linear-gradient(180deg,rgba(22,26,42,.82),rgba(10,12,22,.92))',
   'dialog-skin': 'none',
@@ -42,6 +45,7 @@ export const THEME_TOKENS: Readonly<Record<string, string>> = Object.freeze({
   'name-color': '#ffffff',
   'name-size': '2.7cqh',
   'name-offset': '2.4cqw',
+  'name-shadow': '0 2px 10px rgba(0,0,0,.35)',
   // click-to-continue indicator
   'indicator-color': 'rgba(255,255,255,.85)',
   'indicator-size': '1.4cqh',
@@ -51,6 +55,8 @@ export const THEME_TOKENS: Readonly<Record<string, string>> = Object.freeze({
   'choice-color': '#ffffff',
   'choice-border': '1px solid rgba(255,255,255,.2)',
   'choice-hover': 'rgba(140,160,255,.9)',
+  // the glow under a hovered option, derived from `choice-hover`
+  'choice-glow': '0 6px 24px color-mix(in srgb, var(--nilvn-choice-hover) 28%, transparent)',
   'choice-radius': '99px',
   'choice-size': '3cqh',
   'choice-width': '38cqw',
@@ -60,8 +66,10 @@ export const THEME_TOKENS: Readonly<Record<string, string>> = Object.freeze({
   // an option taken in an earlier run ([choices] chosenStyle = "dim"), a disabled one, the timer bar
   'choice-chosen-bg': 'linear-gradient(180deg,rgba(40,46,74,.6),rgba(24,28,48,.6))',
   'choice-chosen-color': 'rgba(255,255,255,.6)',
+  // the badge after an option taken in an earlier run ([choices] chosenStyle = "mark"): a CSS `content` value
+  'choice-chosen-mark': '"\\2713"',
   'choice-disabled-bg': 'rgba(30,33,46,.7)',
-  'choice-disabled-color': 'rgba(255,255,255,.35)',
+  'choice-disabled-color': 'var(--nilvn-disabled)',
   'choice-timer-bg': 'rgba(255,255,255,.15)',
   'choice-timer-color': 'var(--nilvn-accent)',
   // the loading page's progress bar
@@ -83,6 +91,12 @@ export const THEME_TOKENS: Readonly<Record<string, string>> = Object.freeze({
   'bar-bg': 'rgba(255,255,255,.15)',
   'bar-color': 'var(--nilvn-accent)',
   'bar-height': '1.4cqh',
+  // the title / ending / loading pages: the veil behind them when the page has no
+  // background, their text, and the heading's shadow ([title] / [ending.<id>]
+  // `color` and `shadow` set the last two per page)
+  'screen-bg': 'rgba(8,10,18,.92)',
+  'screen-color': 'var(--nilvn-panel-color)',
+  'screen-heading-shadow': '0 2px 12px rgba(0,0,0,.5)',
   // panels and buttons (menus, screens, plugin overlays)
   'panel-bg': 'rgba(16,18,28,.96)',
   'panel-border': '1px solid rgba(255,255,255,.16)',
@@ -91,6 +105,12 @@ export const THEME_TOKENS: Readonly<Record<string, string>> = Object.freeze({
   'button-color': '#ffffff',
   'button-border': '1px solid rgba(255,255,255,.18)',
   'button-hover': 'rgba(255,255,255,.16)',
+  // a rule between groups of a panel, the dim layer under a dialog, a floating
+  // panel's shadow, and a warning (an invalid entry)
+  divider: 'rgba(255,255,255,.1)',
+  backdrop: 'rgba(0,0,0,.45)',
+  'panel-shadow': '0 1.2cqh 4cqh rgba(0,0,0,.5)',
+  danger: '#e05555',
   // the selected state (an active menu mode, the chosen option in a settings row, the current slot page)
   'button-on-bg': 'var(--nilvn-accent)',
   'button-on-color': 'var(--nilvn-button-color)',
@@ -105,6 +125,10 @@ export const THEME_TOKENS: Readonly<Record<string, string>> = Object.freeze({
   'input-border': '1px solid rgba(255,255,255,.25)',
   'input-radius': '0.8cqh',
   'input-size': '3cqh',
+  // the [input] box's prompt text and its Cancel button (OK keeps the button-on look)
+  'input-prompt-color': 'var(--nilvn-panel-color)',
+  'input-button-bg': 'var(--nilvn-button-bg)',
+  'input-button-color': 'var(--nilvn-button-color)',
 })
 
 /** A partial token map. `undefined` / `''` removes the token from its layer. */

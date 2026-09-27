@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildScriptPackage, configAssetRefs, fillPackageAssets, isPackageManifest, PACKAGE_FORMAT, packageActors, packageLanguages } from '../src/index'
+import { buildScriptPackage, configAssetRefs, fillPackageAssets, isPackageManifest, PACKAGE_FORMAT, packageActors, packageLanguages, packagePluginAssets } from '../src/index'
 import { makeProject } from './fixtures'
 import { commandRegistry } from '../src/plugins'
 import type { PluginManifest } from '../src/plugin-manifest'
@@ -140,3 +140,18 @@ describe('a scoped plan (the studio preview)', () => {
   })
 })
 
+describe('packagePluginAssets', () => {
+  it('indexes every file of a carried plugin under plugins/<id>/ as kind "plugin"', () => {
+    const { plugin, assets } = packagePluginAssets('com.example.neon', [
+      { path: 'plugin.json', bytes: 120 },
+      { path: './engine.js', bytes: 900 },
+      { path: 'sfx//click.ogg', bytes: 4000 },
+    ])
+    expect(plugin).toEqual({ id: 'com.example.neon', entry: 'plugins/com.example.neon/plugin.json' })
+    expect(assets).toEqual({
+      'plugins/com.example.neon/plugin.json': { url: 'plugins/com.example.neon/plugin.json', bytes: 120, kind: 'plugin' },
+      'plugins/com.example.neon/engine.js': { url: 'plugins/com.example.neon/engine.js', bytes: 900, kind: 'plugin' },
+      'plugins/com.example.neon/sfx/click.ogg': { url: 'plugins/com.example.neon/sfx/click.ogg', bytes: 4000, kind: 'plugin' },
+    })
+  })
+})

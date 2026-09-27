@@ -11,7 +11,10 @@
 //     template validates against the packed engine version;
 //   - under jsdom: the engine's ESM dist AND the bare IIFE (`@nilvn/engine/iife`)
 //     boot and play a line; the plugins' ESM registry and batteries IIFE
-//     (`@nilvn/plugins/iife`) boot with `[use textfx]` and render the effect.
+//     (`@nilvn/plugins/iife`) boot with `[use textfx]` and render the effect;
+//   - the engine's `nilvn` bin packs a small config-driven work (two files, an
+//     alias, a carried plugin.json plugin and a bare-module one) into all three
+//     forms, and the directory form plays under jsdom.
 // Packages present under packages/ are packed; a missing one (the plugins repo
 // has only @nilvn/plugins, the engine repo the other three) is borrowed from the
 // workspace's node_modules — i.e. the published version it depends on.
@@ -89,6 +92,26 @@ function main() {
     run(process.execPath, [tsc, '-p', 'tsconfig.nodenext.json'], { cwd: consumer })
     console.log('-- node runtime smoke')
     run(process.execPath, ['--no-warnings', 'smoke.mjs'], { cwd: consumer })
+    if (PKGS.includes('engine')) {
+      console.log('-- nilvn pack (the engine bin, from the tarball)')
+      for (const [file, text] of Object.entries(PACK_WORK(WITH_PLUGINS))) {
+        mkdirSync(dirname(join(consumer, 'work', file)), { recursive: true })
+        writeFileSync(join(consumer, 'work', file), text)
+      }
+      const bin = JSON.parse(readFileSync(join(consumer, 'node_modules', '@nilvn', 'engine', 'package.json'), 'utf8')).bin.nilvn
+      run(process.execPath, [join(consumer, 'node_modules', '@nilvn', 'engine', bin), 'pack', 'work', '--strict'], { cwd: consumer })
+      writeFileSync(join(consumer, 'smoke-pack.mjs'), SMOKE_PACK_MJS)
+      run(process.execPath, ['--no-warnings', 'smoke-pack.mjs', String(WITH_PLUGINS)], { cwd: consumer })
+      console.log('-- nilvn playtest (the engine bin, explore, on the single-file build)')
+      try {
+        execFileSync(process.execPath, [join(consumer, 'node_modules', '@nilvn', 'engine', bin), 'playtest', 'dist-pack/pack-smoke.html', '--explore', '1'], { cwd: consumer, encoding: 'utf8', stdio: 'pipe' })
+        console.log('  ✓ nilvn playtest: one explore run, no diagnostics')
+      } catch (err) {
+        const out = `${err.stdout ?? ''}${err.stderr ?? ''}`
+        if (/no Chrome, Chromium or Edge found/.test(out)) console.log('  (skipped: no local Chrome)')
+        else throw new Error(`nilvn playtest failed:\n${out}`)
+      }
+    }
     console.log(`✓ pack smoke passed for ${PKGS.map((p) => `@nilvn/${p}`).join(', ')}${BORROWED.length ? ` (with ${BORROWED.map((p) => `@nilvn/${p}`).join(', ')} borrowed)` : ''}`)
   } finally {
     rmSync(work, { recursive: true, force: true })
@@ -218,6 +241,73 @@ console.log('  ✓ template manifest validates against engine', engineMod.ENGINE
 }
 `
 
+
+/** A small config-driven work for the `nilvn pack` smoke. Without the plugins
+ *  package the bare engine script ships, so the work uses no first-party plugin. */
+function PACK_WORK(withPlugins) {
+  return {
+    'nilvn.config.toml': [
+      '[game]',
+      'title = "Pack Smoke"',
+      'scripts = ["story/a.nvn", "story/b.nvn"]',
+      '[path]',
+      '"@bg" = "assets/bg"',
+      '[plugins]',
+      `use = [${withPlugins ? '"textfx", ' : ''}"plugins/bell/plugin.json", "plugins/glitch.js"]`,
+      '',
+    ].join('\n'),
+    'story/a.nvn': '[bg @bg/sea.svg]\n[bell]\n[glitch]\n[set a = 1]\n',
+    'story/b.nvn': '[set b = 1]\n',
+    'assets/bg/sea.svg': '<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"/>',
+    'plugins/bell/plugin.json': JSON.stringify({ id: 'com.example.bell', name: 'Bell', version: '1.0.0', entries: { engine: 'engine.js' }, permissions: ['vars.write'] }),
+    'plugins/bell/engine.js': 'export default { id: "com.example.bell", commands: { bell: ({ plugin }) => plugin.vars.set("rang", true) } }\n',
+    'plugins/glitch.js': 'export default { id: "com.example.glitch", permissions: ["vars.write"], commands: { glitch: ({ plugin }) => plugin.vars.set("hit", true) } }\n',
+  }
+}
+
+/** Plays the directory form `nilvn pack` wrote, under jsdom: fetch reads the
+ *  folder, carried plugin modules are imported from their bytes. */
+const SMOKE_PACK_MJS = `
+import assert from 'node:assert/strict'
+import { existsSync, readFileSync } from 'node:fs'
+import { JSDOM } from 'jsdom'
+
+const withPlugins = process.argv[2] === 'true'
+const out = 'dist-pack/pack-smoke'
+for (const f of ['nilvn.json', 'index.html', 'nilvn.js', 'chunks/scene/a.json', 'plugins/com.example.glitch/plugin.json']) assert.ok(existsSync(out + '/' + f), f)
+assert.ok(existsSync('dist-pack/pack-smoke.nvs') && existsSync('dist-pack/pack-smoke.html'))
+const m = JSON.parse(readFileSync(out + '/nilvn.json', 'utf8'))
+assert.deepEqual(m.plugins.map((p) => p.id), [...(withPlugins ? ['app.nilvn.textfx'] : []), 'com.example.bell', 'com.example.glitch'])
+assert.deepEqual(m.config.path, { '@bg': 'assets/bg' })
+
+const dom = new JSDOM('<!doctype html><body></body>', { pretendToBeVisual: true, url: 'http://localhost/' })
+for (const k of ['window', 'document', 'HTMLElement', 'HTMLMediaElement', 'HTMLImageElement', 'Element', 'Node', 'Audio', 'Image', 'requestAnimationFrame', 'cancelAnimationFrame', 'getComputedStyle', 'MutationObserver', 'CustomEvent', 'Event', 'KeyboardEvent', 'localStorage']) {
+  if (dom.window[k] === undefined) continue
+  try { Object.defineProperty(globalThis, k, { configurable: true, writable: true, value: dom.window[k] }) } catch {}
+}
+dom.window.Element.prototype.animate = () => ({ finished: Promise.resolve(), finish() {}, cancel() {} })
+const base = 'http://localhost/game/'
+const file = (url) => out + '/' + decodeURIComponent(new URL(url).pathname.slice('/game/'.length))
+globalThis.fetch = async (url) => (existsSync(file(String(url))) ? new Response(readFileSync(file(String(url)))) : new Response('', { status: 404 }))
+const pluginLoader = {
+  fetchManifest: async (url) => JSON.parse(readFileSync(file(url), 'utf8')),
+  importModule: (url) => import('data:text/javascript;base64,' + readFileSync(file(url)).toString('base64')),
+}
+const { createEngine } = withPlugins ? { createEngine: (o) => import('@nilvn/plugins').then((p) => import('@nilvn/engine').then((e) => e.createEngine({ ...p.withFirstParty(), ...o }))) } : await import('@nilvn/engine').then((e) => ({ createEngine: async (o) => e.createEngine(o) }))
+const container = dom.window.document.createElement('div')
+dom.window.document.body.append(container)
+const engine = await createEngine({ container, textSpeed: 0, pluginLoader })
+await engine.load(base)
+await engine.start()
+assert.equal(engine.getVar('a'), 1)
+assert.equal(engine.getVar('b'), 1)
+assert.equal(engine.getVar('com.example.bell.rang'), true)
+assert.equal(engine.getVar('com.example.glitch.hit'), true)
+assert.equal(engine.resolve('@bg/sea.svg'), base + 'assets/bg/sea.svg')
+assert.deepEqual(engine.diagnostics.filter((d) => !/image failed to load/.test(d.message)).map((d) => d.message), [])
+engine.destroy()
+console.log('  ✓ nilvn pack: three forms written; the directory package plays (' + m.plugins.length + ' plugins, 2 carried)')
+`
 
 // Appended when @nilvn/plugins is packed or borrowed (the engine repo has neither).
 const SMOKE_MJS_PLUGINS = `

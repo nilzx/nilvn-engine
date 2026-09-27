@@ -15,7 +15,14 @@
 //                      the host granted (the rest are simply `undefined`).
 
 import type { CommandSchema, EffectSchema, ObjectKindSchema, ParamSchema, ParamType, TextEffectDef } from './schema.js'
-import { isValidRange, satisfiesRange } from './semver.js'
+import { isValidRange, parseSemVer, satisfiesRange } from './semver.js'
+
+/** Every `ParamType` (command params and config fields). */
+export const PARAM_TYPES: readonly ParamType[] = ['string', 'number', 'boolean', 'enum', 'asset:bg', 'asset:bgm', 'asset:se', 'asset:sprite', 'actor', 'face', 'color', 'expr', 'variable', 'panel', 'key', 'script']
+/** Every config field type: the param types plus the config-only `list`. */
+export const CONFIG_TYPES: readonly ConfigFieldType[] = [...PARAM_TYPES, 'list']
+/** Every `CommandCategory`. */
+export const COMMAND_CATEGORIES: readonly string[] = ['stage', 'audio', 'fx', 'flow', 'text']
 
 /** The plugin↔host contract version. A manifest declaring a higher `apiVersion`
  *  than the host supports is rejected (forward-compat is not guaranteed). v1 was
@@ -77,6 +84,7 @@ export const PERMISSIONS: readonly PermissionDef[] = [
   { id: 'net:', group: 'system', side: 'host', status: 'reserved', pattern: true, description: 'Network access to one origin (host-mediated; third-party default-deny).' },
   { id: 'clipboard', group: 'system', side: 'host', status: 'reserved', description: 'Clipboard read / write.' },
   { id: 'timer', group: 'system', side: 'engine', status: 'active', description: 'setTimeout / setInterval / requestAnimationFrame, cleared on dispose.' },
+  { id: 'input.keys', group: 'ui', side: 'engine', status: 'active', description: 'Keyboard bindings declared in contributes.keybindings, handled through ctx.input.on; the player can rebind them in the settings.' },
   { id: 'storage.local', group: 'data', side: 'engine', status: 'active', description: 'A key-value store namespaced per work and plugin (async, JSON values) — the engine’s SaveStore.' },
   { id: 'ai.text', group: 'ai', side: 'host', status: 'reserved', description: 'Text generation through the configured provider.' },
   { id: 'ai.image', group: 'ai', side: 'host', status: 'reserved', description: 'Image generation.' },
@@ -104,6 +112,7 @@ export type Permission =
   | 'ui.screen'
   | 'ui.dialog'
   | 'storage.local'
+  | 'input.keys'
   | 'ui.panel'
   | 'ui.window'
   | 'ui.toast'
@@ -156,6 +165,9 @@ export const EXTENSION_POINTS: readonly ExtensionPointDef[] = [
   { key: 'titleItems', side: 'engine', status: 'active', version: 1, description: 'Buttons on the title page (ctx.screen.titleItem; needs ui.screen).' },
   { key: 'hud', side: 'engine', status: 'active', version: 1, description: 'Persistent widgets in a stage corner while playing (ctx.screen.hud; needs ui.screen).' },
   { key: 'actorFields', side: 'engine', status: 'active', version: 1, description: 'Fields an actor declaration may carry for this plugin ([actors.<id>] / [actor …]), reached as ctx.actorField(actorId, key).' },
+  { key: 'keybindings', side: 'engine', status: 'active', version: 1, description: 'Keyboard bindings in the engine’s key table (id, default key, label, when); handled through ctx.input.on (needs input.keys), rebindable by the player.' },
+  { key: 'services', side: 'engine', status: 'active', version: 1, description: 'Services this plugin offers other plugins (id + semver version), provided through ctx.services.provide; a consumer lists the provider in dependencies and calls ctx.services.get.' },
+  { key: 'themeTokens', side: 'engine', status: 'active', version: 1, description: 'The plugin’s own theme tokens (--nilvn-<short>-*) with their defaults: set by the work’s [theme] like the engine’s, read by the plugin’s styles and ctx.theme.' },
   { key: 'rendererLayers', side: 'engine', status: 'reserved', version: 1, description: 'Named renderer layers.' },
   { key: 'panels', side: 'editor', status: 'active', version: 1, description: 'Manager panels (the editor renders the host; the plugin fills it).' },
   { key: 'nodeKinds', side: 'editor', status: 'active', version: 1, description: 'IR node kinds this plugin owns (forms + inert flag while disabled).' },
@@ -185,15 +197,24 @@ export interface PanelDef {
   kind?: string
 }
 
+/** A config field's type: any `ParamType`, or `list` (config only). */
+export type ConfigFieldType = ParamType | 'list'
+
 /** One plugin setting (`contributes.config`): a `ParamSchema` minus the command
- *  positional / required bits, plus a numeric range and who may change it. */
-export interface ConfigFieldSchema extends Omit<ParamSchema, 'positional' | 'required'> {
+ *  positional / required bits, plus a numeric range, who may change it, and
+ *  the config-only `list` type. */
+export interface ConfigFieldSchema extends Omit<ParamSchema, 'positional' | 'required' | 'list' | 'type' | 'default'> {
+  type: ConfigFieldType
+  /** A `list`: a TOML array (`["prologue", "true_end"]`). */
+  default?: string | number | boolean | string[] | number[]
+  /** A `list`'s item type (default `string`). */
+  items?: 'string' | 'number'
   min?: number
   max?: number
   step?: number
   /** `author` (default): set in the config file / the studio, read-only in the
    *  game. `player`: also a row in the in-game settings panel, persisted per work
-   *  (the author's value is the default). */
+   *  (the author's value is the default). A `list` is author-only. */
   scope?: 'author' | 'player'
 }
 
@@ -202,7 +223,22 @@ export interface MenuItemDef {
   id: string
   /** An i18n id resolved through the plugin's `messages`. */
   label: string
-  /** Menu entries: show only while `playing` (default) or on every session state. */
+  /** @deprecated Ignored: the system menu's list only opens while playing. A
+   *  title-page entry is a `titleItems` entry. */
+  when?: 'playing' | 'always'
+}
+
+/** A keyboard binding a plugin adds to the engine's key table. */
+export interface KeybindingDef {
+  /** Unique within the plugin; the table names it `<plugin id>:<id>`. */
+  id: string
+  /** The default key, in the `[keys]` format: `'w'`, `'Ctrl+S'`, several as an
+   *  array, `false` = unbound until the author or player binds it. */
+  default: string | string[] | false
+  /** An i18n id resolved through the plugin's `messages` (the settings row). */
+  label?: string
+  /** `playing` (default): while the story plays with no menu or screen open;
+   *  `always`: on the title / ending pages and plugin screens too. */
   when?: 'playing' | 'always'
 }
 
@@ -220,6 +256,32 @@ export interface ActorFieldDef {
   label?: string
 }
 
+/** A service a plugin offers other plugins (`ctx.services.provide`). */
+export interface ServiceDef {
+  /** Unique within the plugin; consumers ask for `(plugin id, id)`. */
+  id: string
+  /** The service interface's own semver version; a consumer may pass a range. */
+  version: string
+}
+
+/** A theme token a plugin adds to the `--nilvn-*` contract. */
+export interface ThemeTokenDef {
+  /** Token name, starting with the plugin's short name and a dash
+   *  (`weather-drop` for `com.example.weather`); the custom property is
+   *  `--nilvn-<name>`. */
+  name: string
+  /** A CSS value; may reference other tokens (`var(--nilvn-accent)`). */
+  default: string
+  /** An i18n id (the studio's theme form). */
+  label?: string
+}
+
+/** The prefix a plugin's theme tokens must start with: its id's last segment,
+ *  lower-cased, `_` → `-`, then a dash (`com.example.weather` → `weather-`). */
+export function themeTokenPrefix(id: string): string {
+  return (id.slice(id.lastIndexOf('.') + 1).toLowerCase().replace(/_/g, '-')) + '-'
+}
+
 /** Contributions per extension point. Every field optional; unknown keys are
  *  tolerated (ignored with a warning) so a newer plugin loads on an older host. */
 export interface PluginContributions {
@@ -230,12 +292,18 @@ export interface PluginContributions {
   objectKinds?: ObjectKindSchema[]
   effects?: EffectSchema[]
   hooks?: string[]
-  saveSlice?: boolean
+  /** The plugin owns a `SaveState.ext[id]` slice. `{ version }` names the
+   *  slice's shape version (default 1); it must equal the module's
+   *  `stateVersion`. */
+  saveSlice?: boolean | { version: number }
   config?: ConfigFieldSchema[]
   menuItems?: MenuItemDef[]
   titleItems?: MenuItemDef[]
   hud?: HudDef[]
   actorFields?: ActorFieldDef[]
+  keybindings?: KeybindingDef[]
+  services?: ServiceDef[]
+  themeTokens?: ThemeTokenDef[]
   panels?: PanelDef[]
   nodeKinds?: string[]
   stageTools?: string[]
@@ -287,6 +355,10 @@ export interface PluginManifest {
   entries?: { engine?: string; editor?: string }
   /** Stylesheets relative to plugin.json, scoped by the host per plugin id. */
   styles?: string[]
+  /** Resource files relative to plugin.json (`sfx/click.ogg`) — the complete
+   *  list an exporter copies next to the plugin, and the only paths
+   *  `ctx.asset()` resolves. */
+  assets?: string[]
   /** The plugin's own UI-chrome i18n catalog: `{ lang: { id: text } }`. The hosts
    *  register it under the `plugin:<id>` namespace. */
   messages?: Partial<Record<string, Record<string, string>>>
@@ -363,13 +435,117 @@ export function validatePluginManifest(m: PluginManifest, opts: ValidateManifest
     else seen.add(f.key)
     if (f && f.scope !== undefined && f.scope !== 'author' && f.scope !== 'player') errors.push(`contributes.config."${String(f.key)}": unknown scope "${String(f.scope)}"`)
   }
+  const bindingIds = new Set<string>()
+  for (const k of m.contributes?.keybindings ?? []) {
+    if (!k || typeof k.id !== 'string' || !CONFIG_KEY_RE.test(k.id)) errors.push(`contributes.keybindings: invalid id "${String(k?.id)}"`)
+    else if (bindingIds.has(k.id)) errors.push(`contributes.keybindings: duplicate id "${k.id}"`)
+    else bindingIds.add(k.id)
+    const d = k?.default
+    if (!(d === false || typeof d === 'string' || (Array.isArray(d) && d.every((x) => typeof x === 'string')))) errors.push(`contributes.keybindings."${String(k?.id)}": default must be a key, a list of keys or false`)
+    if (k && k.when !== undefined && k.when !== 'playing' && k.when !== 'always') errors.push(`contributes.keybindings."${String(k.id)}": unknown when "${String(k.when)}"`)
+  }
   for (const a of m.contributes?.actorFields ?? []) {
     if (!a || typeof a.key !== 'string' || !CONFIG_KEY_RE.test(a.key)) errors.push(`contributes.actorFields: invalid key "${String(a?.key)}"`)
+  }
+  const serviceIds = new Set<string>()
+  for (const s of m.contributes?.services ?? []) {
+    if (!s || typeof s.id !== 'string' || !CONFIG_KEY_RE.test(s.id)) errors.push(`contributes.services: invalid id "${String(s?.id)}"`)
+    else if (serviceIds.has(s.id)) errors.push(`contributes.services: duplicate id "${s.id}"`)
+    else serviceIds.add(s.id)
+    if (s && (typeof s.version !== 'string' || !parseSemVer(s.version))) errors.push(`contributes.services."${String(s?.id)}": version must be a semver version ("1.0.0")`)
+  }
+  const tokenNames = new Set<string>()
+  const prefix = typeof m.id === 'string' ? themeTokenPrefix(m.id) : ''
+  for (const t of m.contributes?.themeTokens ?? []) {
+    if (!t || typeof t.name !== 'string' || !/^[a-z][a-z0-9-]*$/.test(t.name)) errors.push(`contributes.themeTokens: invalid name "${String(t?.name)}" (lower-case words joined by dashes)`)
+    else if (!t.name.startsWith(prefix) || t.name.length === prefix.length) errors.push(`contributes.themeTokens: "${t.name}" must start with "${prefix}" (the plugin's short name)`)
+    else if (tokenNames.has(t.name)) errors.push(`contributes.themeTokens: duplicate name "${t.name}"`)
+    else tokenNames.add(t.name)
+    if (t && (typeof t.default !== 'string' || !t.default.trim())) errors.push(`contributes.themeTokens."${String(t?.name)}": default must be a CSS value`)
+    else if (t && /[;{}]/.test(t.default)) errors.push(`contributes.themeTokens."${String(t.name)}": default must be one CSS value (no ";", "{" or "}")`)
   }
   if (m.activation?.engine && !['eager', 'onCommand', 'manual'].includes(m.activation.engine)) errors.push(`unknown activation.engine "${m.activation.engine}"`)
   if (m.reload && m.reload !== 'hot' && m.reload !== 'restart') errors.push(`unknown reload policy "${m.reload}"`)
   if (m.entries && !m.entries.engine && !m.entries.editor) warnings.push('"entries" names neither an engine nor an editor module')
+  paramChecks(m, errors, warnings)
+  for (const p of m.assets ?? []) if (!isPluginRelPath(p)) errors.push(`assets: "${String(p)}" is not a path inside the plugin (relative, no "..")`)
+  const slice = m.contributes?.saveSlice
+  if (slice && typeof slice === 'object' && !(Number.isInteger(slice.version) && slice.version >= 1)) errors.push(`contributes.saveSlice.version must be a positive integer`)
   return { errors, warnings }
+}
+
+/** The shape checks a hand-written manifest most often gets wrong: command and
+ *  config field types, positional indexes, enum options, a contribution without
+ *  the permission that wires it, and labels missing from the `en` messages. */
+function paramChecks(m: PluginManifest, errors: string[], warnings: string[]): void {
+  const c = m.contributes ?? {}
+  const field = (where: string, f: { type?: unknown; options?: ParamSchema['options'] }, types: readonly string[] = PARAM_TYPES): void => {
+    if (!types.includes(f.type as string)) errors.push(`${where}: unknown type "${String(f.type)}" (one of ${types.join(', ')})`)
+    if (f.type === 'enum' && !(Array.isArray(f.options) && f.options.length && f.options.every((o) => o && typeof o === 'object' && typeof o.value === 'string' && typeof o.label === 'string'))) {
+      errors.push(`${where}: an enum needs options: [{ value, label }, …]`)
+    }
+  }
+  for (const cmd of c.commands ?? []) {
+    const where = `contributes.commands."${String(cmd?.name)}"`
+    if (!COMMAND_CATEGORIES.includes(cmd?.category)) errors.push(`${where}: category must be one of ${COMMAND_CATEGORIES.join(', ')}`)
+    for (const p of cmd?.params ?? []) {
+      field(`${where}.params."${String(p?.key)}"`, p)
+      if (p?.positional !== undefined && !(Number.isInteger(p.positional) && p.positional >= 0)) errors.push(`${where}.params."${String(p.key)}": positional is the argument index (0, 1, …)`)
+    }
+  }
+  for (const f of c.config ?? []) {
+    if (!f) continue
+    const where = `contributes.config."${String(f.key)}"`
+    field(where, f, CONFIG_TYPES)
+    if (f.type === 'list') {
+      if (f.scope === 'player') errors.push(`${where}: a list is author-only (scope "player" is not supported)`)
+      if (f.items !== undefined && f.items !== 'string' && f.items !== 'number') errors.push(`${where}: items is "string" or "number"`)
+      const item = f.items === 'number' ? 'number' : 'string'
+      if (f.default !== undefined && !(Array.isArray(f.default) && (f.default as unknown[]).every((x) => typeof x === item))) errors.push(`${where}: a list's default is an array of ${item}s`)
+    } else if (f.items !== undefined) warnings.push(`${where}: items only applies to type "list"`)
+  }
+  const has = (perm: string): boolean => (m.permissions ?? []).includes(perm as Permission)
+  const needs: [unknown, string, string][] = [
+    [c.keybindings?.length, 'keybindings', 'input.keys'],
+    [c.saveSlice, 'saveSlice', 'save.slice'],
+    [c.menuItems?.length, 'menuItems', 'ui.screen'],
+    [c.titleItems?.length, 'titleItems', 'ui.screen'],
+    [c.hud?.length, 'hud', 'ui.screen'],
+  ]
+  for (const x of c.menuItems ?? []) if (x && 'when' in x) warnings.push(`contributes.menuItems."${String(x.id)}": "when" is deprecated and ignored — the system menu only opens while playing; use titleItems for the title page`)
+  for (const [present, point, perm] of needs) if (present && !has(perm)) warnings.push(`contributes.${point} needs the "${perm}" permission — without it nothing is wired`)
+  const en = m.messages?.en
+  if (en) {
+    const labels = [
+      m.name,
+      m.description,
+      ...(c.commands ?? []).flatMap((x) => [x?.label, ...(x?.params ?? []).map((p) => p?.label), ...(x?.params ?? []).flatMap((p) => (p?.options ?? []).map((o) => o?.label))]),
+      ...(c.config ?? []).map((f) => f?.label),
+      ...(c.keybindings ?? []).map((k) => k?.label),
+      ...(c.menuItems ?? []).map((x) => x?.label),
+      ...(c.titleItems ?? []).map((x) => x?.label),
+      ...(c.themeTokens ?? []).map((x) => x?.label),
+    ]
+    for (const id of labels) if (typeof id === 'string' && id.startsWith('plugin.') && !(id in en)) warnings.push(`messages.en has no "${id}"`)
+  }
+}
+
+/** A path a plugin may name for its own files (`styles`, `assets`, `entries`):
+ *  relative to plugin.json, forward slashes, no `..` segment, no scheme
+ *  (`./engine.js` is fine). */
+export function isPluginRelPath(p: unknown): p is string {
+  if (typeof p !== 'string' || p.startsWith('/') || p.endsWith('/') || p.includes('\\') || /^[a-z][a-z0-9+.-]*:/i.test(p)) return false
+  const segs = p.split('/')
+  return !segs.includes('..') && segs.some((seg) => seg !== '' && seg !== '.')
+}
+
+/** A plugin path in its canonical form (`./sfx//a.ogg` → `sfx/a.ogg`): the
+ *  spelling package refs and the `assets` list are compared in. */
+export function normalizePluginPath(p: string): string {
+  return p
+    .split('/')
+    .filter((seg) => seg !== '' && seg !== '.')
+    .join('/')
 }
 
 /** Convenience: only the errors (the shape most call sites need). */

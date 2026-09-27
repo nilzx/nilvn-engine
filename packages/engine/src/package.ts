@@ -165,6 +165,14 @@ const MIME: Record<string, string> = {
   webm: 'video/webm',
   mp4: 'video/mp4',
   json: 'application/json',
+  // A carried plugin's files: module scripts are MIME-checked even as blob: URLs.
+  js: 'text/javascript',
+  mjs: 'text/javascript',
+  css: 'text/css',
+  woff2: 'font/woff2',
+  woff: 'font/woff',
+  ttf: 'font/ttf',
+  otf: 'font/otf',
 }
 const mimeOf = (name: string): string => MIME[(name.split('.').pop() ?? '').toLowerCase()] ?? 'application/octet-stream'
 
