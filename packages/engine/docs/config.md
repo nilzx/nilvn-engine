@@ -15,6 +15,9 @@ textSpeed = 40              # typewriter speed, characters per second
 [plugins]
 use = ["screenfx", "textfx", "charfx", "choicefx", "voicefx", "plugins/glitch.js"]
 
+[fonts]                     # font files the work ships, by family name (since 0.20.0)
+"Zcool KuaiLe" = "fonts/zcool.woff2"
+
 [path]                      # path prefix aliases, usable in every resource path
 "@bg" = "assets/bg"
 "@char" = "assets/char"
@@ -224,6 +227,29 @@ parameters that override its own; a multi-line (triple-quoted) macro is a
 sequence of commands. Macro names can be any string, including non-ASCII.
 Macros may reference other macros up to depth 8.
 
+### `[fonts]`
+
+*(since 0.20.0)* Family name → font file (`ttf` / `otf` / `woff` / `woff2`),
+resolved like every other resource path:
+
+```toml
+[fonts]
+"Zcool KuaiLe" = "fonts/zcool.woff2"
+
+[theme]
+font = '"Zcool KuaiLe", "PingFang SC", "Microsoft YaHei", sans-serif'
+```
+
+Each family is registered with the document as a `FontFace` (`font-display:
+swap`): text draws in the next family of the stack until the file has loaded,
+then switches. The title page and `start()` wait up to 1.5 s for the files. A file
+that fails to load is a `load` diagnostic and the fallback stays. The table only
+makes the family available — the `font` tokens (`[theme] font`, `[window] font`)
+choose where it is used, so always follow the family with a fallback stack.
+`reconfigure()` registers added files and releases dropped ones. A family that is
+not listed here (a font installed on the player's computer) works too, but only
+where it is installed.
+
 ### `[theme]`
 
 Token → value, token names without the `--nilvn-` prefix (quote the dashed ones:
@@ -254,7 +280,8 @@ memorising token names.
 | `padding` | CSS padding | `dialog-padding` |
 | `font` | font-family | `font` (the whole stage). |
 | `textSize`, `textColor`, `lineHeight`, `textShadow` | | `text-size`, `text-color`, `text-line-height`, `text-shadow` |
-| `nameBackground`, `nameColor`, `nameSize` | | `name-bg`, `name-color`, `name-size` |
+| `nameBackground`, `nameColor`, `nameSize`, `nameRadius` | | `name-bg`, `name-color`, `name-size`, `name-radius` *(`nameRadius` since 0.20.0)* |
+| `nameSkin` (+ `nameSlice`, `nameSliceWidth`) *(since 0.20.0)* | path | `name-skin` / `name-skin-slice`: an image behind the name tag, stretched or nine-sliced exactly like `skin` / `slice` / `sliceWidth`; it also clears the tag's pill (`name-bg = transparent`, `name-radius = 0`, `name-shadow = none`) unless `nameBackground` / `nameRadius` are given. |
 | `indicatorColor` | colour | `indicator-color` |
 
 Lengths use the stage's container units (`cqh` / `cqw` = 1 % of the stage
@@ -332,7 +359,9 @@ opens.
 ### `[menu]`
 
 The in-game system menu: a ☰ entry (and the Esc key) opening a panel of
-actions, each backed by a full-stage screen. It exists without any plugin.
+actions — a grid of icon tiles — the pages behind them (save / load, settings,
+backlog, replays) drawn as a card over the dimmed story. It exists without any
+plugin.
 
 | Key | Type | Effect |
 |---|---|---|
@@ -340,6 +369,9 @@ actions, each backed by a full-stage screen. It exists without any plugin.
 | `entry` | `top-right` (default) \| `top-left` \| `bottom-right` \| `bottom-left` \| `hidden` | Where the ☰ sits; `hidden` keeps Esc and the wheel gesture only. |
 | `items` | string[] | Ids in order: `save`, `load`, `quicksave`, `quickload`, `backlog`, `auto`, `skip`, `settings`, `replays` (shown when the work declares segments — a gallery of their pictures), `title`, `restart`; `ui:<id>` toggles a panel. A plugin's entry by `<plugin>:<item>` (the plugin's full id or its id's last segment, `journal:open`) sits where it is listed, and `plugins` marks where the plugins' entries the list does not name go — without it they follow the list *(since 0.19.0)*. Default: all, with `plugins` after `backlog`. Unknown ids are reported, as is a plugin entry no active plugin contributes. |
 | `wheelBacklog` | boolean | Wheel-up over the stage opens the backlog (default true). |
+| `skin` (+ `slice`, `sliceWidth`) *(since 0.20.0)* | path | An image on the ☰ entry button — `menu-button-skin` / `menu-button-skin-slice`, stretched or nine-sliced as `[window] skin`; it clears the button's round frame (`menu-button-border = none`, `menu-button-radius = 0`) and its fill unless `background` is given. |
+| `background`, `color` *(since 0.20.0)* | CSS | `menu-button-bg` / `menu-button-color` (default: a round chip drawn like a HUD). |
+| `panelSkin` (+ `panelSlice`, `panelSliceWidth`) *(since 0.20.0)* | path | An image behind the system pages — save / load, settings, backlog, replays — over `panel-bg`: `panel-skin` / `panel-skin-slice`. |
 
 Back-to-title and Restart ask through the engine's own confirm box (never the
 browser's). The menu is hidden on the title and ending pages. The menu is built
@@ -430,7 +462,8 @@ widgets = [
 | `bar` | `var`, `max` (100), `min` (0), `label` | A progress bar; `max` / `min` may be numbers or expressions. |
 | `image` | `src`, `width` | An image (`src` resolves like an asset path). |
 | `list` | `var`, `empty` | One line per item of a list variable, or of a comma-separated string (so a string item cannot itself hold a comma — collect into a list variable for that, or store `@key`s, which never contain one and whose translated line may); each string item is a config string (`@key` resolves through the catalogs, `{$var}` fills); `empty` (a config string) when there are none. |
-| `button` | `label`, `onclick` | A button; `onclick` is script commands, one per line (a TOML multi-line string for several). On a window opened from the title page (a `ui:<id>` button in `[title] buttons`) no story is running, so only `ui` and `set` commands run there — a `jump` is reported, not dropped. |
+| `button` | `label`, `onclick`, `disabled`, `key`, `skin` / `slice` / `sliceWidth`, `background`, `color` | A button; `onclick` is script commands, one per line (a TOML multi-line string for several). On a window opened from the title page (a `ui:<id>` button in `[title] buttons`) no story is running, so only `ui`, `set` and `menu` commands run there — a `jump` is reported, not dropped. `disabled` (an expression) greys it out and takes no click while true. `key` (a key name as in `[keys]`, `"v"`) clicks it while its panel is shown, it is enabled and no menu page, input box or choices prompt is up; a key an engine binding already holds is reported and the binding wins. `skin` … `color` restyle this button alone (a skin clears its fill and border unless `background` is given). *(0.20.0)* |
+| `slider` *(since 0.20.0)* | `var`, `min` (0), `max` (100), `step` (1), `label`, `disabled` | A slider bound to a numeric variable: dragging it (or the arrow keys) writes the variable as `[set]` does, and it follows the variable when something else changes it. Bound to `sys.bgmVolume` with `min = 0`, `max = 1`, `step = 0.05` it is a music volume control in step with the settings page. `min` / `max` may be expressions; `disabled` as on a button. Drawn with `bar-color`. |
 
 Every widget takes `if` (an expression; false hides it). Panels re-render on
 every variable change, language switch and session change. A `playing` panel
@@ -440,7 +473,58 @@ gives it a value. Declare it in `[persist]` only when it really must survive
 runs. `[ui show id]` /
 `[ui hide id]` / `[ui toggle id]` override the `show` policy; the decisions ride
 in a save. `[menu] items` and `[title] buttons` accept `ui:<id>` entries that
-toggle a panel. Look: `hud-*`, `window-*` and `bar-*` theme tokens.
+toggle a panel. Look: `hud-*`, `window-*` and `bar-*` theme tokens (a slider's
+thumb: `slider-thumb`).
+
+Anchors sit `space-m` in from the stage edge. A HUD on the corner the ☰ entry
+takes (`[menu] entry`, top-right by default) stands beside it instead of under
+it, and the bottom anchors stay `dialog-clearance` above the dialogue box. All
+panels draw under the menu, its pages, the toast and the confirm / input boxes.
+*(since 0.20.0)*
+
+Panel keys beyond `kind` / `anchor` / `show` / `title` / `width` / `height` /
+`widgets` *(since 0.20.0)*:
+
+| Key | Type | Effect |
+|---|---|---|
+| `dir` | `column` (default) \| `row` | How the widgets flow — a HUD across the top in one row. |
+| `skin` (+ `slice`, `sliceWidth`), `background`, `border`, `radius` | | This panel's own look over the `hud-*` / `window-*` tokens; a skin (stretched or nine-sliced as `[window] skin`) clears the background and border unless they are given. |
+| `close` | boolean | A window: an × in its corner that hides it (as `[ui hide id]`). |
+| `dim` | boolean | A window: a backdrop (`backdrop`) behind it while it is shown. The window then holds the story like a dialog: the backdrop takes every click and the advance key waits until it is closed. |
+| `open` | `none` (default) \| `fade` \| `slide` \| `pop` | How the panel appears and goes. Not played for a player whose system asks for reduced motion. |
+
+A window can place its widgets freely: a widget with `x` / `y` (and optionally
+`w` / `h`) — numbers are percent of the window's body, a string is a CSS
+length — is positioned there; the widgets without them keep flowing in order.
+Such a window needs a size: `width` / `height`, default `40cqw` × `36cqh`.
+`anchor` places a window as it places a HUD.
+
+```toml
+[ui.sound]
+kind = "window"
+title = "@ui.sound"
+show = "manual"
+close = true
+dim = true
+open = "pop"
+width = "44cqw"
+height = "30cqh"
+widgets = [
+  { type = "text",   text = "@ui.music", x = 0, y = 0 },
+  { type = "slider", var = "sys.bgmVolume", min = 0, max = 1, step = 0.05, x = 30, y = 0, w = 70 },
+  { type = "button", label = "@ui.saves", onclick = "menu open saves", x = 0, y = 70 },
+]
+
+[ui.hud]
+dir = "row"
+widgets = [{ type = "button", label = "@ui.soundBtn", key = "v", onclick = "ui toggle sound" }]
+```
+
+Each panel is also the stage object `ui:<id>` *(since 0.20.0)*: it is in
+`stage.objectIds()`, and a recorded animation (an event frame, a loop) can move,
+scale, turn and fade it like the dialogue box (`window:dialog`). Its pose
+composes over the anchor's centring, survives the panel's redraws, and rides in
+a save.
 
 ### `[preload]`
 
@@ -593,6 +677,7 @@ override for the current language wins, then `en`, then the engine's catalog.
 | `ui.settings.on` | On |
 | `ui.settings.off` | Off |
 | `ui.settings.keys` | Keys |
+| `ui.settings.group.text` / `.sound` / `.display` | The settings page's section headings: Text, Sound, Display *(since 0.20.0)* |
 | `ui.keys.press` | Press a key… (Esc cancels, Backspace clears) |
 | `ui.keys.reset` | Reset keys |
 | `ui.keys.<action>` | The action names in the key list: Advance, Menu, Skip while held, Skip, Auto, Quick save, Quick load, Backlog, Save, Load, Settings, Fullscreen |

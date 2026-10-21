@@ -44,6 +44,7 @@ only exceptions the engine throws are host programming errors (for example
 | `keys` | `KeysConfig` | Keyboard bindings (`[keys]`, see [config.md](config.md#keys)); `KEYS_DEFAULT` is the base. |
 | `messages` | `Record<lang, Record<id, string>>` | Chrome string overrides (`[strings.<lang>]`). |
 | `pluginConfig` | `Record<pluginId, Record<key, value>>` | Plugin settings (`[plugins.<id>]`); short first-party names work. |
+| `audio` | boolean | `false` = no sound at all *(since 0.20.0)*: no track, sound effect or voice ever loads or plays, and a plugin's `ctx.audio.volume()` reads 0. Volumes, tracks and saves keep working as if they played — an editor's stage, a thumbnail renderer. Default `true` (`engine.audioEnabled`). |
 | `screens` | `false` \| `{ title?, ending?, menu? }` | `false` = the engine draws no chrome at all (a host that owns its own); per piece otherwise. |
 | `saveStore` | `SaveStore` | Where saves persist (default `localStorage` namespaced by `saveKey`). |
 | `assets` | `Record<string, string>` | Virtual asset table: resolved path → inline URL (data URIs). Single-file builds use it so nothing is fetched. |
@@ -63,6 +64,7 @@ only exceptions the engine throws are host programming errors (for example
 | Member | Description |
 |---|---|
 | `loadConfig(url)` | Fetch and apply a [config file](config.md). Sets `baseUrl` to its directory. |
+| `reconfigure(cfg)` | *(since 0.20.0)* Re-apply the presentation sections of a parsed config on a live engine — `theme`, `window`, `choices`, `input`, `title`, `ending`, `saves` (not `autosave`), `menu`, `settings`, `ui`, `strings` — as an editor does on every change. They first go back to the values the engine was constructed with, so a key the new config dropped falls back to its default; the base theme layer is rebuilt (the `theme` option + the config + the player's opacity / scale), the script's `[theme …]` layer is left alone. `game`, `actors`, `plugins`, `path`, `macros`, `defaults`, `keys` and `persist` are not touched. An open title or ending page repaints in place (the same music carries on), the system menu is rebuilt with its open page still open, the panels are redefined keeping their show / hide decisions and poses. Unknown keys report as `applyConfig` reports them. |
 | `load(source)` | The one content entry. A `.nvn` URL loads that script; anything else is a [script package](script-package.md): a directory URL (or its `nilvn.json`), zip bytes / a `Blob`, or an opened `ScriptPackage`. Rejects only for an unreachable URL or a `PackageFormatError`. |
 | `loadScript(url)` | Fetch and parse a `.nvn` script; assets resolve relative to its directory. |
 | `loadSource(text)` | Parse script text you already have. |
@@ -88,7 +90,10 @@ actors, languages and plugin set.
 | `autoDelay` / `setAutoDelay(sec)`, `skipMode` / `setSkipMode(mode)` | Auto's pause and skip's reach — player settings, persisted. |
 | `getVolume(ch)` / `setVolume(ch, v)`, `dialogOpacity` / `setDialogOpacity(v)`, `uiScale` / `setUiScale(v)`, `isFullscreen()` / `setFullscreen(on)` | The other player settings the panel drives (the two sliders write the `dialog-opacity` / `ui-scale` theme tokens). |
 | `saveSlot(n)` / `loadSlot(n)`, `quickSave()` / `quickLoad()`, `writeSave(key)` / `readSave(key)` / `loadSave(key)` / `deleteSave(key)` | The slot API the menu's screen sits on (`slot:<n>`, `quick`, `auto`). |
-| `openMenu(panel)` | Open one of the menu's panels — `saves` / `load` / `backlog` / `replays` / `settings`. |
+| `openMenu(panel)` / `closeMenu()` | Open one of the menu's pages — `saves` / `load` / `backlog` / `replays` / `settings` (`MENU_PAGES`) — or close the menu and its pages (`[menu open …]` / `[menu close]`). Both work on an idle engine too, and return `false` when there is no menu (`hasMenu`). *(`closeMenu`, the return value and `hasMenu` since 0.20.0)* |
+| `previewMenu(on)` | *(since 0.20.0)* An editor's preview: while on, the ☰ entry shows (unless `[menu] entry = "hidden"`) whatever the session, and a session change closes none of its pages. Survives `reconfigure()` / `refreshMenu()`; `menuPreviewing` reads it. |
+| `playTime` | *(since 0.20.0)* Whole seconds of play in this run (`sys.playTime`); a save carries it (`SaveState.playTime`) and a load goes on from it. |
+| `ui` | The declarative panels (`UiPanels`): `show(id)` / `hide(id)` / `toggle(id)` / `isShown(id)` / `ids()`, and `preview(ids \| null)` *(since 0.20.0)* — an editor's preview: with a list, exactly those panels are drawn whatever their `show` policy and the session, a widget whose `if` fails is drawn with the class `is-off` instead of left out, and buttons, sliders, keys and the close button do nothing; `null` restores the rules. Every panel element carries `data-id`, every widget element `data-widget` (its index in `widgets`). |
 | `refreshMenu()` | Rebuild the system menu from the current `menuConfig` / `settingsConfig` / `messages` / `keysConfig` (what `applyConfig` does after a `loadConfig`); creates or removes it when `[menu] enabled` changed. Plugin menu entries survive. |
 | `t(id, params?)` | A chrome string in the work's language (overrides, then the engine catalog). |
 | `setPluginConfig(id, patch, { player? })` / `pluginConfigValue(id, key)` / `pluginConfigAll(id)` / `onPluginConfigChange(id, fn)` | A plugin's settings: the author's layer, or the player's with `player: true` (persisted); what `ctx.config` reads. |
@@ -256,11 +261,21 @@ anyway, so typos surface without breaking the page.
 | Token | Draws |
 |---|---|
 | `font` | The stage font. |
-| `ui-scale` | Multiplies every chrome font size (`text-size`, `name-size`, `choice-size`) — the one knob for small screens. |
-| `accent` | The accent colour. Reach: the default of `name-bg` and `button-on-bg`, the sliders' thumbs, the backlog's ▶ buttons, the title / ending pages' primary button through `button-on-bg`. |
+| `ui-scale` | Multiplies every chrome font size (`text-size`, `name-size`, `choice-size`, `font-size-*`, …) — the one knob for small screens. |
+| `accent` | The accent colour. Reach: the default of `name-bg`, `button-on-bg`, `bar-color` and `progress-color`, the settings sliders' fill, the focus ring, the hover colour of an option (`choice-hover`), the title / ending pages' primary button through `button-on-bg`. |
 | `text` | Base text colour of the stage; `text-color` defaults to it. |
 | `muted` | Secondary text: hints, captions, a locked or unavailable entry in a plugin screen. Derived from `text`. |
 | `disabled` | A disabled control's text. Derived from `text`. |
+| `radius-s` / `radius-m` / `radius-l` / `radius-pill` | The corner scale: a key cap or a thumbnail; a tile, a slot or a HUD; a page card, the dialogue box or a window; a pill button. *(since 0.20.0)* |
+| `space-xs` / `space-s` / `space-m` / `space-l` | The spacing scale: gaps, paddings, and the inset from the stage edge (`space-m`). *(since 0.20.0)* |
+| `control-height` | The height of a button or a row control — the tap target. *(since 0.20.0)* |
+| `font-size-s` / `font-size-m` / `font-size-l` | The chrome's three text sizes: captions and labels; body text of the pages, menus and windows; page titles and the title page's buttons. Times `ui-scale`. *(since 0.20.0)* |
+| `focus-ring` | The keyboard focus outline every control shows (a CSS `outline` value). *(since 0.20.0)* |
+| `shadow-s` / `shadow-m` / `shadow-l` | Three shadow depths: a tag or a thumb; the dialogue box, a toast, a hovered card; a floating panel (`panel-shadow`). *(since 0.20.0)* |
+| `duration` / `easing` | How a state change (hover, press, select) moves. `0s` under reduced motion. *(since 0.20.0)* |
+| `surface` / `surface-hover` | A raised fill inside a panel — a save slot, a backlog row, a settings section, a replay card — and its hover; `button-bg` / `button-hover` by default. *(since 0.20.0)* |
+| `slider-thumb` | The thumb of a slider (the settings page and the `[ui]` `slider` widget). *(since 0.20.0)* |
+| `hotspot-hover` | A `[hotspot]` under the pointer (`transparent` to draw nothing). *(since 0.20.0)* |
 | `dialog-bg` | Dialogue box background (any CSS background). |
 | `dialog-skin` | An image stretched over the box (`url(…)`), above `dialog-bg`. |
 | `dialog-skin-slice` | A nine-sliced skin instead: a full CSS `border-image` value (`[window] slice` builds it — `url(…) 40 fill / 40px stretch`). |
@@ -271,12 +286,16 @@ anyway, so typos surface without breaking the page.
 | `dialog-bottom` / `dialog-top` | Which edge the box hangs from, and how far. |
 | `dialog-height` | Minimum height. |
 | `dialog-padding` | Inner padding. |
+| `dialog-shadow` | The box's drop shadow (a CSS `box-shadow`; `[window] skin` sets `none`). *(since 0.20.0)* |
+| `dialog-clearance` | How far a bottom-anchored HUD, the toast and `[choices] position = "bottom"` stay above the box; `[window] position = "top"` sets it to the edge inset. *(since 0.20.0)* |
 | `text-size` / `text-line-height` | Dialogue text. |
 | `text-color` / `text-shadow` | Dialogue text. |
 | `name-bg` / `name-color` | Name-tag background (defaults to `accent`) and text. An actor's `color` / `textColor` override these for that speaker. |
 | `name-size` / `name-offset` | Name-tag font size and left offset. |
 | `name-shadow` | The name tag's drop shadow (a CSS `box-shadow`). *(since 0.19.0)* |
-| `indicator-color` / `indicator-size` | The click-to-continue triangle. |
+| `name-radius` | The name tag's corner radius (a pill by default). *(since 0.20.0)* |
+| `name-skin` / `name-skin-slice` | An image behind the name tag, stretched or nine-sliced (`[window] nameSkin` / `nameSlice` build them). *(since 0.20.0)* |
+| `indicator-color` / `indicator-size` | The click-to-continue chevron. |
 | `choices-backdrop` | The veil behind a choices prompt. |
 | `choices-gap` / `choice-width` | Space between the buttons; each button's minimum width. |
 | `choice-skin` / `choice-skin-slice` | An image on every button, stretched or nine-sliced (`[choices] skin` / `slice` build them). |
@@ -290,9 +309,16 @@ anyway, so typos surface without breaking the page.
 | `bar-bg` / `bar-color` / `bar-height` | The `bar` widget. |
 | `choice-bg` / `choice-color` / `choice-border` / `choice-hover` / `choice-radius` / `choice-size` | Choice buttons. |
 | `choice-glow` | The glow under a hovered option (a CSS `box-shadow`); derived from `choice-hover`. *(since 0.19.0)* |
+| `choices-list-bg` / `choices-list-border` / `choices-list-radius` / `choices-list-padding` / `choices-list-shadow` | A frame around the whole list of options — one command window instead of separate buttons (none by default). *(since 0.20.0)* |
+| `choice-align` / `choice-lift` | The options' text alignment (`center`) and how far a hovered option rises (`-2px`; `0` keeps it still). *(since 0.20.0)* |
+| `choice-cursor` / `choice-cursor-color` | A cursor beside the hovered or focused option — a CSS `content` value (`"\25B6"`), `none` by default — and its colour (`choice-hover`). *(since 0.20.0)* |
+| `choice-focus-ring` | The keyboard-focus outline on an option (`focus-ring`; `none` when a cursor marks focus). *(since 0.20.0)* |
 | `screen-bg` / `screen-color` / `screen-heading-shadow` | The title / ending / loading pages: the veil behind a page without a `background`, the page's text, and the heading's shadow (`[title]` / `[ending.<id>]` `color` and `shadow` override the last two per page). *(since 0.19.0)* |
 | `panel-bg` / `panel-border` / `panel-color` | Menus, screens and plugin panels. |
 | `button-bg` / `button-color` / `button-border` / `button-hover` | Buttons on those panels. |
+| `menu-button-bg` / `menu-button-color` / `menu-button-border` / `menu-button-radius` / `menu-button-size` | The in-game menu's ☰ entry button: a round chip drawn like a HUD (`hud-bg` / `hud-color` / `hud-border`) by default, and its size — a HUD on the ☰'s corner stands beside it, that far in. *(since 0.20.0)* |
+| `menu-button-skin` / `menu-button-skin-slice` | An image on that button, stretched or nine-sliced (`[menu] skin` / `slice` build them). *(since 0.20.0)* |
+| `panel-skin` / `panel-skin-slice` | An image behind the system pages — save / load, settings, backlog, replays — over `panel-bg` (`[menu] panelSkin` / `panelSlice` build them). *(since 0.20.0)* |
 | `divider` / `backdrop` / `panel-shadow` / `danger` | A rule between groups of a panel, the dim layer under a dialog, a floating panel's shadow, a warning (an invalid entry). *(since 0.19.0)* |
 | `button-on-bg` / `button-on-color` | The selected / primary state: an active auto / skip item, the chosen option in a settings row, the current slot page, the title and ending pages' primary button. Set both when your `accent` is light, so the selected text keeps its contrast. |
 | `input-box-bg` / `input-box-border` / `input-box-radius` | The `[input]` box (defaults to the panel look). |
@@ -308,94 +334,140 @@ Every token's default, as the base stylesheet declares it (generated from
 |---|---|
 | `font` | `"PingFang SC","Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif` |
 | `ui-scale` | `1` |
-| `accent` | `#7c5cff` |
-| `text` | `#f4f5fa` |
-| `muted` | `color-mix(in srgb, var(--nilvn-text) 60%, transparent)` |
-| `disabled` | `color-mix(in srgb, var(--nilvn-text) 35%, transparent)` |
-| `dialog-bg` | `linear-gradient(180deg,rgba(22,26,42,.82),rgba(10,12,22,.92))` |
+| `accent` | `#a35cf0` |
+| `text` | `#f6f3fb` |
+| `muted` | `color-mix(in srgb, var(--nilvn-text) 62%, transparent)` |
+| `disabled` | `color-mix(in srgb, var(--nilvn-text) 36%, transparent)` |
+| `radius-s` | `max(6px, 1.1cqh)` |
+| `radius-m` | `max(10px, 1.9cqh)` |
+| `radius-l` | `max(14px, 2.8cqh)` |
+| `radius-pill` | `999px` |
+| `space-xs` | `max(4px, .6cqh)` |
+| `space-s` | `max(6px, 1.2cqh)` |
+| `space-m` | `max(10px, 2.2cqh)` |
+| `space-l` | `max(16px, 3.6cqh)` |
+| `control-height` | `max(34px, 6.2cqh)` |
+| `font-size-s` | `max(11px, 1.9cqh)` |
+| `font-size-m` | `max(12px, 2.4cqh)` |
+| `font-size-l` | `max(14px, 3cqh)` |
+| `focus-ring` | `2px solid color-mix(in srgb, var(--nilvn-accent) 55%, white)` |
+| `shadow-s` | `0 2px 6px rgba(8,4,20,.22)` |
+| `shadow-m` | `0 8px 24px rgba(8,4,20,.32)` |
+| `shadow-l` | `0 18px 48px rgba(8,4,20,.46)` |
+| `duration` | `.18s` |
+| `easing` | `cubic-bezier(.2,.8,.2,1)` |
+| `surface` | `var(--nilvn-button-bg)` |
+| `surface-hover` | `var(--nilvn-button-hover)` |
+| `slider-thumb` | `#ffffff` |
+| `hotspot-hover` | `color-mix(in srgb, var(--nilvn-accent) 14%, transparent)` |
+| `dialog-bg` | `rgba(27,23,40,.86)` |
 | `dialog-skin` | `none` |
 | `dialog-skin-slice` | `none` |
-| `dialog-border` | `1px solid rgba(255,255,255,.14)` |
-| `dialog-radius` | `1.8cqh` |
+| `dialog-border` | `1px solid color-mix(in srgb, var(--nilvn-text) 12%, transparent)` |
+| `dialog-radius` | `var(--nilvn-radius-l)` |
+| `dialog-shadow` | `var(--nilvn-shadow-m)` |
 | `dialog-opacity` | `1` |
 | `dialog-inset` | `3.5%` |
 | `dialog-bottom` | `3.5cqh` |
 | `dialog-top` | `auto` |
 | `dialog-height` | `24cqh` |
-| `dialog-padding` | `3.6cqh 3cqw 2cqh` |
-| `text-size` | `3.4cqh` |
+| `dialog-padding` | `max(16px, 4cqh) max(18px, 3.4cqw) max(12px, 2.4cqh)` |
+| `dialog-clearance` | `calc(var(--nilvn-dialog-bottom) + var(--nilvn-dialog-height) + var(--nilvn-space-m))` |
+| `text-size` | `max(13px, 3.4cqh)` |
 | `text-line-height` | `1.75` |
 | `text-color` | `var(--nilvn-text)` |
-| `text-shadow` | `0 1px 2px rgba(0,0,0,.5)` |
+| `text-shadow` | `0 1px 2px rgba(8,4,20,.45)` |
 | `name-bg` | `var(--nilvn-accent)` |
 | `name-color` | `#ffffff` |
-| `name-size` | `2.7cqh` |
-| `name-offset` | `2.4cqw` |
-| `name-shadow` | `0 2px 10px rgba(0,0,0,.35)` |
-| `indicator-color` | `rgba(255,255,255,.85)` |
-| `indicator-size` | `1.4cqh` |
-| `choices-backdrop` | `rgba(5,6,12,.35)` |
-| `choice-bg` | `linear-gradient(180deg,rgba(40,46,74,.92),rgba(24,28,48,.92))` |
+| `name-size` | `max(12px, 2.6cqh)` |
+| `name-offset` | `max(14px, 2.6cqw)` |
+| `name-shadow` | `var(--nilvn-shadow-s)` |
+| `name-radius` | `var(--nilvn-radius-pill)` |
+| `name-skin` | `none` |
+| `name-skin-slice` | `none` |
+| `indicator-color` | `color-mix(in srgb, var(--nilvn-text) 85%, transparent)` |
+| `indicator-size` | `max(9px, 1.6cqh)` |
+| `choices-backdrop` | `rgba(12,8,24,.32)` |
+| `choice-bg` | `rgba(31,26,46,.9)` |
 | `choice-color` | `#ffffff` |
-| `choice-border` | `1px solid rgba(255,255,255,.2)` |
-| `choice-hover` | `rgba(140,160,255,.9)` |
-| `choice-glow` | `0 6px 24px color-mix(in srgb, var(--nilvn-choice-hover) 28%, transparent)` |
-| `choice-radius` | `99px` |
-| `choice-size` | `3cqh` |
-| `choice-width` | `38cqw` |
-| `choices-gap` | `2.6cqh` |
+| `choice-border` | `1px solid color-mix(in srgb, var(--nilvn-choice-color) 16%, transparent)` |
+| `choice-hover` | `color-mix(in srgb, var(--nilvn-accent) 65%, white)` |
+| `choice-glow` | `0 6px 24px color-mix(in srgb, var(--nilvn-choice-hover) 30%, transparent)` |
+| `choice-radius` | `var(--nilvn-radius-pill)` |
+| `choice-size` | `max(13px, 2.9cqh)` |
+| `choice-width` | `max(200px, 38cqw)` |
+| `choices-gap` | `max(8px, 2cqh)` |
 | `choice-skin` | `none` |
 | `choice-skin-slice` | `none` |
-| `choice-chosen-bg` | `linear-gradient(180deg,rgba(40,46,74,.6),rgba(24,28,48,.6))` |
-| `choice-chosen-color` | `rgba(255,255,255,.6)` |
+| `choice-chosen-bg` | `rgba(31,26,46,.66)` |
+| `choice-chosen-color` | `color-mix(in srgb, var(--nilvn-choice-color) 62%, transparent)` |
 | `choice-chosen-mark` | `"\2713"` |
-| `choice-disabled-bg` | `rgba(30,33,46,.7)` |
+| `choice-disabled-bg` | `rgba(31,26,46,.55)` |
 | `choice-disabled-color` | `var(--nilvn-disabled)` |
-| `choice-timer-bg` | `rgba(255,255,255,.15)` |
+| `choice-timer-bg` | `color-mix(in srgb, var(--nilvn-choice-color) 16%, transparent)` |
 | `choice-timer-color` | `var(--nilvn-accent)` |
-| `progress-bg` | `rgba(255,255,255,.15)` |
+| `choice-align` | `center` |
+| `choice-lift` | `-2px` |
+| `choice-cursor` | `none` |
+| `choice-cursor-color` | `var(--nilvn-choice-hover)` |
+| `choice-focus-ring` | `var(--nilvn-focus-ring)` |
+| `choices-list-bg` | `none` |
+| `choices-list-border` | `none` |
+| `choices-list-radius` | `0` |
+| `choices-list-padding` | `0` |
+| `choices-list-shadow` | `none` |
+| `progress-bg` | `color-mix(in srgb, var(--nilvn-screen-color) 16%, transparent)` |
 | `progress-color` | `var(--nilvn-accent)` |
-| `hud-bg` | `rgba(10,12,22,.62)` |
-| `hud-border` | `1px solid rgba(255,255,255,.14)` |
+| `hud-bg` | `rgba(27,23,40,.74)` |
+| `hud-border` | `1px solid color-mix(in srgb, var(--nilvn-hud-color) 12%, transparent)` |
 | `hud-color` | `var(--nilvn-panel-color)` |
-| `hud-radius` | `1.2cqh` |
-| `hud-padding` | `1.2cqh 1.6cqw` |
-| `hud-size` | `2.2cqh` |
+| `hud-radius` | `var(--nilvn-radius-m)` |
+| `hud-padding` | `var(--nilvn-space-s) var(--nilvn-space-m)` |
+| `hud-size` | `max(11px, 2.2cqh)` |
 | `window-bg` | `var(--nilvn-panel-bg)` |
 | `window-border` | `var(--nilvn-panel-border)` |
 | `window-color` | `var(--nilvn-panel-color)` |
-| `window-radius` | `1.4cqh` |
-| `window-padding` | `2.4cqh 2.4cqw` |
-| `window-width` | `40cqw` |
-| `bar-bg` | `rgba(255,255,255,.15)` |
+| `window-radius` | `var(--nilvn-radius-l)` |
+| `window-padding` | `var(--nilvn-space-l)` |
+| `window-width` | `max(240px, 40cqw)` |
+| `bar-bg` | `color-mix(in srgb, var(--nilvn-hud-color) 16%, transparent)` |
 | `bar-color` | `var(--nilvn-accent)` |
-| `bar-height` | `1.4cqh` |
-| `screen-bg` | `rgba(8,10,18,.92)` |
+| `bar-height` | `max(6px, 1.2cqh)` |
+| `screen-bg` | `radial-gradient(90% 70% at 15% 0%, color-mix(in srgb, var(--nilvn-accent) 26%, transparent), transparent 70%), radial-gradient(80% 70% at 100% 100%, rgba(255,110,170,.16), transparent 70%), #16121f` |
 | `screen-color` | `var(--nilvn-panel-color)` |
-| `screen-heading-shadow` | `0 2px 12px rgba(0,0,0,.5)` |
-| `panel-bg` | `rgba(16,18,28,.96)` |
-| `panel-border` | `1px solid rgba(255,255,255,.16)` |
-| `panel-color` | `#f4f5fa` |
-| `button-bg` | `rgba(255,255,255,.08)` |
-| `button-color` | `#ffffff` |
-| `button-border` | `1px solid rgba(255,255,255,.18)` |
-| `button-hover` | `rgba(255,255,255,.16)` |
-| `divider` | `rgba(255,255,255,.1)` |
-| `backdrop` | `rgba(0,0,0,.45)` |
-| `panel-shadow` | `0 1.2cqh 4cqh rgba(0,0,0,.5)` |
-| `danger` | `#e05555` |
+| `screen-heading-shadow` | `0 2px 16px rgba(8,4,20,.45)` |
+| `panel-bg` | `rgba(33,28,48,.98)` |
+| `panel-border` | `1px solid color-mix(in srgb, var(--nilvn-panel-color) 10%, transparent)` |
+| `panel-color` | `#f6f3fb` |
+| `button-bg` | `color-mix(in srgb, var(--nilvn-button-color) 8%, transparent)` |
+| `button-color` | `var(--nilvn-panel-color)` |
+| `button-border` | `1px solid color-mix(in srgb, var(--nilvn-button-color) 10%, transparent)` |
+| `button-hover` | `color-mix(in srgb, var(--nilvn-button-color) 15%, transparent)` |
+| `menu-button-bg` | `var(--nilvn-hud-bg)` |
+| `menu-button-color` | `var(--nilvn-hud-color)` |
+| `menu-button-border` | `var(--nilvn-hud-border)` |
+| `menu-button-radius` | `50%` |
+| `menu-button-size` | `max(34px, 5.6cqh)` |
+| `menu-button-skin` | `none` |
+| `menu-button-skin-slice` | `none` |
+| `panel-skin` | `none` |
+| `panel-skin-slice` | `none` |
+| `divider` | `color-mix(in srgb, var(--nilvn-panel-color) 14%, transparent)` |
+| `backdrop` | `rgba(12,8,24,.58)` |
+| `panel-shadow` | `var(--nilvn-shadow-l)` |
+| `danger` | `#ff6b81` |
 | `button-on-bg` | `var(--nilvn-accent)` |
-| `button-on-color` | `var(--nilvn-button-color)` |
+| `button-on-color` | `#ffffff` |
 | `input-box-bg` | `var(--nilvn-panel-bg)` |
 | `input-box-border` | `var(--nilvn-panel-border)` |
-| `input-box-radius` | `1.4cqh` |
+| `input-box-radius` | `var(--nilvn-radius-l)` |
 | `input-box-skin` | `none` |
 | `input-box-skin-slice` | `none` |
-| `input-bg` | `rgba(255,255,255,.08)` |
+| `input-bg` | `color-mix(in srgb, var(--nilvn-input-color) 8%, transparent)` |
 | `input-color` | `var(--nilvn-panel-color)` |
-| `input-border` | `1px solid rgba(255,255,255,.25)` |
-| `input-radius` | `0.8cqh` |
-| `input-size` | `3cqh` |
+| `input-border` | `1px solid color-mix(in srgb, var(--nilvn-input-color) 22%, transparent)` |
+| `input-radius` | `var(--nilvn-radius-m)` |
+| `input-size` | `max(14px, 3cqh)` |
 | `input-prompt-color` | `var(--nilvn-panel-color)` |
 | `input-button-bg` | `var(--nilvn-button-bg)` |
 | `input-button-color` | `var(--nilvn-button-color)` |

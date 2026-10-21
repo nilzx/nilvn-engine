@@ -110,8 +110,14 @@ export interface ReplaySegment {
  *      `canvas` / `layers` / `ext` (pure additions) and `Actor.voice` moved under
  *      `ext['app.nilvn.voicefx']` (migrated); `ChoiceNode.timer` / `timerDefault`,
  *      `ChoiceOption.disabled`, `VariableDef.persist`, `CallNode` / `ReturnNode`
- *      (pure additions). */
-export const CURRENT_SCHEMA_VERSION = 13
+ *      (pure additions).
+ *  v14: in-scene branches nest in the IR — a `ChoiceOption` carries either a
+ *      `body` (lines played after picking it, then the flow merges back after
+ *      the choice) or a `target` (a jump), and the new `BranchNode` picks one of
+ *      several bodies by condition. The serializer flattens both into labels and
+ *      jumps, so the engine, saves and chunks are unchanged. Pure addition (a
+ *      v13 project is a valid v14 one). */
+export const CURRENT_SCHEMA_VERSION = 14
 
 /** Context shared by every migration step of one `migrateProject` call. */
 interface MigrationContext {
@@ -242,6 +248,7 @@ const MIGRATIONS: Migration[] = [
   },
   // v11 -> v12: `Project.config` (the work's engine configuration). Pure addition
   // — a project without one plays with the engine's defaults.
+  // v13 -> v14: nested in-scene branches (`ChoiceOption.body`, `BranchNode`). Pure addition.
   // v12 -> v13: the voicefx pitch (`Actor.voice`) moves under `ext['app.nilvn.voicefx']`
   // like every plugin actor field; the layered-sprite fields are pure additions.
   {
@@ -292,6 +299,12 @@ export interface EditorProjectMeta {
     positions?: Record<string, { x: number; y: number }>
     chapters?: SceneMapChapter[]
   }
+  /** Per-scene authoring notes, by scene id: the one-line synopsis shown on the
+   *  story map and at the top of the scene (outline first). Never in the script. */
+  scenes?: Record<string, { synopsis?: string }>
+  /** The theme preset the work's interface was started from (its tokens live in
+   *  `config.theme`; the preset is what "reset to theme" goes back to). */
+  uiTheme?: string
 }
 
 export interface SceneMapChapter {
@@ -387,11 +400,21 @@ export interface FaceRecipe {
   [k: string]: unknown
 }
 
+/** A scene-kit scene recipe — the `SceneDef` product (`format:'nilvn-scene'`: a
+ *  backdrop, the placed pieces, the time of day). Opaque to core like FaceRecipe:
+ *  the editor keeps it on a background it rendered so the scene can be changed,
+ *  or shown at another time of day, later. */
+export interface SceneRecipe {
+  format: 'nilvn-scene'
+  [k: string]: unknown
+}
+
 /** Where an asset's bytes came from. A discriminated union so the Web→Pro converter
  *  can offer the right replacement lane per source (re-render from a recipe, re-run /
  *  condition an AI prompt, swap a library id, or accept a manual raster drop). */
 export type AssetProvenance =
   | { source: 'face-creator'; def: FaceRecipe } // a face-creator recipe — any pose re-renderable
+  | { source: 'scene-kit'; def: SceneRecipe } // a scene-kit recipe — re-renderable at any time of day
   | { source: 'ai-svg'; prompt: string; model?: string } // AI-generated; prompt re-runnable / feeds structure conditioning
   | { source: 'builtin'; libId: string } // from the built-in asset library
   | { source: 'imported' } // user-imported bytes (Pro; already raster)
@@ -459,6 +482,7 @@ export type SceneNode =
   | EventFrameNode
   | LoopStartNode
   | LoopStopNode
+  | BranchNode
 
 export type NodeKind = SceneNode['kind']
 
@@ -505,13 +529,44 @@ export interface ChoiceNode extends NodeBase {
   timerDefault?: number
 }
 
-export interface ChoiceOption {
+interface ChoiceOptionBase {
   labelKey: string
-  target: JumpTarget
   /** Shown only when truthy. */
   condition?: string
   /** Shown greyed and unpickable when truthy (`disabled=`). */
   disabled?: string
+}
+
+/** An option that jumps: to another scene, or to a label. */
+export interface JumpOption extends ChoiceOptionBase {
+  target: JumpTarget
+  body?: undefined
+}
+
+/** An option that plays its own lines, then merges back right after the
+ *  choice (schema v14). The body may nest further choices and branches. */
+export interface BodyOption extends ChoiceOptionBase {
+  body: SceneNode[]
+  target?: undefined
+}
+
+/** One option of a choice: exactly one of `target` / `body`. */
+export type ChoiceOption = JumpOption | BodyOption
+
+/** One case of a `BranchNode`: its body plays when `condition` is the first
+ *  truthy one. */
+export interface BranchCase {
+  condition: string
+  body: SceneNode[]
+}
+
+/** A condition branch (schema v14): the player sees nothing; the first case
+ *  whose condition holds plays, else `else` (or nothing), then the flow merges
+ *  back right after the node. Serializes to `[if cond -> label]` lines. */
+export interface BranchNode extends NodeBase {
+  kind: 'branch'
+  cases: BranchCase[]
+  else?: SceneNode[]
 }
 
 export interface SetNode extends NodeBase {

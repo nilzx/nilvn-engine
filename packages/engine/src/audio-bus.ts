@@ -14,6 +14,9 @@ export interface AudioHost {
   volumes(): { bgm: number; ambience: number; se: number; voice: number }
   /** True while a play session is running (gesture retries give up otherwise). */
   running(): boolean
+  /** No sound at all (`createEngine({ audio: false })`): tracks are kept as if
+   *  they played — a save still carries them — but no element ever loads or plays. */
+  silent?: boolean
 }
 
 export interface TrackOptions {
@@ -69,12 +72,14 @@ export class AudioBus {
       return
     }
     this.stopTrack(track, 0)
-    const audio = this.watchAudio(new Audio(url), `track "${track}"`, url)
+    // Silent: an element with no source stands in, so the track's bookkeeping holds.
+    const audio = this.host.silent ? new Audio() : this.watchAudio(new Audio(url), `track "${track}"`, url)
     audio.loop = opts.loop ?? true
     const slot: TrackSlot = { audio, base: opts.volume ?? 1, src: url, loop: audio.loop }
     const fade = opts.fade ?? 0
     audio.volume = fade > 0 ? 0 : clamp01(slot.base * this.trackMaster(track))
     this.loopTracks.set(track, slot)
+    if (this.host.silent) return
     void audio.play().catch(() => this.resumeOnGesture(audio, () => this.loopTracks.get(track) === slot))
     if (fade > 0) {
       const stepFrac = 1 / Math.max(1, (fade * 1000) / 40)
@@ -168,6 +173,7 @@ export class AudioBus {
 
   /** Play a one-shot sound effect, tracked so destroy() can stop it mid-clip. */
   playSe(url: string, volume = 1): void {
+    if (this.host.silent) return
     const audio = this.watchAudio(new Audio(url), 'sound effect', url)
     audio.volume = clamp01(volume * this.host.volumes().se)
     this.sounds.add(audio)
@@ -183,6 +189,7 @@ export class AudioBus {
    *  seconds of leading silence. `current()` says whether the line that started
    *  it is still on screen (a load mid-line drops the clip). */
   playVoice(url: string, offset: number, current: () => boolean): void {
+    if (this.host.silent) return
     const audio = this.watchAudio(new Audio(url), 'voice', url)
     audio.preload = 'auto'
     audio.volume = clamp01(this.host.volumes().voice)
@@ -228,6 +235,7 @@ export class AudioBus {
    *  does; stops any prior replay so clips never overlap. */
   playBacklog(url: string, offset = 0): void {
     this.backlogAudio?.pause()
+    if (this.host.silent) return
     const audio = this.watchAudio(new Audio(url), 'backlog voice', url)
     audio.volume = clamp01(this.host.volumes().voice)
     this.backlogAudio = audio

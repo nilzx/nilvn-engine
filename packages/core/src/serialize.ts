@@ -6,6 +6,12 @@
 //   - choice:     [choice text -> label if=cond]  (consecutive ones merge)
 //   - flow:       [label name] / [jump label] / [if cond -> label] / [set var = expr]
 //
+// Nested in-scene branches (schema v14) flatten here: a choice option's `body`
+// and a branch node's cases become labelled runs after the prompt / the `[if]`
+// lines, each ending in a jump to a merge label. The synthetic labels derive
+// from the owning node's id (`__b_<id>_<n>`, `__m_<id>`), so the output is
+// deterministic and the engine never sees nesting.
+//
 // Text comes from the chosen language catalog, keeping logic and text fully separate.
 import type {
   AnimKeyframe,
@@ -22,6 +28,7 @@ import type {
   Project,
   SceneNode,
 } from './ir.js'
+import { findNode, walkNodes } from './nodes.js'
 import type { CommandSchema, ParamSchema } from './schema.js'
 import { BUILTIN_COMMAND_MAP } from './commands.js'
 
@@ -107,7 +114,7 @@ export function serializeChunk(project: Project, opts: SerializeOptions = {}): S
     for (const scene of validation) {
       scope.scenes.add(scene.id)
       scope.labels.add(scene.id)
-      for (const node of scene.nodes) if (node.kind === 'label') scope.labels.add(node.name)
+      walkNodes(scene.nodes, ({ node }) => { if (node.kind === 'label') scope.labels.add(node.name) })
     }
   }
   const out: string[] = []
@@ -137,11 +144,9 @@ export function serializeChunk(project: Project, opts: SerializeOptions = {}): S
     }
     if (validReplays.length) out.push('')
   }
-  for (const scene of scenes) {
-    // Scene boundary doubles as a jump label so the engine can start(sceneId).
-    out.push(`[label ${scene.id}]`)
-    labels.push(scene.id)
-    for (const node of scene.nodes) {
+  // One node list, nested bodies flattened in after their owner (see the header).
+  const emit = (nodes: SceneNode[]): void => {
+    for (const node of nodes) {
       if (opts.anchorNodeId && node.id === opts.anchorNodeId) out.push(`[label ${anchorLabel}]`)
       for (const segId of replayStarts.get(node.id) ?? []) {
         out.push(`[label ${REPLAY_LABEL_PREFIX}${segId}]`)
@@ -149,9 +154,40 @@ export function serializeChunk(project: Project, opts: SerializeOptions = {}): S
       }
       if (node.kind === 'label') labels.push(node.name)
       collectNodeAssets(node, assetRefs)
+      // A node's guard: a jump carries it natively ([if]), a plugin command takes
+      // a trailing if=; anything else is skipped over when it does not hold.
+      const guard = node.condition?.trim()
+      const native = node.kind === 'jump' || (node.kind === 'command' && !BUILTIN_COMMAND_MAP[node.cmd])
+      if (guard && !native) out.push(`[if !(${guard}) -> ${skipLabel(node.id)}]`)
       out.push(serializeNode(node, text, commands, scope))
+      if (node.kind === 'choice' && node.options.some((o) => o.body)) {
+        // Every option jumps, so nothing falls through the prompt; the guard jump
+        // only matters if the engine ever lets a prompt with no shown option pass.
+        out.push(`[jump ${mergeLabel(node.id)}]`)
+        node.options.forEach((o, i) => { if (o.body) emitBody(bodyLabel(node.id, i), o.body, node.id) })
+        out.push(`[label ${mergeLabel(node.id)}]`)
+      }
+      if (node.kind === 'branch') {
+        // The else runs inline right after the `[if]` lines (they jump away when one holds).
+        if (node.else) emit(node.else)
+        out.push(`[jump ${mergeLabel(node.id)}]`)
+        node.cases.forEach((c, i) => emitBody(bodyLabel(node.id, i), c.body, node.id))
+        out.push(`[label ${mergeLabel(node.id)}]`)
+      }
+      if (guard && !native) out.push(`[label ${skipLabel(node.id)}]`)
       for (const segId of replayEnds.get(node.id) ?? []) out.push(`[replayend ${token(segId)}]`)
     }
+  }
+  const emitBody = (label: string, body: SceneNode[], owner: string): void => {
+    out.push(`[label ${label}]`)
+    emit(body)
+    out.push(`[jump ${mergeLabel(owner)}]`)
+  }
+  for (const scene of scenes) {
+    // Scene boundary doubles as a jump label so the engine can start(sceneId).
+    out.push(`[label ${scene.id}]`)
+    labels.push(scene.id)
+    emit(scene.nodes)
     out.push('')
   }
   // A landing spot for not-yet-connected branches/jumps. Reaching it just ends
@@ -169,7 +205,7 @@ export function serializeProject(project: Project, opts: SerializeOptions = {}):
 
 /** Matches the asset extensions the pipeline ships. Kept beside isAssetRef so the
  *  predicate is one place (the editor imports it too — no second copy to drift). */
-const ASSET_EXT = /\.(svg|png|jpe?g|gif|webp|avif|mp3|ogg|opus|wav|m4a|aac|flac|mp4|webm)$/i
+const ASSET_EXT = /\.(svg|png|jpe?g|gif|webp|avif|mp3|ogg|opus|wav|m4a|aac|flac|mp4|webm|ttf|otf|woff2?)$/i
 
 /** True when a value looks like an asset reference — used to pick asset paths out
  *  of arbitrary command params. Zero-dep, so it's the single shared predicate. */
@@ -202,10 +238,14 @@ export const REPLAY_LABEL_PREFIX = '__replay_'
 /** Whether an anchor's node still exists (in its scene, or anywhere if the scene
  *  itself was renamed — node ids are globally unique, so an id match suffices). */
 function hasNode(project: Project, anchor: { sceneId: string; nodeId: string }): boolean {
-  const scene = project.scenes.find((s) => s.id === anchor.sceneId)
-  if (scene?.nodes.some((n) => n.id === anchor.nodeId)) return true
-  return project.scenes.some((s) => s.nodes.some((n) => n.id === anchor.nodeId))
+  return project.scenes.some((s) => findNode(s.nodes, anchor.nodeId) !== undefined)
 }
+
+/** Synthetic labels of a nested body and of its merge point (schema v14). */
+export const bodyLabel = (ownerId: string, index: number): string => `__b_${ownerId}_${index}`
+export const mergeLabel = (ownerId: string): string => `__m_${ownerId}`
+/** Synthetic label just past a guarded node (`NodeBase.condition`). */
+export const skipLabel = (nodeId: string): string => `__s_${nodeId}`
 
 function push(map: Map<string, string[]>, key: string, value: string): void {
   const arr = map.get(key)
@@ -261,9 +301,10 @@ function serializeNode(
       // `if=` / `disabled=` are read to the tag's end and unquoted by the engine
       // (they carry spaces), so they go last and raw. A timer rides a `[choices]`
       // line right before the prompt.
-      const lines = node.options.map((o) => {
+      const lines = node.options.map((o, i) => {
         const guards = [o.condition ? `if=${o.condition}` : '', o.disabled ? `disabled=${o.disabled}` : ''].filter(Boolean)
-        return `[choice ${token(text(o.labelKey))} -> ${dest(o.target, scope)}${guards.length ? ' ' + guards.join(' ') : ''}]`
+        const to = o.body ? bodyLabel(node.id, i) : dest(o.target, scope)
+        return `[choice ${token(text(o.labelKey))} -> ${to}${guards.length ? ' ' + guards.join(' ') : ''}]`
       })
       if (node.timer !== undefined || node.timerDefault !== undefined) {
         const parts = ['choices']
@@ -273,6 +314,9 @@ function serializeNode(
       }
       return lines.join('\n')
     }
+    case 'branch':
+      // Only the `[if]` lines; the bodies and the merge follow (see emit).
+      return node.cases.map((c, i) => `[if ${c.condition} -> ${bodyLabel(node.id, i)}]`).join('\n')
     case 'call':
       return `[call ${dest(node.target, scope)}]`
     case 'return':
@@ -288,8 +332,12 @@ function serializeNode(
       // v1 DSL has no recall command; emit a comment the engine ignores. The recall
       // gallery is built from the IR directly, not from the runtime script.
       return `; recall ${node.recallId}`
-    case 'command':
-      return serializeCommand(node, commands[node.cmd], text)
+    case 'command': {
+      const line = serializeCommand(node, commands[node.cmd], text)
+      // A plugin command reads a trailing if= to the tag's end (engine 0.18).
+      const guard = node.condition?.trim()
+      return guard && !BUILTIN_COMMAND_MAP[node.cmd] && node.params.if === undefined ? `${line.slice(0, -1)} if=${guard}]` : line
+    }
     case 'anim':
       return serializeAnim(node)
     case 'eventframe':

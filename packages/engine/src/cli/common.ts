@@ -1,8 +1,8 @@
 // Shared by the `nilvn` subcommands: argument errors, the work folder's file
 // list, the engine script a page ships, and how paths / sizes / times print.
 
-import { existsSync } from 'node:fs'
-import { readdir } from 'node:fs/promises'
+import { existsSync, realpathSync } from 'node:fs'
+import { readdir, stat } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -47,6 +47,39 @@ export function findEngine(engine: string | undefined, from: string[]): { file: 
   return undefined
 }
 
+
+/** In a source checkout (a `src/` beside the script's `dist/`), the newest
+ *  source the engine script is older than — it was built before that edit and
+ *  a page would ship yesterday's engine. Undefined when it is current, or for
+ *  an installed package (no sources). The batteries script of `@nilvn/plugins`
+ *  carries the engine's sources too. */
+export async function staleSource(engineFile: string): Promise<string | undefined> {
+  const pkg = dirname(dirname(engineFile)), dirs = [join(pkg, 'src')]
+  // The engine beside it (its `exports` are import-only, so look it up by folder).
+  for (let dir = pkg; ; dir = dirname(dir)) {
+    const engine = join(dir, 'node_modules', '@nilvn', 'engine')
+    if (existsSync(engine)) {
+      dirs.push(join(realpathSync(engine), 'src'))
+      break
+    }
+    if (dirname(dir) === dir) break
+  }
+  const built = (await stat(engineFile)).mtimeMs
+  let newest: { file: string; ms: number } | undefined
+  const walk = async (dir: string): Promise<void> => {
+    for (const e of await readdir(dir, { withFileTypes: true })) {
+      const full = join(dir, e.name)
+      if (e.isDirectory()) {
+        if (e.name !== 'cli') await walk(full) // the command line is not in the page's script
+      } else if (/\.(ts|js|css)$/.test(e.name)) {
+        const ms = (await stat(full)).mtimeMs
+        if (ms > built && (!newest || ms > newest.ms)) newest = { file: full, ms }
+      }
+    }
+  }
+  for (const dir of new Set(dirs)) if (existsSync(dir)) await walk(dir)
+  return newest?.file
+}
 
 /** `2026-09-28 01:58`, local time. */
 export function localTime(ms: number): string {

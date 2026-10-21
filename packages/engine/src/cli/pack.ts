@@ -18,7 +18,7 @@ import * as zlib from 'node:zlib'
 import { parse as parseToml } from 'smol-toml'
 import type { AdvConfig } from '../types.js'
 import { inlinePayload, packWork, slugify, type PackProblem, type PackResult } from '../pack.js'
-import { UsageError, findEngine, kb, listFolder, localTime, shown } from './common.js'
+import { UsageError, findEngine, kb, listFolder, localTime, shown, staleSource } from './common.js'
 
 export const PACK_USAGE = `Usage: nilvn pack [config | folder] [options]
 
@@ -300,7 +300,11 @@ export async function pack(opts: PackOptions): Promise<number> {
     console.error(`error: the work uses first-party plugins (${firstParty.map((p) => p.id.slice('app.nilvn.'.length)).join(', ')}) — install @nilvn/plugins (its engine script carries them) or pass --engine <file>`)
     return 1
   }
-  const engineLine = engine ? `  engine: ${shown(engine.file)} (built ${localTime((await stat(engine.file)).mtimeMs)})` : ''
+  const stale = engine && !opts.engine ? await staleSource(engine.file) : undefined
+  const engineLine = engine
+    ? `  engine: ${shown(engine.file)} (built ${localTime((await stat(engine.file)).mtimeMs)})` +
+      (stale ? `\n  ⚠ older than its sources (${shown(stale)} changed since) — rebuild it (pnpm build in its package) or the pages ship the old engine` : '')
+    : ''
   if (opts.check) {
     console.log(`✓ ${m.title}: ${summary}${warnings ? ` — ${warnings} warning${warnings === 1 ? '' : 's'}` : ''}`)
     if (engineLine) console.log(engineLine)

@@ -55,7 +55,7 @@ export { PLUGIN_API_VERSION, PLUGIN_MANIFEST_FILE, FIRST_PARTY_ID_PREFIX, PERMIS
 export { satisfiesRange, isValidRange, parseSemVer, compareSemVer } from './semver.js'
 export { ENGINE_VERSION } from './version.js'
 export { ENGINE_CAPABILITIES } from './plugin-context.js'
-export { applyConfig, fetchConfig, windowTheme, inputTheme, choicesTheme } from './config.js'
+export { applyConfig, fetchConfig, windowTheme, inputTheme, choicesTheme, menuTheme } from './config.js'
 // The config file's schema (plain data, a JSON-Schema subset) and its checker.
 export { CONFIG_SCHEMA, checkConfig } from './config-schema.js'
 export type { ConfigSchema, ConfigProblem } from './config-schema.js'
@@ -76,8 +76,9 @@ export { tUI, setUILang, getUILang, uiLangName, CHROME_STRING_IDS } from './i18n
 // Persistence seam (saves / settings) and the built-in screens' model builders.
 export { LocalStorageSaveStore, MemorySaveStore, AUTOSAVE_KEY, QUICKSAVE_KEY, SETTINGS_KEY, READ_KEY, UNLOCKS_KEY, PLUGIN_SETTINGS_KEY, GLOBALS_KEY, slotKey, pluginStorageKey, isSlotPayload } from './save-store.js'
 export type { SaveStore, SlotPayload, SettingsPayload, GlobalsPayload } from './save-store.js'
-export { MENU_ITEMS_DEFAULT, SETTINGS_ROWS_DEFAULT, TEXT_SPEED_RANGE_DEFAULT } from './system-menu.js'
-export { KEYS_DEFAULT, KEY_ACTIONS, formatBinding, matchKey, parseBinding } from './keys.js'
+export { MENU_ITEMS_DEFAULT, MENU_PAGES, SETTINGS_ROWS_DEFAULT, TEXT_SPEED_RANGE_DEFAULT } from './system-menu.js'
+export type { MenuPage } from './system-menu.js'
+export { KEYS_DEFAULT, KEY_ACTIONS, bindingFromEvent, formatBinding, matchKey, parseBinding } from './keys.js'
 export type { KeyRow } from './keytable.js'
 export { titleModel, endingModel, screenBackground, TITLE_BUTTONS_DEFAULT } from './chrome.js'
 export type { ChromeHost } from './chrome.js'

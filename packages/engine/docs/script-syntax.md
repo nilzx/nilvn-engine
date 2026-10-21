@@ -172,7 +172,17 @@ Three more `sys.` names read what the engine is doing *(since 0.19.0)*:
 the player already answered, or a counter a replay should not bump),
 `sys.session` (`playing`, or `title` / `ending` in a panel's `if`) and `sys.lang`
 (the current language). They are read-only: a `[set]` on one is reported and
-ignored.
+ignored. So is `sys.playTime` *(since 0.20.0)*: whole seconds of play in this run
+(the time the story spent playing since New game; a save carries it and a load
+goes on from there; a panel showing it redraws every second).
+
+The player's settings read and write as `sys.` names too *(since 0.20.0)*:
+`sys.bgmVolume`, `sys.ambienceVolume`, `sys.sfxVolume`, `sys.voiceVolume` (`0..1`),
+`sys.textSpeed` (characters per second, `0` = instant) and `sys.autoDelay`
+(seconds). `[set sys.bgmVolume = 0.5]` does exactly what the settings page's
+slider does — the change applies at once and is remembered with the player's
+settings — and a value out of range is clamped (`2` → `1`). A `slider` widget
+bound to one is a volume control of your own (see [config.md](config.md#uiid)).
 
 ### Asking the player
 

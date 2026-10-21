@@ -36,6 +36,7 @@ Always available; they live in the engine itself.
 | `[include path]` | | Paste another script file in here — resolved when the file loads, before parsing (see [script-syntax.md](script-syntax.md#several-files)). |
 | `[preload ref …]` | `wait=false` | Warm assets ahead of a heavy scene; `wait=true` shows the loading page until they are in. |
 | `[ui show\|hide\|toggle id]` | | Show, hide or toggle a `[ui.<id>]` panel (see [config.md](config.md#uiid)). |
+| `[menu open page]` / `[menu close]` | | Open one of the system menu's pages — `saves`, `load`, `settings`, `backlog`, `replays` — or close the menu and whatever page is open: what a panel button's `onclick` uses for "Save" / "Settings" buttons. Runs on the title page too. Without the menu (`[menu] enabled = false`) it does nothing and reports. *(since 0.20.0)* |
 | `[choices timer= default=]` | | The next prompt's countdown (seconds; `0` = none) and 1-based default, overriding the `[choices]` config for that prompt only. |
 | `[hotspot id x= y= w= h= onclick= if=]` | | A clickable region of the stage (percent of the stage, in the world so it pans with the camera) whose click runs `onclick` (script commands, one per line). `if=` runs to the end of the tag (spaces allowed — put it last); the engine re-evaluates it whenever a variable changes, and the region is off (not drawn, no click) while it is false. *(since 0.19.0)* `[hotspot remove id]` / `[hotspot clear]`. Saved with the stage. A region whose centre the dialogue box, a panel or the HUD covers is reported as a diagnostic — see [script-syntax.md](script-syntax.md#events); a clickable `[sprite … onclick=]` is probed the same way. |
 
@@ -104,6 +105,7 @@ command and parameter they add are documented with the plugins themselves:
 | `character:<actor id>` | character | Transformable and bandable (`world` / `back` / `front`: `back` draws behind the characters, still under the camera; `front` over the dialogue box). |
 | `sprite:<id>` | sprite | Contributed by `spriteanim`; transformable and bandable. |
 | `window:dialog` | window | The dialogue box; reskinnable with `[window]`. |
+| `ui:<panel id>` | ui | A `[ui.<id>]` panel (HUD or window) *(since 0.20.0)*: transformable like the dialogue box, its pose composing over its anchor's centring; one per declared panel, shown or not. |
 
 The transform every transformable object honors: `x`, `y` (offsets, pixels or a
 percentage of the object's own box), `scale`, `rotation` (degrees), `opacity`,

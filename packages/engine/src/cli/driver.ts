@@ -26,16 +26,20 @@ const PAGE_STATE = `
   for (const d of e.diagnostics) if (!seen.has(d)) { seen.add(d); route.push(d.phase + ': ' + d.message + (d.line !== undefined ? ' (line ' + d.line + ')' : '')) }
   const vis = (el) => !!el && el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden'
   const label = (b) => { const m = b.querySelector('.nilvn-choice__mark'); return (b.textContent ?? '').replace(m ? m.textContent ?? '' : '', '').trim() }
+  const named = (b) => (b.textContent ?? '').trim() || b.getAttribute('aria-label') || ''
   const name = document.querySelector('.nilvn-name')
+  const dims = [...document.querySelectorAll('.nilvn-ui-dim')].filter(vis).map((d) => d.dataset.id)
   return {
     session: e.session,
     speaker: vis(name) ? (name.textContent ?? '').trim() : '',
     text: (e.stage.textEl.textContent ?? '').trim(),
     choices: [...document.querySelectorAll('.nilvn-choice')].filter(vis).map(label),
     input: [...document.querySelectorAll('.nilvn-modal input, .nilvn-modal textarea')].some(vis),
-    screen: [...document.querySelectorAll('.nilvn-screen-plugin')].some(vis),
+    // A plugin's full-stage screen, or a system menu page a [menu open …] button opened.
+    screen: [...document.querySelectorAll('.nilvn-screen-plugin, .nilvn-backlog.on')].some(vis),
     clickables: e.stage.clickableIds ? e.stage.clickableIds() : [],
-    panelButtons: [...document.querySelectorAll('.nilvn-ui button')].filter(vis).map((b) => (b.textContent ?? '').trim()),
+    // Under a dimmed [ui] window only that window's buttons can be pressed.
+    panelButtons: [...document.querySelectorAll('.nilvn-ui button')].filter(vis).filter((b) => !dims.length || dims.includes(b.closest('.nilvn-ui')?.dataset.id)).map(named),
     ending: e.session === 'ending' ? e.ending : undefined,
     replaying: e.isReplaying(),
     waiting: !!e.waitingForPlayer,
@@ -259,8 +263,10 @@ export class Driver implements PlaytestDriver {
     const i = await this.js<number>(`
       const bs = [...document.querySelectorAll('button')].filter((b) => b.getClientRects().length && getComputedStyle(b).visibility !== 'hidden')
       const t = ${JSON.stringify(label)}
-      const at = bs.findIndex((b) => (b.textContent ?? '').trim() === t)
-      return at >= 0 ? at : bs.findIndex((b) => (b.textContent ?? '').includes(t))`)
+      // An icon-only button (a window's close) goes by its accessible name.
+      const named = (b) => (b.textContent ?? '').trim() || b.getAttribute('aria-label') || ''
+      const at = bs.findIndex((b) => named(b) === t)
+      return at >= 0 ? at : bs.findIndex((b) => named(b).includes(t))`)
     if (i < 0) throw new RouteError(`no button ${JSON.stringify(label)}`)
     await this.clickAt('button', `the button ${JSON.stringify(label)}`, i)
   }

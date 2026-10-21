@@ -11,6 +11,7 @@
 import type { Project, JumpTarget, SceneNode, Lang } from './ir.js'
 import type { CommandSchema } from './schema.js'
 import { serializeChunk } from './serialize.js'
+import { walkNodes } from './nodes.js'
 import {
   CHUNK_MANIFEST_FORMAT,
   type ChunkManifest,
@@ -91,13 +92,13 @@ function targetSceneId(target: JumpTarget, sceneIds: Set<string>): string | unde
  *  Exported: the editor's shard partition (per-scene locale slices) claims keys
  *  with the same walker, so export slicing and persistence slicing cannot drift. */
 export function sceneTextKeys(nodes: SceneNode[], into: Set<string>): void {
-  for (const n of nodes) {
+  walkNodes(nodes, ({ node: n }) => {
     if (n.kind === 'say' || n.kind === 'narrate') {
       if (n.textKey) into.add(n.textKey)
     } else if (n.kind === 'choice') {
       for (const o of n.options) if (o.labelKey) into.add(o.labelKey)
     }
-  }
+  })
 }
 
 export function buildChunkedExport(project: Project, opts: BuildChunkedOptions): ChunkedExportPlan {
@@ -159,10 +160,10 @@ export function buildChunkedExport(project: Project, opts: BuildChunkedOptions):
     const branch = new Set<string>()
     for (const sceneId of chunk.scenes) {
       const scene = byId.get(sceneId)!
-      for (const n of scene.nodes) {
+      walkNodes(scene.nodes, ({ node: n }) => {
         if (n.kind === 'jump' || n.kind === 'call') addEdge(targetSceneId(n.target, sceneIds))
-        else if (n.kind === 'choice') for (const o of n.options) addEdge(targetSceneId(o.target, sceneIds))
-      }
+        else if (n.kind === 'choice') for (const o of n.options) if (o.target) addEdge(targetSceneId(o.target, sceneIds))
+      })
     }
     // Fall-through from the chunk's last scene to the next scene in project order.
     const lastSceneId = chunk.scenes[chunk.scenes.length - 1]!

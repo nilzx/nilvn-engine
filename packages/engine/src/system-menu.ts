@@ -10,6 +10,7 @@ import type { Engine, SaveState } from './engine.js'
 import { AUTOSAVE_KEY, QUICKSAVE_KEY, type SlotPayload } from './save-store.js'
 import type { VolumeChannel } from './types.js'
 import { bindingFromEvent } from './keys.js'
+import { icon, rangeShell, setLabel } from './chrome-dom.js'
 
 /** The text-speed slider's default range (characters per second); one notch past
  *  the top is "instant" (`textSpeed = 0`). `[settings] textSpeedRange` overrides. */
@@ -24,8 +25,38 @@ const CHANNELS: { id: string; key: VolumeChannel }[] = [
 export const MENU_ITEMS_DEFAULT: readonly string[] = ['save', 'load', 'quicksave', 'quickload', 'backlog', 'plugins', 'auto', 'skip', 'settings', 'replays', 'title', 'restart']
 /** Every settings row, in default order. */
 export const SETTINGS_ROWS_DEFAULT: readonly string[] = ['textSpeed', 'autoDelay', 'skipMode', 'volumes', 'language', 'fullscreen', 'dialogOpacity', 'uiScale', 'keys']
+/** The settings page groups consecutive rows of one kind under a heading. */
+const SETTINGS_GROUP: Record<string, string> = {
+  textSpeed: 'text',
+  autoDelay: 'text',
+  skipMode: 'text',
+  volumes: 'sound',
+  language: 'display',
+  fullscreen: 'display',
+  dialogOpacity: 'display',
+  uiScale: 'display',
+}
+/** Each menu item's icon (a `ui:<panel>` item draws `panel`, a plugin's `plugin`). */
+const ITEM_ICON: Record<string, string> = {
+  save: 'save',
+  load: 'load',
+  quicksave: 'quicksave',
+  quickload: 'quickload',
+  backlog: 'backlog',
+  auto: 'auto',
+  skip: 'skip',
+  settings: 'settings',
+  replays: 'replays',
+  title: 'title',
+  restart: 'restart',
+  replayExit: 'exit',
+}
 
 type PanelId = 'saves' | 'backlog' | 'replays' | 'settings'
+/** The pages `[menu open …]` / `engine.openMenu` open (`saves` and `load` are
+ *  the slot page in its two modes). */
+export const MENU_PAGES = ['saves', 'load', 'settings', 'backlog', 'replays'] as const
+export type MenuPage = (typeof MENU_PAGES)[number]
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, text?: string): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag)
@@ -39,6 +70,23 @@ function button(className: string, text: string, onClick: () => void): HTMLButto
   b.addEventListener('click', onClick)
   return b
 }
+/** A menu tile: its icon over its label (`setLabel` relabels it). */
+function tile(className: string, iconName: string, onClick: () => void): HTMLButtonElement {
+  const b = button(className, '', onClick)
+  b.append(icon(iconName))
+  setLabel(b, '')
+  return b
+}
+/** A button that is only an icon: its name is the tooltip and the accessible label. */
+function iconButton(className: string, iconName: string, onClick: () => void): HTMLButtonElement {
+  const b = button(className, '', onClick)
+  b.append(icon(iconName))
+  return b
+}
+function nameIcon(b: HTMLElement, name: string): void {
+  b.title = name
+  b.setAttribute('aria-label', name)
+}
 
 export class SystemMenu {
   private wrap!: HTMLElement
@@ -48,6 +96,8 @@ export class SystemMenu {
   private items = new Map<string, HTMLButtonElement>()
   private verEl: HTMLElement | null = null
   private panels = new Map<PanelId, { wrap: HTMLElement; title: HTMLElement; close: HTMLButtonElement; body: HTMLElement }>()
+  /** The class the stage root carries for where the ☰ entry sits (a HUD on that corner moves aside). */
+  private rootMark: string | null = null
   private savesMode: 'save' | 'load' = 'save'
   private savesPage = 0
   private replayStash: SaveState | null = null
@@ -72,7 +122,12 @@ export class SystemMenu {
     const pos = e.menuConfig.entry ?? 'top-right'
     this.wrap = chrome.overlay(`nilvn-menu nilvn-menu--${pos}`)
     this.wrap.addEventListener('click', (ev) => ev.stopPropagation())
-    this.btn = button('nilvn-menu__btn', '☰', () => this.toggle())
+    this.btn = iconButton('nilvn-menu__btn', 'menu', () => this.toggle())
+    this.btn.setAttribute('aria-haspopup', 'true')
+    if (pos !== 'hidden') {
+      this.rootMark = `nilvn-root--menu-${pos}`
+      e.stage.root.classList.add(this.rootMark)
+    }
     this.panel = el('div', 'nilvn-menu__panel')
     this.tip = el('div', 'nilvn-menu__tip')
     this.pluginSlot = null
@@ -92,7 +147,7 @@ export class SystemMenu {
       } else e.report({ phase: 'load', message: `[menu] unknown item "${id}" — ignored` }, true)
     }
     if (this.items.has('replays')) {
-      const exit = button('nilvn-menu__item nilvn-menu__item--exit', '', () => {
+      const exit = tile('nilvn-menu__item nilvn-menu__item--exit', ITEM_ICON.replayExit!, () => {
         this.close()
         this.exitReplay()
       })
@@ -132,6 +187,8 @@ export class SystemMenu {
     if (this.tipTimer !== undefined) clearTimeout(this.tipTimer)
     this.wrap?.remove()
     for (const p of this.panels.values()) p.wrap.remove()
+    if (this.rootMark) this.engine.stage.root.classList.remove(this.rootMark)
+    this.rootMark = null
   }
 
   /** Tear the DOM down and build it again from the engine's current config
@@ -139,6 +196,9 @@ export class SystemMenu {
    *  `[strings]`). Plugin entries added through {@link addItem} are kept. */
   remount(): void {
     const extras = [...this.extras.entries()]
+    // What is open stays open (an editor reconfiguring the work while a page is up).
+    const openPanel = [...this.panels].find(([, p]) => p.wrap.classList.contains('on'))?.[0]
+    const dropdown = this.wrap?.classList.contains('on') ?? false
     this.destroy()
     this.items.clear()
     this.panels.clear()
@@ -148,6 +208,16 @@ export class SystemMenu {
     this.mount()
     for (const [key, x] of extras) this.addItem(key, x.label, x.onSelect)
     this.syncItems()
+    this.savesPage = Math.max(0, Math.min(this.savesPage, (this.engine.savesConfig.pages ?? 10) - 1))
+    if (openPanel) {
+      this.render(openPanel)
+      this.panels.get(openPanel)!.wrap.classList.add('on')
+    } else if (dropdown && this.engine.session === 'playing') this.wrap.classList.add('on')
+  }
+
+  /** The editor's preview turned on or off: show or hide the entry now. */
+  previewChanged(): void {
+    this.onSession(this.engine.session)
   }
 
   /** Toggle auto / skip the way the menu's own items do (the keyboard bindings). */
@@ -156,7 +226,8 @@ export class SystemMenu {
     if (mode === 'auto') e.setAuto(!e.auto)
     else e.setSkip(!e.skip)
     this.syncItems()
-    this.flash(e.t(mode === 'auto' ? 'ui.menu.auto' : 'ui.menu.skip') + (mode === 'auto' ? (e.auto ? ' ✓' : ' ✕') : e.skip ? ' ✓' : ' ✕'))
+    const on = mode === 'auto' ? e.auto : e.skip
+    this.flash(`${e.t(mode === 'auto' ? 'ui.menu.auto' : 'ui.menu.skip')} · ${e.t(on ? 'ui.settings.on' : 'ui.settings.off')}`)
   }
 
   /** Quick save / load with the menu's own feedback (toast). */
@@ -195,10 +266,11 @@ export class SystemMenu {
 
   /** A plugin's menu entry (`ctx.screen.menuItem`), shown while playing; returns the remover. */
   addItem(key: string, label: () => string, onSelect: () => void): () => void {
-    const btn = button('nilvn-menu__item nilvn-menu__item--plugin', label(), () => {
+    const btn = tile('nilvn-menu__item nilvn-menu__item--plugin', 'plugin', () => {
       this.close()
       onSelect()
     })
+    setLabel(btn, label())
     btn.dataset.id = key
     // Where `[menu] items` names it, else at its `plugins` slot, else after the
     // work's own items (before the replay exit and the tip).
@@ -222,7 +294,7 @@ export class SystemMenu {
   }
 
   /** Open a full-stage panel (the title page's Load / Settings buttons use this too). */
-  open(id: 'saves' | 'load' | 'backlog' | 'replays' | 'settings'): void {
+  open(id: MenuPage): void {
     if (id === 'load' || id === 'saves') {
       this.savesMode = id === 'load' ? 'load' : 'save'
       this.openPanel('saves')
@@ -233,15 +305,17 @@ export class SystemMenu {
 
   private toggle(): void {
     const open = this.wrap.classList.toggle('on')
+    this.btn.setAttribute('aria-expanded', String(open))
     if (open) this.syncItems()
   }
   private close(): void {
     this.wrap.classList.remove('on')
+    this.btn?.setAttribute('aria-expanded', 'false')
   }
 
   private makeItem(id: string): HTMLButtonElement | null {
     const e = this.engine
-    const item = (fn: () => void): HTMLButtonElement => button('nilvn-menu__item', '', fn)
+    const item = (fn: () => void): HTMLButtonElement => tile('nilvn-menu__item', ITEM_ICON[id] ?? 'panel', fn)
     switch (id) {
       case 'save':
         return item(() => this.open('saves'))
@@ -316,7 +390,10 @@ export class SystemMenu {
   }
 
   private onSession(state: string): void {
-    const playing = state === 'playing'
+    // The editor's preview (`engine.previewMenu`) shows the entry whatever the
+    // session, and a session change closes nothing under it.
+    const preview = this.engine.menuPreviewing
+    const playing = state === 'playing' || preview
     this.wrap.style.display = playing && (this.engine.menuConfig.entry ?? 'top-right') !== 'hidden' ? '' : 'none'
     if (!playing) {
       this.close()
@@ -341,14 +418,20 @@ export class SystemMenu {
   // ---- full-stage panels ----
 
   private makePanel(id: PanelId): void {
-    const wrap = this.engine.stage.chrome.overlay(`nilvn-backlog nilvn-panel--${id}${id === 'saves' ? ' nilvn-saves' : ''}`)
+    // A page: a backdrop over the stage (`.nilvn-backlog`, the long-standing
+    // page class) holding a centred card with a header (title + close) and a
+    // scrolling body.
+    const wrap = this.engine.stage.chrome.overlay(`nilvn-backlog nilvn-page nilvn-panel--${id}${id === 'saves' ? ' nilvn-saves' : ''}`)
     wrap.addEventListener('click', (ev) => ev.stopPropagation())
-    const bar = el('div', 'nilvn-backlog__bar')
-    const title = el('span', 'nilvn-saves__title')
-    const close = button('nilvn-backlog__close', '', () => this.closePanel(id))
+    const card = el('div', 'nilvn-page__card')
+    card.setAttribute('role', 'dialog')
+    const bar = el('div', 'nilvn-backlog__bar nilvn-page__head')
+    const title = el('span', 'nilvn-saves__title nilvn-page__title')
+    const close = iconButton('nilvn-backlog__close nilvn-page__close', 'close', () => this.closePanel(id))
     bar.append(title, close)
-    const body = el('div', id === 'saves' ? 'nilvn-saves__body' : id === 'replays' ? 'nilvn-replays__grid' : 'nilvn-backlog__list')
-    wrap.append(bar, body)
+    const body = el('div', `${id === 'saves' ? 'nilvn-saves__body' : id === 'replays' ? 'nilvn-replays__grid' : 'nilvn-backlog__list'} nilvn-page__body`)
+    card.append(bar, body)
+    wrap.append(card)
     this.panels.set(id, { wrap, title, close, body })
   }
   private panelOpen(id: PanelId): boolean {
@@ -377,6 +460,7 @@ export class SystemMenu {
     const e = this.engine
     const p = this.panels.get('saves')!
     p.title.textContent = e.t(this.savesMode === 'save' ? 'ui.menu.save' : 'ui.menu.load')
+    p.wrap.classList.toggle('nilvn-saves--load', this.savesMode === 'load')
     const pages = e.savesConfig.pages ?? 10
     const perPage = e.savesConfig.slotsPerPage ?? 10
     const tabs = el('div', 'nilvn-saves__pages')
@@ -404,7 +488,7 @@ export class SystemMenu {
     for (let i = 0; i < cells.length; i++) {
       const c = cells[i]!
       const data = payloads[i]
-      const cell = el('button', 'nilvn-saves__slot' + (data ? ' has-data' : '') + (c.special ? ' nilvn-saves__slot--special' : ''))
+      const cell = el('button', 'nilvn-saves__slot' + (data ? ' has-data' : ' is-empty') + (c.special ? ' nilvn-saves__slot--special' : ''))
       cell.type = 'button'
       const no = el('span', 'nilvn-saves__no', c.label)
       const when = el('span', 'nilvn-saves__when', data ? new Date(data.savedAt).toLocaleString() : e.t('ui.saves.empty'))
@@ -415,16 +499,17 @@ export class SystemMenu {
         const thumb = el('span', 'nilvn-saves__thumb')
         thumb.style.backgroundImage = `url("${e.resolve(bgRef)}")`
         cell.prepend(thumb)
+        cell.classList.add('has-thumb')
       }
       if (data && !c.special) {
-        const del = button('nilvn-saves__del', '✕', () => {
+        const del = iconButton('nilvn-saves__del', 'trash', () => {
           void this.confirm('ui.saves.msg.delete').then(async (ok) => {
             if (!ok) return
             await e.deleteSave(c.key)
             await this.renderSaves()
           })
         })
-        del.title = e.t('ui.saves.delete')
+        nameIcon(del, e.t('ui.saves.delete'))
         del.addEventListener('click', (ev) => ev.stopPropagation())
         cell.append(del)
       }
@@ -472,8 +557,8 @@ export class SystemMenu {
       if (entry.voiceRef) {
         const ref = entry.voiceRef
         const off = entry.offset
-        const v = button('nilvn-backlog__voice', '▶', () => void e.replayVoice(ref, off))
-        v.title = e.t('ui.backlog.playVoice')
+        const v = iconButton('nilvn-backlog__voice', 'voice', () => void e.replayVoice(ref, off))
+        nameIcon(v, e.t('ui.backlog.playVoice'))
         row.append(v)
       }
       const body = el('div', 'nilvn-backlog__body')
@@ -526,7 +611,7 @@ export class SystemMenu {
       const name = this.replayTitle(r, i)
       if (!e.isUnlocked(r.id)) {
         const card = el('div', 'nilvn-replays__card nilvn-replays__card--locked')
-        card.append(el('span', 'nilvn-replays__lock', '🔒'), el('span', 'nilvn-replays__name', e.t('ui.replays.lockedShort')))
+        card.append(icon('lock', 'nilvn-replays__lock'), el('span', 'nilvn-replays__name', e.t('ui.replays.lockedShort')))
         card.title = e.t('ui.replays.locked')
         p.body.append(card)
         return
@@ -546,7 +631,9 @@ export class SystemMenu {
         pic.style.backgroundImage = `url("${thumb}")`
         card.append(pic)
       }
-      card.append(el('span', 'nilvn-replays__play', '▶'), el('span', 'nilvn-replays__name', name))
+      const play = el('span', 'nilvn-replays__play')
+      play.append(icon('play'))
+      card.append(play, el('span', 'nilvn-replays__name', name))
       card.title = name
       p.body.append(card)
     })
@@ -561,6 +648,22 @@ export class SystemMenu {
     const grid = el('div', 'nilvn-menu__grid')
     const syncs: (() => void)[] = []
     const relabels: (() => void)[] = []
+    // Rows go into sections: a run of the engine's rows of one kind (text, sound,
+    // display) under its heading, each plugin's block, the key bindings.
+    let section: HTMLElement = grid
+    let group: string | null = null
+    const open = (key: string, heading: () => string, headClass = 'nilvn-settings__head'): void => {
+      group = key
+      section = el('div', `nilvn-settings__section nilvn-settings__section--${key.replace(/[^a-z0-9-]/gi, '-')}`)
+      const head = el('div', headClass, heading())
+      relabels.push(() => (head.textContent = heading()))
+      section.append(head)
+      grid.append(section)
+    }
+    const into = (id: string): void => {
+      const g = SETTINGS_GROUP[id]
+      if (g && g !== group) open(g, () => e.t(`ui.settings.group.${g}`))
+    }
     const row = (labelId: string): { row: HTMLElement; label: HTMLElement } => {
       const r = el('div', 'nilvn-menu__row')
       const label = el('span', '', e.t(labelId))
@@ -590,10 +693,12 @@ export class SystemMenu {
       input.min = String(min)
       input.max = String(max)
       input.step = String(step)
+      const shell = rangeShell(input)
       const pct = el('span', 'nilvn-menu__pct')
       const sync = (): void => {
         input.value = String(get())
         pct.textContent = fmt(get())
+        shell.sync()
       }
       input.addEventListener('input', () => {
         set(Number(input.value))
@@ -601,10 +706,11 @@ export class SystemMenu {
       })
       syncs.push(sync)
       sync()
-      return [input, pct]
+      return [shell.wrap, pct]
     }
     let wantKeys = false
     for (const id of e.settingsConfig.show ?? SETTINGS_ROWS_DEFAULT) {
+      if (id !== 'language' || e.languages.length > 1) into(id)
       switch (id) {
         case 'textSpeed': {
           // A linear slider in characters per second; the notch past the top is instant.
@@ -624,13 +730,13 @@ export class SystemMenu {
               (v) => (v >= top ? e.t('ui.settings.speed.instant') : e.t('ui.settings.speed.cps', { n: v })),
             ),
           )
-          grid.append(r.row)
+          section.append(r.row)
           break
         }
         case 'autoDelay': {
           const r = row('ui.settings.autoDelay')
           r.row.append(...slider(0.5, 5, 0.1, () => e.autoDelay, (v) => e.setAutoDelay(v), (v) => `${v.toFixed(1)}s`))
-          grid.append(r.row)
+          section.append(r.row)
           break
         }
         case 'skipMode': {
@@ -645,14 +751,14 @@ export class SystemMenu {
               (v) => e.setSkipMode(v),
             ),
           )
-          grid.append(r.row)
+          section.append(r.row)
           break
         }
         case 'volumes':
           for (const ch of CHANNELS) {
             const r = row(ch.id)
             r.row.append(...slider(0, 100, 1, () => Math.round(e.getVolume(ch.key) * 100), (v) => e.setVolume(ch.key, v / 100), (v) => `${v}%`))
-            grid.append(r.row)
+            section.append(r.row)
           }
           break
         case 'language':
@@ -668,7 +774,7 @@ export class SystemMenu {
             syncs.push(sync)
             sync()
             r.row.append(s)
-            grid.append(r.row)
+            section.append(r.row)
           }
           break
         case 'fullscreen': {
@@ -683,19 +789,19 @@ export class SystemMenu {
               (v) => void e.setFullscreen(v),
             ),
           )
-          grid.append(r.row)
+          section.append(r.row)
           break
         }
         case 'dialogOpacity': {
           const r = row('ui.settings.dialogOpacity')
           r.row.append(...slider(20, 100, 5, () => Math.round(e.dialogOpacity * 100), (v) => e.setDialogOpacity(v / 100), (v) => `${v}%`))
-          grid.append(r.row)
+          section.append(r.row)
           break
         }
         case 'uiScale': {
           const r = row('ui.settings.uiScale')
           r.row.append(...slider(80, 150, 5, () => Math.round(e.uiScale * 100), (v) => e.setUiScale(v / 100), (v) => `${v}%`))
-          grid.append(r.row)
+          section.append(r.row)
           break
         }
         case 'keys':
@@ -707,9 +813,7 @@ export class SystemMenu {
     }
     // Plugin settings (`contributes.config` rows with scope = player), one block per plugin.
     for (const pc of e.activePluginConfigs()) {
-      const head = el('div', 'nilvn-menu__head', pc.name())
-      relabels.push(() => (head.textContent = pc.name()))
-      grid.append(head)
+      open(`plugin-${pc.id}`, () => pc.name(), 'nilvn-menu__head nilvn-settings__head')
       for (const f of pc.fields) {
         const r = el('div', 'nilvn-menu__row')
         const label = el('span', '', pc.t(f.label))
@@ -755,25 +859,23 @@ export class SystemMenu {
           sync()
           r.append(input)
         }
-        grid.append(r)
+        section.append(r)
       }
     }
     if (wantKeys) {
-      const head = el('div', 'nilvn-menu__head', e.t('ui.settings.keys'))
-      relabels.push(() => (head.textContent = e.t('ui.settings.keys')))
-      grid.append(head)
+      open('keys', () => e.t('ui.settings.keys'), 'nilvn-menu__head nilvn-settings__head')
       for (const k of e.keyTable.rows((id) => e.t(id))) {
         const r = el('div', 'nilvn-menu__row')
         r.append(el('span', '', k.label))
-        const s = el('div', 'nilvn-menu__seg')
+        const s = el('div', 'nilvn-menu__seg nilvn-menu__keys')
         const b = button('nilvn-menu__key', k.display, () => this.captureKey(k.id, b))
         s.append(b)
         r.append(s)
-        grid.append(r)
+        section.append(r)
       }
       const r = el('div', 'nilvn-menu__row')
       r.append(el('span', ''))
-      const s = el('div', 'nilvn-menu__seg')
+      const s = el('div', 'nilvn-menu__seg nilvn-menu__actions')
       s.append(
         button('', e.t('ui.keys.reset'), () => {
           e.resetKeys()
@@ -781,7 +883,7 @@ export class SystemMenu {
         }),
       )
       r.append(s)
-      grid.append(r)
+      section.append(r)
     }
     p.body.replaceChildren(grid)
     this.settingsBody = { sync: () => syncs.forEach((f) => f()), relabel: () => relabels.forEach((f) => f()) }
@@ -836,7 +938,7 @@ export class SystemMenu {
 
   private applyLang(): void {
     const e = this.engine
-    this.btn.title = e.t('ui.menu.title')
+    nameIcon(this.btn, e.t('ui.menu.title'))
     const labels: Record<string, string> = {
       save: 'ui.menu.save',
       load: 'ui.menu.load',
@@ -851,11 +953,11 @@ export class SystemMenu {
       restart: 'ui.menu.restart',
       replayExit: 'ui.menu.replayExit',
     }
-    for (const [id, b] of this.items) b.textContent = id.startsWith('ui:') ? e.ui.label(id.slice(3)) : e.t(labels[id] ?? id)
-    for (const x of this.extras.values()) x.btn.textContent = x.label()
+    for (const [id, b] of this.items) setLabel(b, id.startsWith('ui:') ? e.ui.label(id.slice(3)) : e.t(labels[id] ?? id))
+    for (const x of this.extras.values()) setLabel(x.btn, x.label())
     if (this.verEl) this.verEl.textContent = e.t('ui.menu.version', { ver: e.buildInfo ?? '' })
     for (const [id, p] of this.panels) {
-      p.close.textContent = e.t('ui.menu.close')
+      nameIcon(p.close, e.t('ui.menu.close'))
       if (p.wrap.classList.contains('on')) this.render(id)
     }
     this.settingsBody?.relabel()

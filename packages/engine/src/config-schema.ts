@@ -36,7 +36,8 @@ const table = (values: ConfigSchema): ConfigSchema => ({ type: 'object', additio
 const obj = (properties: Record<string, ConfigSchema>, additionalProperties: boolean | ConfigSchema = false): ConfigSchema => ({ type: 'object', properties, additionalProperties })
 const oneOf = (...values: readonly string[]): ConfigSchema => ({ type: 'string', enum: values })
 const skinKeys = { skin: str, slice: len, sliceWidth: len, background: str, border: str, radius: len }
-const widget = (type: string, props: Record<string, ConfigSchema>): ConfigSchema => obj({ type: oneOf(type), if: str, ...props })
+// Every widget takes `if`, and its place in a window (`x` / `y` / `w` / `h`, percent of the body).
+const widget = (type: string, props: Record<string, ConfigSchema>): ConfigSchema => obj({ type: oneOf(type), if: str, x: len, y: len, w: len, h: len, ...props })
 
 /** `nilvn.config.toml`, section by section. */
 export const CONFIG_SCHEMA: ConfigSchema = obj({
@@ -64,6 +65,7 @@ export const CONFIG_SCHEMA: ConfigSchema = obj({
   defaults: table({ type: 'object' }),
   macros: table(str),
   theme: table(len),
+  fonts: table(str),
   window: obj({
     ...skinKeys,
     opacity: num,
@@ -81,12 +83,29 @@ export const CONFIG_SCHEMA: ConfigSchema = obj({
     nameBackground: str,
     nameColor: str,
     nameSize: len,
+    nameRadius: len,
+    nameSkin: str,
+    nameSlice: len,
+    nameSliceWidth: len,
     indicatorColor: str,
   }),
   title: obj({ enabled: bool, heading: str, subtitle: str, logo: str, logoWidth: len, background: str, color: str, shadow: str, bgm: str, bgmVolume: num, buttons: strList, layout: oneOf('center', 'left', 'right', 'bottom'), version: bool }),
   ending: table(obj({ enabled: bool, heading: str, subtitle: str, background: str, color: str, shadow: str, bgm: str, bgmVolume: num, credits: { type: ['string', 'array'], items: str }, creditsDuration: num, after: oneOf('title', 'restart', 'none'), buttons: bool })),
   saves: obj({ autosave: { type: ['string', 'boolean'], enum: ['label', 'line', false] }, pages: num, slotsPerPage: num, thumbnail: oneOf('bg', 'none') }),
-  menu: obj({ enabled: bool, entry: oneOf('top-right', 'top-left', 'bottom-right', 'bottom-left', 'hidden'), items: strList, wheelBacklog: bool }),
+  menu: obj({
+    enabled: bool,
+    entry: oneOf('top-right', 'top-left', 'bottom-right', 'bottom-left', 'hidden'),
+    items: strList,
+    wheelBacklog: bool,
+    skin: str,
+    slice: len,
+    sliceWidth: len,
+    background: str,
+    color: str,
+    panelSkin: str,
+    panelSlice: len,
+    panelSliceWidth: len,
+  }),
   settings: obj({ autoDelay: num, skipMode: oneOf('read', 'all'), show: strList, textSpeedRange: { type: 'array', items: num } }),
   keys: obj(
     Object.fromEntries(['advance', 'menu', 'skipHold', 'skip', 'auto', 'quicksave', 'quickload', 'backlog', 'save', 'load', 'settings', 'fullscreen'].map((k) => [k, binding])),
@@ -125,6 +144,11 @@ export const CONFIG_SCHEMA: ConfigSchema = obj({
       title: str,
       width: len,
       height: len,
+      dir: oneOf('row', 'column'),
+      close: bool,
+      dim: bool,
+      open: oneOf('none', 'fade', 'slide', 'pop'),
+      ...skinKeys,
       widgets: {
         type: 'array',
         items: {
@@ -133,7 +157,8 @@ export const CONFIG_SCHEMA: ConfigSchema = obj({
             widget('bar', { var: str, max: len, min: len, label: str }),
             widget('image', { src: str, width: len }),
             widget('list', { var: str, empty: str }),
-            widget('button', { label: str, onclick: str }),
+            widget('button', { label: str, onclick: str, disabled: str, key: str, skin: str, slice: len, sliceWidth: len, background: str, color: str }),
+            widget('slider', { var: str, min: len, max: len, step: num, label: str, disabled: str }),
           ],
         },
       },

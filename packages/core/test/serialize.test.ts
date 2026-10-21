@@ -25,6 +25,21 @@ describe('serializeChunk', () => {
     expect(body).toContain('[voice voice/hi.webm offset=0.2]')
   })
 
+  it('[theme reset] and the 0.20 [menu] command have their positional words', () => {
+    const p = makeProject()
+    p.scenes[0]!.nodes.push(
+      { kind: 'command', id: 'th1', cmd: 'theme', params: { 'name-bg': '#000000' } },
+      { kind: 'command', id: 'th2', cmd: 'theme', params: { op: 'reset' } },
+      { kind: 'command', id: 'mn1', cmd: 'menu', params: { op: 'open', page: 'settings' } },
+      { kind: 'command', id: 'mn2', cmd: 'menu', params: { op: 'close' } },
+    )
+    const body = serializeProject(p)
+    expect(body).toContain('[theme name-bg=#000000]')
+    expect(body).toContain('[theme reset]')
+    expect(body).toContain('[menu open settings]')
+    expect(body).toContain('[menu close]')
+  })
+
   it('reports the labels it defines (scene ids)', () => {
     const { labels } = serializeChunk(makeProject())
     expect(labels).toEqual(['s1', 's2'])

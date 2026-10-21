@@ -94,6 +94,9 @@ export const BUILTIN_OBJECT_KINDS: ObjectKindSchema[] = [
   // UI windows — today the built-in `window:dialog` singleton (the dialogue box);
   // the future ui-kit plugin contributes more instances through the same kind path.
   { id: 'window', label: 'objectKind.window', transformable: true, icon: '🪟' },
+  // The work's declarative panels (`[ui.<id>]` → `ui:<id>`): HUDs and windows,
+  // recordable like the dialogue box (engine 0.20).
+  { id: 'ui', label: 'objectKind.ui', transformable: true, icon: '🧩' },
 ]
 
 /** A retargetable effect a plugin contributes, bound to kinds via `appliesToKinds`

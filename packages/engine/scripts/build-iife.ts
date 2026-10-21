@@ -63,4 +63,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const dest = process.argv[2]
   if (!dest) throw new Error('usage: build-iife.ts <dest>')
   await writeEngineIife(dest)
+  // An explicit build marks the script current even when its bytes did not
+  // change: `nilvn pack` warns when the script is older than the sources.
+  const now = new Date()
+  await fs.utimes(dest, now, now)
 }

@@ -157,6 +157,10 @@ export const BUILTIN_KINDS: ObjectKind[] = [
   // NOT under the camera — but records / animates exactly like any world object;
   // its skin is a kind-prop driven by the built-in `[window]` command, not a channel.
   { id: 'window', label: 'objectKind.window', transformable: true, recordable: [...FULL_TRANSFORM_CHANNELS] },
+  // The declarative panels (`[ui.<id>]` → `ui:<id>`, 0.20): screen-space like the
+  // dialogue box, posed over the translate their anchor centres them with. Their
+  // show / hide stays `[ui show|hide]`; `visible` here is the recorded pose.
+  { id: 'ui', label: 'objectKind.ui', transformable: true, recordable: [...FULL_TRANSFORM_CHANNELS] },
 ]
 
 /** A scoped handle over the renderer's generic object surface, bound to one

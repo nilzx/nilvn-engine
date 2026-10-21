@@ -138,6 +138,22 @@ describe('DSL wire: serializeChunk → parseScript', () => {
     expect(parseScript(serializeProject(p, { keepKeys: true })).diagnostics).toEqual([])
   })
 
+  it('[theme reset] round-trips: the IR op param serializes to the word the engine reads back', async () => {
+    const p = makeProject()
+    p.scenes[0]!.nodes.push({ kind: 'command', id: 'th1', cmd: 'theme', params: { 'name-bg': '#000000' } }, { kind: 'command', id: 'th2', cmd: 'theme', params: { op: 'reset' } })
+    const body = serializeChunk(p, { scenes: ['s1'], keepKeys: true, crossChunk: true }).body
+    const themes = parseScript(body).nodes.filter((n) => n.type === 'command' && n.name === 'theme') as { args: string[]; params: Record<string, string> }[]
+    expect(themes.map((t) => [t.args, t.params])).toEqual([
+      [[], { 'name-bg': '#000000' }],
+      [['reset'], {}],
+    ])
+    const e = createEngine({ container: document.createElement('div') })
+    e.loadSource('[theme name-bg=#000000]\n[theme reset]\n')
+    await e.start()
+    expect(e.theme['name-bg']).toBeUndefined()
+    e.destroy()
+  })
+
   it('carries asset refs through to command params', () => {
     const chunk = serializeChunk(makeProject(), { scenes: ['s1'], keepKeys: true, crossChunk: true })
     const bg = parseScript(chunk.body).nodes.find((n) => n.type === 'command' && n.name === 'bg')

@@ -28,7 +28,7 @@ branches; when the story parks on a line that waits for a click (a map hub of
 `[hotspot]`s, a clickable `[sprite]`, a `[ui]` button) it clicks the object
 clicked least so far; an `[input]` box gets what it will take — the author's
 default or placeholder, a number in range for a number field, `test` otherwise —
-or is cancelled. A plugin's full-stage screen is closed with Escape. A run fails
+or is cancelled. A plugin's full-stage screen — or a system menu page a `[menu open …]` button opened *(since 0.20.0)* — is closed with Escape; under a dimmed `[ui]` window only that window's buttons count as clickable. A story that goes back to the title page itself (`[title]` after a "not tonight" option) ends the run *(since 0.20.0)*. A run fails
 when it stalls — Space changes nothing and there is nothing to click — when it
 keeps coming back to the same stop, or when the engine reports anything.
 
@@ -43,6 +43,10 @@ playtest: public · explore ×3
 
 `--explore 10` sets the number of runs (default 3); with routes, `--explore`
 adds explore runs after them.
+
+Packing a work prints the engine script it ships and when it was built; in a
+source checkout it also warns when that script is older than the engine's or
+the plugins' sources *(since 0.20.0)*.
 
 ## Routes
 
@@ -81,7 +85,7 @@ export default definePlaytest({
 | Call | |
 |---|---|
 | `newGame()` | Wait for the title page and click its first button. |
-| `advance({ until?, max? })` | Press Space until something needs the player and return why (`stop`: `choices`, `input`, `screen` — a plugin screen, `parked` — the same line keeps coming back, each time waiting for the player, and something is clickable, `text` — a line containing `until`, `ending`, `title`, `max` — `max` presses in a row changed nothing, default 40), with the lines shown on the way and the `state`. |
+| `advance({ until?, max? })` | Press Space until something needs the player and return why (`stop`: `choices`, `input`, `screen` — a plugin screen or a system menu page *(the latter since 0.20.0)*, `parked` — the same line keeps coming back, each time waiting for the player, and something is clickable, `text` — a line containing `until`, `ending`, `title`, `max` — `max` presses in a row changed nothing, default 40), with the lines shown on the way and the `state`. |
 | `choose(labelOrIndex)` | Click an option: the one whose label equals the text, else the first that contains it; or its 0-based index. |
 | `click(idOrSelector)` | Click a stage object by id (`h_pier`, `sprite:glint`) or any element by CSS selector, at its centre. Fails when something else is on top there — what a player would hit. |
 | `button(label)` | Click a visible button by its label: a `[ui]` panel's, a plugin screen's, a dialog's. |

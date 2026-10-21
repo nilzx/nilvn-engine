@@ -83,7 +83,9 @@ describe('the title and ending pages', () => {
     expect(rule).toContain('.nilvn-screen__button--primary:focus-visible')
     expect(rule).toContain('background:var(--nilvn-button-on-bg)')
     // it follows the generic hover rule, so it wins at equal specificity
-    expect(css.indexOf(rule!)).toBeGreaterThan(css.indexOf('.nilvn-screen__button:hover,.nilvn-screen__button:focus-visible'))
+    const generic = css.indexOf('.nilvn-screen__button:hover:not(:disabled),.nilvn-screen__button:focus-visible')
+    expect(generic).toBeGreaterThan(-1)
+    expect(css.indexOf(rule!)).toBeGreaterThan(generic)
   })
 
   it('a page sets its heading shadow ([ending.<id>] shadow), over the screen-heading-shadow token', async () => {
@@ -243,7 +245,10 @@ xi: After.
     await until(() => e.isUnlocked('r1'))
     e.openMenu('replays')
     const cards = [...e.stage.root.querySelectorAll<HTMLElement>('.nilvn-replays__grid .nilvn-replays__card')]
-    expect(cards.map((c) => c.textContent)).toEqual(['▶Dawn', '🔒Locked'])
+    expect(cards.map((c) => c.textContent)).toEqual(['Dawn', 'Locked'])
+    // line icons, not glyphs: a play badge on the unlocked card, a lock on the locked one
+    expect(cards[0]!.querySelector('.nilvn-replays__play svg.nilvn-icon--play')).not.toBeNull()
+    expect(cards[1]!.querySelector('svg.nilvn-icon--lock')).not.toBeNull()
     expect(cards[0]!.querySelector<HTMLElement>('.nilvn-replays__thumb')!.style.backgroundImage).toBe('url("http://g.test/sea.png")')
     expect(cards[1]!.classList.contains('nilvn-replays__card--locked')).toBe(true)
     e.destroy()

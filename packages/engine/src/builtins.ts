@@ -2,6 +2,7 @@ import { evalExpr, truthy } from './expr.js'
 import { splitCondition } from './parser.js'
 import type { BuiltinContext, CommandContext } from './types.js'
 import type { SceneTransitionOpts, TransitionKind } from './renderer/types.js'
+import { MENU_PAGES, type MenuPage } from './system-menu.js'
 
 /** A built-in command: engine code, so it runs with the engine in hand. */
 export type BuiltinFn = (ctx: BuiltinContext) => void | Promise<void>
@@ -198,6 +199,19 @@ export const builtins: Record<string, BuiltinFn> = {
     const id = ctx.str(1)
     if (!id || (op !== 'show' && op !== 'hide' && op !== 'toggle')) throw new Error('[ui] syntax: [ui show|hide|toggle <panel id>]')
     ctx.engine.ui[op](id)
+  },
+
+  // [menu open saves|load|settings|backlog|replays] / [menu close] — the system
+  // menu's pages from a script or a panel button's onclick (also on the title page).
+  menu(ctx) {
+    const op = ctx.str(0)
+    const page = ctx.str(1)
+    if (op === 'close') {
+      if (!ctx.engine.closeMenu()) throw new Error('the system menu is off ([menu] enabled = false, or the host turned it off) — nothing to close')
+      return
+    }
+    if (op !== 'open' || !(MENU_PAGES as readonly string[]).includes(page ?? '')) throw new Error(`[menu] syntax: [menu open ${MENU_PAGES.join('|')}] / [menu close]`)
+    if (!ctx.engine.openMenu(page as MenuPage)) throw new Error(`the system menu is off ([menu] enabled = false, or the host turned it off) — [menu open ${page}] does nothing`)
   },
 
   // [choices timer=8 default=2] — the next prompt's timer (seconds, 0 = none) and

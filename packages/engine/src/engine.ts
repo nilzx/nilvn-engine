@@ -1,22 +1,27 @@
 import { builtins } from './builtins.js'
-import { applyConfig, fetchConfig, mergeDefaults, packageConfig } from './config.js'
+import { FontSet } from './fonts.js'
+import { applyConfig, applyPresentation, fetchConfig, mergeDefaults, packageConfig, PRESENTATION_SECTIONS, reportConfigProblems } from './config.js'
 import { isThemeToken, THEME_TOKEN_RE } from './theme.js'
 import { tUI, uiLangName } from './i18n.js'
 import { AUTOSAVE_KEY, QUICKSAVE_KEY, READ_KEY, SETTINGS_KEY, UNLOCKS_KEY, REPLAYS_KEY, PLUGIN_SETTINGS_KEY, GLOBALS_KEY, LocalStorageSaveStore, isSlotPayload, slotKey, type SaveStore, type SlotPayload, type SettingsPayload, type GlobalsPayload } from './save-store.js'
 import type { ConfigFieldSchema } from '@nilvn/core'
 import type { ScreenButton } from './renderer/types.js'
 import { endingModel, titleModel, type ChromeHost } from './chrome.js'
-import { SystemMenu } from './system-menu.js'
+import { icon } from './chrome-dom.js'
+import { SystemMenu, type MenuPage } from './system-menu.js'
 import type { TitleConfig, EndingConfig, MenuConfig, SavesConfig, SettingsConfig, SettingKey, KeysConfig, KeyAction, KeyBinding, InputConfig, ChoicesConfig, PreloadConfig } from './types.js'
 import { interpolateSegments, interpolateText, displayValue, type InterpolateHost } from './text.js'
 import { buildFileManifest, expandIncludes, FileScriptLoader, scriptId, type ScriptFile } from './scripts.js'
 import { isImageUrl, scanAssetRefs } from './preload.js'
 import { UiPanels } from './ui.js'
 import { screenBackground } from './chrome.js'
-import { isEditableTarget } from './keys.js'
+import { isEditableTarget, KEY_ACTIONS } from './keys.js'
 import { KeyTable } from './keytable.js'
 import { FIRST_PARTY_ID_PREFIX } from './plugin-manifest.js'
 import type { SessionState, VolumeChannel } from './types.js'
+
+/** How long the title page / a start waits for the work's fonts (then draws in the fallback). */
+const FONT_WAIT_MS = 1500
 
 /** Actor keys the engine owns (never moved into a plugin's `ext`). */
 const STANDARD_ACTOR_KEYS = new Set(['name', 'nameKey', 'color', 'textColor', 'sprites', 'defaultFace', 'canvas', 'layers', 'ext'])
@@ -55,6 +60,12 @@ export const VOLUME_FIELD: Record<VolumeChannel, 'bgmVolume' | 'ambienceVolume' 
   se: 'seVolume',
   voice: 'voiceVolume',
 }
+/** The player settings a script reads and writes as `sys.*` variables (0.20),
+ *  each written the way the settings page writes it. */
+const SETTING_VARS = new Set(['sys.bgmVolume', 'sys.ambienceVolume', 'sys.sfxVolume', 'sys.voiceVolume', 'sys.textSpeed', 'sys.autoDelay'])
+const SETTING_VOLUME: Record<string, VolumeChannel> = { 'sys.bgmVolume': 'bgm', 'sys.ambienceVolume': 'ambience', 'sys.sfxVolume': 'se', 'sys.voiceVolume': 'voice' }
+/** What the engine reports through `sys.*` and a script cannot write. */
+const READONLY_VARS = new Set(['sys.replaying', 'sys.session', 'sys.lang', 'sys.playTime'])
 import { evalExpr, truthy } from './expr.js'
 import { parseScript, parseSegments, parseTag, splitCondition } from './parser.js'
 import { animate, DomRenderer, preloadImage } from './stage.js'
@@ -143,6 +154,9 @@ export interface SaveState {
   calls?: SaveAddress[]
   /** `[ui show|hide]` decisions on the declarative panels. Absent = none. */
   ui?: Record<string, boolean>
+  /** Seconds of play in the run so far (`sys.playTime`), restored on load.
+   *  Absent in pre-0.20 saves (the run then counts from 0). */
+  playTime?: number
   /** Per-plugin state slices, keyed by plugin id (EnginePlugin.saveState /
    *  restoreState; pre-batch-B saves used the bundled short names, which still
    *  resolve). A slice whose plugin is not active at load time is carried through
@@ -164,7 +178,7 @@ export interface SaveState {
  */
 /** Commands a click may run while no story is running (a title-page panel's
  *  button): they touch panels and variables, never the playhead. */
-const IDLE_INLINE_COMMANDS = new Set(['ui', 'set'])
+const IDLE_INLINE_COMMANDS = new Set(['ui', 'set', 'menu'])
 
 export class Engine {
   // Concrete DOM renderer: the engine constructs it and drives its dialogue layer
@@ -207,6 +221,8 @@ export class Engine {
   private pendingTrans: { kind: TransitionKind; opts: SceneTransitionOpts } | null = null
   /** The declarative panels (`[ui.<id>]`). */
   readonly ui: UiPanels = new UiPanels(this)
+  /** `[fonts]`: the work's font files, registered with the document. @internal */
+  readonly fonts = new FontSet((message) => this.report({ phase: 'load', message }, true))
   /** `prepare()` warmed the preload set for the loaded content. */
   private warmed = false
   /** Dismisses a pending `[input]` box (a load / restart during the prompt). */
@@ -271,6 +287,12 @@ export class Engine {
   ambienceVolume = 1
   seVolume = 1
   voiceVolume = 1
+  /** `createEngine({ audio: false })`: nothing ever sounds (see `EngineOptions.audio`). */
+  readonly audioEnabled: boolean
+  /** Play time of the run: seconds banked, and when the current stretch of
+   *  `playing` began (null outside `playing`). */
+  private playBase = 0
+  private playSince: number | null = null
 
   /** The classic BGM slot's track name. */
   static readonly MUSIC_TRACK = AudioBus.MUSIC_TRACK
@@ -443,10 +465,17 @@ export class Engine {
     const idle = !this.menu?.isOpen()
     const playing = idle && this.running && this.session === 'playing' && !this.pluginScreen
     if (this.keyTable.dispatch(e, { playing, idle }, (owner, err) => this.report({ phase: 'plugin', plugin: owner, message: `key handler failed: ${errMsg(err)}`, error: err }))) return
+    // A panel button's own key (`[ui.<id>]` button `key`): only while nothing
+    // else holds the keyboard, and never over an engine binding (reported at load).
+    if (idle && !KEY_ACTIONS.some(hit) && this.panelKeysFree() && this.ui.pressKey(e)) {
+      e.preventDefault()
+      return
+    }
     if (!this.running || this.menu?.isOpen()) return
     if (hit('advance')) {
       e.preventDefault()
-      this.tap()
+      // A dimmed panel window holds the story (its backdrop takes the clicks).
+      if (!this.ui.modalShown()) this.tap()
       return
     }
     // The rest are the system menu's actions: bound only while the menu exists
@@ -506,9 +535,11 @@ export class Engine {
     Object.assign(this.assets, opts.assets)
     mergeDefaults(this.defaults, opts.defaults)
 
+    this.audioEnabled = opts.audio !== false
     this.audio = new AudioBus({
       volumes: () => ({ bgm: this.bgmVolume, ambience: this.ambienceVolume, se: this.seVolume, voice: this.voiceVolume }),
       running: () => this.running,
+      silent: !this.audioEnabled,
     })
     this.residency = new ChunkResidency({
       nodes: () => this.nodes,
@@ -553,6 +584,18 @@ export class Engine {
       if (opts.settings.skipMode) this._skipMode = opts.settings.skipMode
     }
     if (opts.keys) Object.assign(this.keysConfig, opts.keys)
+    // What `reconfigure` returns to before applying a work's config.
+    this.initial = {
+      theme: { ...this.themeBase },
+      title: structuredClone(this.titleConfig),
+      endings: structuredClone(this.endingConfig),
+      saves: structuredClone(this.savesConfig),
+      menu: structuredClone(this.menuConfig),
+      settings: structuredClone(this.settingsConfig),
+      messages: structuredClone(this.messages),
+      autoDelay: this._autoDelay,
+      skipMode: this._skipMode,
+    }
     this.onSegmentSeen((id) => {
       const scene = this.pendingScenes.get(id)
       if (scene) {
@@ -614,6 +657,76 @@ export class Engine {
     const abs = this.resolve(url)
     this.baseUrl = abs.slice(0, abs.lastIndexOf('/') + 1)
     applyConfig(this, await fetchConfig(abs))
+  }
+
+  /** The presentation config the engine was constructed with (`theme`, `title`,
+   *  `endings`, `saves`, `menu`, `settings`, `messages` options). */
+  private readonly initial: {
+    theme: Record<string, string>
+    title: TitleConfig
+    endings: Record<string, EndingConfig>
+    saves: SavesConfig
+    menu: MenuConfig
+    settings: SettingsConfig
+    messages: Record<string, Record<string, string>>
+    autoDelay: number
+    skipMode: 'read' | 'all'
+  }
+
+  /** Re-apply the presentation sections of a work's config on a live engine —
+   *  `theme`, `window`, `choices`, `input`, `title`, `ending`, `saves` (not
+   *  `autosave`), `menu`, `settings`, `ui`, `strings` — as an editor does on every
+   *  change. Those first go back to what the engine was constructed with, so a
+   *  key the new config no longer has falls back to its default: the base theme
+   *  layer is rebuilt (the construction `theme` + the new config + the player's
+   *  opacity / scale settings; the script's `[theme …]` layer is left alone).
+   *  `game`, `actors`, `plugins`, `path`, `macros`, `defaults`, `keys` and
+   *  `persist` are not touched. What is on screen follows in place: an open
+   *  title or ending page repaints (its music carries on), the system menu is
+   *  rebuilt with its open page still open, the panels are redefined keeping
+   *  their show / hide decisions and poses. Unknown keys report as `applyConfig`
+   *  reports them. */
+  reconfigure(cfg: AdvConfig): void {
+    if (this.destroyed) return
+    const init = this.initial
+    const prev = this.config
+    const pick: AdvConfig = {}
+    for (const k of PRESENTATION_SECTIONS) if (cfg[k] !== undefined) (pick as Record<string, unknown>)[k] = cfg[k]
+    reportConfigProblems(this, pick)
+    const reset = <T extends object>(target: T, from: T): void => {
+      for (const k of Object.keys(target)) delete (target as Record<string, unknown>)[k]
+      Object.assign(target, structuredClone(from))
+    }
+    this.themeBase = { ...init.theme }
+    if (this._dialogOpacity !== 1) this.themeBase['dialog-opacity'] = String(this._dialogOpacity)
+    if (this._uiScale !== 1) this.themeBase['ui-scale'] = String(this._uiScale)
+    reset(this.titleConfig, init.title)
+    reset(this.endingConfig, init.endings)
+    reset(this.savesConfig, init.saves)
+    reset(this.menuConfig, init.menu)
+    reset(this.settingsConfig, init.settings)
+    reset(this.messages, init.messages)
+    reset(this.inputConfig, {})
+    reset(this.choicesConfig, {})
+    this.stage.setOverflow('grow')
+    this.stage.setChoicesLayout({})
+    // A player-setting default the config no longer sets goes back to the host's.
+    if (prev.settings?.autoDelay !== undefined && pick.settings?.autoDelay === undefined) this.setAutoDelay(init.autoDelay, false)
+    if (prev.settings?.skipMode !== undefined && pick.settings?.skipMode === undefined) this.setSkipMode(init.skipMode, false)
+    const next: AdvConfig = { ...prev }
+    for (const k of PRESENTATION_SECTIONS) delete next[k]
+    this.config = { ...next, ...pick }
+    applyPresentation(this, { ...pick, ui: pick.ui ?? {}, fonts: pick.fonts ?? {} })
+    this.stage.setThemeBase(this.themeBase)
+    this.fireTheme()
+    this.refreshMenu()
+    // An open title page repaints in place; its music carries on (the same file
+    // only moves its volume), or stops when the new config has none.
+    if (this.stage.chrome.currentScreen() === 'title' && this._session === 'title') {
+      if (this.titleConfig.enabled === false || !this.screensOn.title) this.stage.chrome.hideScreen('title')
+      if (!this.titleConfig.bgm || this.titleConfig.enabled === false) this.audio.stopTrack('bgm', 0.4)
+    }
+    void this.repaintScreen()
   }
 
   /** Load content — the one entry. A
@@ -885,6 +998,7 @@ export class Engine {
     this.loops.cancelLoops()
     this.vars = {}
     this.ui.reset() // the interrupted run's [ui show] / [ui hide] decisions come back with it
+    this.resetPlayTime()
     this.skipTyping = true
     this.unblock()
     this.audio.stopAllTracks(0)
@@ -1515,6 +1629,11 @@ export class Engine {
     const prev = this._session
     if (state === prev && !entry) return
     this._session = state
+    if (state === 'playing' && this.playSince === null) this.playSince = Date.now()
+    else if (state !== 'playing' && this.playSince !== null) {
+      this.playBase += (Date.now() - this.playSince) / 1000
+      this.playSince = null
+    }
     if (state !== 'ending') this._ending = undefined
     // A new run: what is clickable now (a load's restored objects) had its chance.
     if (entry) this.clickableAtLine = new Set(this.stage.clickableIds())
@@ -1632,6 +1751,7 @@ export class Engine {
     this.callStack = []
     this.pendingTrans = null
     this.ui.reset()
+    this.resetPlayTime()
     this.unclaimedExt = {}
     this.unclaimedExtVersion = {}
     this.leaveReplay()
@@ -1642,6 +1762,10 @@ export class Engine {
     this.fireTheme()
     this.stage.chrome.hideScreen()
     this.setSession('title')
+    // The work's own fonts get a moment to land before the first page draws in them.
+    const fonts = this.fonts.ready(FONT_WAIT_MS)
+    if (fonts) await fonts
+    if (this.destroyed) return
     await this.showTitleScreen()
   }
 
@@ -1891,6 +2015,9 @@ export class Engine {
 
   private settingChanged(key: SettingKey, value: number | string): void {
     this.fire('onSettingsChange', key, value)
+    // `sys.textSpeed` / `sys.*Volume` / `sys.autoDelay` read these: a panel's
+    // slider follows the settings page, and the other way round.
+    this.ui.refresh()
     if (this.loadingSettings) return
     this.settingsDirty = true
     this.schedulePersist()
@@ -2184,24 +2311,31 @@ export class Engine {
   openPluginScreen(pluginId: string, id: string, title: string, render: (body: HTMLElement, close: () => void) => void): Promise<void> {
     this.closePluginScreen()
     this.menu?.closeAll()
-    const wrap = this.stage.chrome.overlay('nilvn-backlog nilvn-screen-plugin on')
+    // The system pages' shell: a backdrop holding a card with a header and a body.
+    const wrap = this.stage.chrome.overlay('nilvn-backlog nilvn-page nilvn-screen-plugin on')
     wrap.dataset.plugin = pluginId
     wrap.dataset.id = id
     wrap.addEventListener('click', (ev) => ev.stopPropagation())
+    const card = document.createElement('div')
+    card.className = 'nilvn-page__card'
+    card.setAttribute('role', 'dialog')
     const bar = document.createElement('div')
-    bar.className = 'nilvn-backlog__bar'
+    bar.className = 'nilvn-backlog__bar nilvn-page__head'
     const t = document.createElement('span')
-    t.className = 'nilvn-saves__title'
+    t.className = 'nilvn-saves__title nilvn-page__title'
     t.textContent = title
     const close = document.createElement('button')
     close.type = 'button'
-    close.className = 'nilvn-backlog__close'
-    close.textContent = this.t('ui.menu.close')
+    close.className = 'nilvn-backlog__close nilvn-page__close'
+    close.title = this.t('ui.menu.close')
+    close.setAttribute('aria-label', close.title)
+    close.append(icon('close'))
     close.addEventListener('click', () => this.closePluginScreen())
     bar.append(t, close)
     const body = document.createElement('div')
-    body.className = 'nilvn-backlog__list'
-    wrap.append(bar, body)
+    body.className = 'nilvn-backlog__list nilvn-page__body'
+    card.append(bar, body)
+    wrap.append(card)
     let closed!: () => void
     const done = new Promise<void>((resolve) => (closed = resolve))
     this.pluginScreen = { id: `${pluginId}:${id}`, el: wrap, closed }
@@ -2279,9 +2413,50 @@ export class Engine {
   quickLoad(): Promise<boolean> {
     return this.loadSave(QUICKSAVE_KEY)
   }
-  /** Open one of the system menu's panels (`saves` / `load` / `backlog` / `replays` / `settings`). No-op without the menu. */
-  openMenu(panel: 'saves' | 'load' | 'backlog' | 'replays' | 'settings'): void {
-    this.menu?.open(panel)
+  /** Open one of the system menu's pages (`saves` / `load` / `backlog` /
+   *  `replays` / `settings`), as `[menu open …]` does. False (nothing opens)
+   *  without the menu (`[menu] enabled = false`, `screens.menu = false`). */
+  openMenu(panel: MenuPage): boolean {
+    if (!this.menu) return false
+    this.menu.open(panel)
+    return true
+  }
+  /** Close the system menu and whichever of its pages is open (`[menu close]`).
+   *  False without the menu. */
+  closeMenu(): boolean {
+    if (!this.menu) return false
+    this.menu.closeAll()
+    return true
+  }
+  private _menuPreview = false
+  /** The editor's preview of the menu: while on, the ☰ entry shows (unless
+   *  `[menu] entry = "hidden"`) whatever the session — an idle editor stage
+   *  included — and a session change closes none of its pages. Survives
+   *  `reconfigure()` / `refreshMenu()`. `openMenu` works on an idle engine
+   *  either way (a page opened for display). */
+  previewMenu(on: boolean): void {
+    if (this._menuPreview === on) return
+    this._menuPreview = on
+    this.menu?.previewChanged()
+  }
+  /** Whether `previewMenu(true)` is in effect. */
+  get menuPreviewing(): boolean {
+    return this._menuPreview
+  }
+  /** Whether the system menu exists (`[menu] enabled` and `screens.menu`). */
+  get hasMenu(): boolean {
+    return !!this.menu
+  }
+  /** Something of the game's own chrome holds Esc right now: the menu or one of
+   *  its pages, a plugin screen, an input box or a confirm box (a host that
+   *  binds Esc itself — the editor's play mode — leaves those to the game). */
+  get overlayOpen(): boolean {
+    return !!this.menu?.isOpen() || !!this.pluginScreen || !!this.promptCancel || !!this.stage.root.querySelector('.nilvn-modal')
+  }
+  /** Nothing holds the keyboard that a panel button's key would steal it from:
+   *  no input box, choices prompt, confirm box or plugin screen is up. */
+  private panelKeysFree(): boolean {
+    return !this.promptCancel && !this.choiceResolve && !this.pluginScreen && !this.stage.root.querySelector('.nilvn-modal')
   }
   /** Rebuild the system menu from the current `[menu]` / `[settings]` /
    *  `[strings]` (applyConfig calls this after a `loadConfig`): items, entry
@@ -2328,6 +2503,11 @@ export class Engine {
    *  begins; see `prepare()` / `ready` for that. */
   async start(label?: string): Promise<void> {
     if (!(await this.prepare(label))) return
+    const fonts = this.fonts.ready(FONT_WAIT_MS)
+    if (fonts) {
+      await fonts
+      if (this.destroyed) return
+    }
     // A title / ending page's music does not bleed into the story.
     if (this._session === 'title' || this._session === 'ending') this.audio.stopAllTracks(0.4)
     let startPos = 0
@@ -2346,6 +2526,7 @@ export class Engine {
     this.resetBacklog() // a fresh session starts with an empty backlog
     this.callStack = []
     this.ui.reset()
+    this.resetPlayTime()
     await this.runLoop(startPos)
   }
 
@@ -2543,6 +2724,7 @@ export class Engine {
       vars: structuredClone(this.vars),
       calls: this.callStack.length ? this.callStack.map((a) => ({ ...a })) : undefined,
       ui: this.ui.state(),
+      playTime: Math.round(this.playSeconds() * 100) / 100,
       stage: this.stage.snapshot(),
       textSpeed: this.textSpeed,
       lang: this.lang,
@@ -2613,6 +2795,7 @@ export class Engine {
     else this.leaveReplay()
     this.resetBacklog() // the backlog isn't persisted — a load starts a fresh backlog
     this.vars = structuredClone(state.vars)
+    this.resetPlayTime(typeof state.playTime === 'number' ? state.playTime : 0)
     this.ui.restore(state.ui)
     this.pendingTrans = null
     this.callStack = Array.isArray(state.calls) ? state.calls.filter((a) => a && typeof a.label === 'string' && typeof a.offset === 'number').map((a) => ({ label: a.label, offset: a.offset })) : []
@@ -2707,6 +2890,7 @@ export class Engine {
     this.callStack = []
     this.pendingTrans = null
     this.ui.reset()
+    this.resetPlayTime()
     this.skipTyping = true
     this.unblock()
     this.audio.stopAllTracks(0)
@@ -2895,6 +3079,7 @@ export class Engine {
    *  `onVarChange`. */
   setVar(name: string, value: unknown): void {
     name = this.canonicalVar(name)
+    if (this.writeSetting(name, value)) return
     if (this.readonlyVar(name)) return
     if (this.isPersistent(name)) {
       this.setGlobal(name, value)
@@ -2992,6 +3177,7 @@ export class Engine {
    *  store write; plugins hear `onVarChange`. */
   setGlobal(name: string, value: unknown): void {
     name = this.canonicalVar(name)
+    if (this.writeSetting(name, value)) return
     if (this.readonlyVar(name)) return
     this.persistNames.add(name)
     this.globals[name] = value
@@ -3019,14 +3205,62 @@ export class Engine {
 
   /** What the engine is doing, readable from a script like a variable:
    *  `sys.replaying` (a replay is playing), `sys.session` (`title` / `playing` /
-   *  `ending` …) and `sys.lang` (the current language). Read-only. */
+   *  `ending` …), `sys.lang` (the current language) and `sys.playTime` (whole
+   *  seconds of play in this run) — read-only — and the player's settings
+   *  `sys.bgmVolume` / `sys.ambienceVolume` / `sys.sfxVolume` / `sys.voiceVolume`
+   *  (0..1), `sys.textSpeed` (characters per second, 0 = instant) and
+   *  `sys.autoDelay` (seconds), which `[set]` writes as the settings page does. */
   private stateVars(): Record<string, unknown> {
-    return { 'sys.replaying': this.replay.segment !== null, 'sys.session': this._session, 'sys.lang': this.lang }
+    return {
+      'sys.replaying': this.replay.segment !== null,
+      'sys.session': this._session,
+      'sys.lang': this.lang,
+      'sys.playTime': this.playTime,
+      'sys.bgmVolume': this.bgmVolume,
+      'sys.ambienceVolume': this.ambienceVolume,
+      'sys.sfxVolume': this.seVolume,
+      'sys.voiceVolume': this.voiceVolume,
+      'sys.textSpeed': this._textSpeed,
+      'sys.autoDelay': this._autoDelay,
+    }
+  }
+
+  /** Whole seconds of play in this run (`sys.playTime`): the time the session
+   *  spent `playing` since the run began — a load carries on from the save's. */
+  get playTime(): number {
+    return Math.floor(this.playSeconds())
+  }
+  private playSeconds(): number {
+    return this.playBase + (this.playSince !== null ? (Date.now() - this.playSince) / 1000 : 0)
+  }
+  /** A run begins (start / restart / title / a clean replay) or resumes from a save. */
+  private resetPlayTime(seconds = 0): void {
+    this.playBase = Number.isFinite(seconds) && seconds > 0 ? seconds : 0
+    this.playSince = this._session === 'playing' ? Date.now() : null
+  }
+
+  /** A write to a `sys.*` player setting: applied (clamped to its range) and
+   *  persisted exactly as the settings page does. True when `name` is one. */
+  private writeSetting(name: string, value: unknown): boolean {
+    if (!SETTING_VARS.has(name)) return false
+    const n = typeof value === 'number' ? value : typeof value === 'string' && value.trim() !== '' ? Number(value) : typeof value === 'boolean' ? Number(value) : NaN
+    if (!Number.isFinite(n)) {
+      this.report({ phase: 'exec', message: `${name} takes a number — ${JSON.stringify(value) ?? String(value)} ignored`, line: this.current?.line, node: this.current ?? undefined }, true)
+      return true
+    }
+    const channel = SETTING_VOLUME[name]
+    if (channel) this.setVolume(channel, n)
+    else if (name === 'sys.textSpeed') this.textSpeed = Math.max(0, n)
+    else this.setAutoDelay(n)
+    this.fire('onVarChange', name, this.getVar(name))
+    this.ui.refresh() // a slider dragged past the range snaps back to the clamped value
+    this.refreshConditions()
+    return true
   }
 
   /** A write to a `stateVars` name: reported, ignored. */
   private readonlyVar(name: string): boolean {
-    if (name !== 'sys.replaying' && name !== 'sys.session' && name !== 'sys.lang') return false
+    if (!READONLY_VARS.has(name)) return false
     this.report({ phase: 'exec', message: `${name} is read-only — it reports what the engine is doing`, line: this.current?.line, node: this.current ?? undefined }, true)
     return true
   }
@@ -3116,6 +3350,7 @@ export class Engine {
     this.menu?.destroy()
     this.menu = undefined
     this.ui.destroy()
+    this.fonts.destroy()
     if (this.persistTimer !== undefined) {
       clearTimeout(this.persistTimer)
       void this.persistNow()

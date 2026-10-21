@@ -144,7 +144,9 @@ export function makeAudioCap(engine: Engine, host: CapHost): AudioCap | undefine
     stopTrack: (track, fade) => engine.stopTrack(track, fade),
     stopAllTracks: (fade) => engine.stopAllTracks(fade),
     playSe: (url, volume) => engine.playSe(url, volume),
-    volume: (channel) => engine[VOLUME_FIELD[channel]],
+    // What a plugin that makes its own sound (voicefx's synthesized blip) plays
+    // at: nothing on a silent engine (`audio: false`).
+    volume: (channel) => (engine.audioEnabled ? engine[VOLUME_FIELD[channel]] : 0),
     get voicePlaying() {
       return engine.voicePlaying
     },

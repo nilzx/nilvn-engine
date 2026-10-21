@@ -127,6 +127,13 @@ export class KeyTable {
     this.player[id] = binding
   }
 
+  /** Which binding (an engine action, or a plugin's `<id>:<binding>`) already
+   *  holds one of `binding`'s keys — what a panel button's `key` checks against. */
+  holder(binding: KeyBinding): string | undefined {
+    const chords = chordsOf(binding)
+    return chords.length ? this.holderOf(chords, '') : undefined
+  }
+
   /** Forget the player's changes. */
   reset(): void {
     this.player = {}

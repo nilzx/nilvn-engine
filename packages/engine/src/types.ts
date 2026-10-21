@@ -854,6 +854,10 @@ export interface EngineOptions {
   /** Plugin settings by plugin id (the config file's `[plugins.<id>]` tables):
    *  `{ 'app.nilvn.voicefx': { volume: 0.5 } }`. Short first-party names work too. */
   pluginConfig?: Record<string, Record<string, unknown>>
+  /** `false` = no sound at all: no track, sound effect or voice ever plays
+   *  (an editor's stage, a thumbnail renderer). Volumes, tracks and saves keep
+   *  working as if they played. Default true. */
+  audio?: boolean
   /** `false` = the engine draws no chrome at all (a host that owns its own,
    *  the studio's preview); per piece otherwise. Default: all on. */
   screens?: false | { title?: boolean; ending?: boolean; menu?: boolean; loading?: boolean }
@@ -941,6 +945,8 @@ export interface AdvConfig {
   macros?: Record<string, string>
   /** Theme overrides: [theme] name-bg = "#0b1c2e" (token names without the `--nilvn-` prefix). */
   theme?: Record<string, string | number>
+  /** The work's font files by family name: [fonts] "Zcool KuaiLe" = "fonts/zcool.woff2" (since 0.20.0). */
+  fonts?: Record<string, string>
   /** Dialogue-box shorthand: [window] skin = "@ui/box.png", position = "top" … — sugar over `[theme]`. */
   window?: WindowConfig
   /** The title page. */
@@ -1041,6 +1047,20 @@ export interface MenuConfig {
   items?: string[]
   /** Wheel-up over the stage opens the backlog (default true). */
   wheelBacklog?: boolean
+  /** The ☰ entry button's look: an image (stretched, or nine-sliced with
+   *  `slice` / `sliceWidth`) — `menu-button-skin` / `menu-button-skin-slice`,
+   *  clearing its background and border unless `background` is given — and
+   *  `menu-button-bg` / `menu-button-color`. */
+  skin?: string
+  slice?: number | string
+  sliceWidth?: string | number
+  background?: string
+  color?: string
+  /** An image behind the system pages (save / load, settings, backlog,
+   *  replays): `panel-skin` / `panel-skin-slice`. */
+  panelSkin?: string
+  panelSlice?: number | string
+  panelSliceWidth?: string | number
 }
 
 /** `[settings]` in nilvn.config.toml — the settings panel and the players'
@@ -1140,25 +1160,60 @@ export interface UiPanelConfig {
   show?: 'playing' | 'always' | 'manual'
   /** A window's title (`@key` or literal; also its menu / title-button label). */
   title?: string
-  /** CSS lengths (`"40cqw"`). */
+  /** CSS lengths (`"40cqw"`). A window whose widgets are placed by `x` / `y`
+   *  defaults to 40cqw × 36cqh. */
   width?: string | number
   height?: string | number
+  /** How the widgets flow: `column` (default) or `row`. */
+  dir?: 'row' | 'column'
+  /** A window: an × in its corner that hides it (as `[ui hide id]`). */
+  close?: boolean
+  /** A window: a backdrop behind it while it is shown, swallowing clicks. */
+  dim?: boolean
+  /** How the panel appears and goes: `none` (default), `fade`, `slide`, `pop`. */
+  open?: 'none' | 'fade' | 'slide' | 'pop'
+  /** This panel's own look: a skin image (stretched, or nine-sliced with
+   *  `slice` / `sliceWidth`, as `[window] skin`), background, border, radius.
+   *  A skin clears the default background and border unless they are given. */
+  skin?: string
+  slice?: number | string
+  sliceWidth?: string | number
+  background?: string
+  border?: string
+  radius?: string | number
   widgets?: UiWidget[]
+}
+
+/** Where a widget of a `kind = "window"` panel sits: `x` / `y` / `w` / `h` in
+ *  percent of the window's body (a string is a CSS length). Once any widget of a
+ *  window has `x` or `y`, those are placed absolutely; the rest keep flowing. */
+export interface UiPlacement {
+  x?: number | string
+  y?: number | string
+  w?: number | string
+  h?: number | string
 }
 
 /** A widget of a `[ui.<id>]` panel. Every widget takes `if` — a condition that
  *  hides it when false. Strings resolve like config strings (`@key`, `{$var}`). */
-export type UiWidget =
-  /** A line of text: `text` (with `{$var}` placeholders), or a variable's value. */
-  | { type: 'text'; text?: string; var?: string; if?: string }
-  /** A progress bar for a numeric variable between `min` (0) and `max` (100). */
-  | { type: 'bar'; var: string; max?: number | string; min?: number | string; label?: string; if?: string }
-  /** An image (`src` resolves like an asset path). */
-  | { type: 'image'; src: string; width?: string | number; if?: string }
-  /** A list of a variable's items (a list, or a comma-separated string); `empty` when there are none. */
-  | { type: 'list'; var: string; empty?: string; if?: string }
-  /** A button whose click runs `onclick` — script commands, one per line. */
-  | { type: 'button'; label: string; onclick: string; if?: string }
+export type UiWidget = UiPlacement &
+  (
+    /** A line of text: `text` (with `{$var}` placeholders), or a variable's value. */
+    | { type: 'text'; text?: string; var?: string; if?: string }
+    /** A progress bar for a numeric variable between `min` (0) and `max` (100). */
+    | { type: 'bar'; var: string; max?: number | string; min?: number | string; label?: string; if?: string }
+    /** An image (`src` resolves like an asset path). */
+    | { type: 'image'; src: string; width?: string | number; if?: string }
+    /** A list of a variable's items (a list, or a comma-separated string); `empty` when there are none. */
+    | { type: 'list'; var: string; empty?: string; if?: string }
+    /** A button whose click runs `onclick` — script commands, one per line.
+     *  `disabled` greys it out while true; `key` clicks it from the keyboard;
+     *  `skin` / `slice` / `sliceWidth` / `background` / `color` restyle it. */
+    | { type: 'button'; label: string; onclick: string; if?: string; disabled?: string; key?: string; skin?: string; slice?: number | string; sliceWidth?: string | number; background?: string; color?: string }
+    /** A slider bound to a numeric variable (`min` 0, `max` 100, `step` 1):
+     *  dragging it writes the variable as `[set]` does (`sys.bgmVolume` included). */
+    | { type: 'slider'; var: string; min?: number | string; max?: number | string; step?: number; label?: string; if?: string; disabled?: string }
+  )
 
 /** `[preload]` in nilvn.config.toml — what `prepare()` warms before play (the
  *  built-in loading page shows meanwhile) and what `[preload …]` does mid-story. */
@@ -1266,10 +1321,17 @@ export interface WindowConfig {
   textColor?: string
   lineHeight?: string | number
   textShadow?: string
-  /** `name-bg` / `name-color` / `name-size`. */
+  /** `name-bg` / `name-color` / `name-size` / `name-radius`. */
   nameBackground?: string
   nameColor?: string
   nameSize?: string | number
+  nameRadius?: string | number
+  /** An image behind the name tag (stretched, or nine-sliced with `nameSlice` /
+   *  `nameSliceWidth`): `name-skin` / `name-skin-slice`; it clears the tag's
+   *  background, radius and shadow unless `nameBackground` / `nameRadius` are given. */
+  nameSkin?: string
+  nameSlice?: number | string
+  nameSliceWidth?: string | number
   /** `indicator-color`. */
   indicatorColor?: string
 }

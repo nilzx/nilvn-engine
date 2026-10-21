@@ -110,6 +110,12 @@ export const BUILTIN_COMMANDS: CommandSchema[] = [
       { key: 'persist', label: 'cmd.input.persist', type: 'boolean', default: false },
       { key: 'maxlength', label: 'cmd.input.maxlength', type: 'number', advanced: true },
       { key: 'pattern', label: 'cmd.input.pattern', type: 'string', advanced: true },
+      // Engine 0.19: a number answer, or several lines of text.
+      { key: 'type', label: 'cmd.input.type', type: 'enum', options: [{ value: 'text', label: 'cmd.input.type.text' }, { value: 'number', label: 'cmd.input.type.number' }], default: 'text' },
+      { key: 'min', label: 'cmd.input.min', type: 'number', advanced: true },
+      { key: 'max', label: 'cmd.input.max', type: 'number', advanced: true },
+      { key: 'step', label: 'cmd.input.step', type: 'number', advanced: true },
+      { key: 'lines', label: 'cmd.input.lines', type: 'number', advanced: true },
     ],
   },
   {
@@ -140,6 +146,10 @@ export const BUILTIN_COMMANDS: CommandSchema[] = [
       { key: 'rotation', label: 'cmd.char.rotation', type: 'number', advanced: true },
       { key: 'fade', label: 'cmd.char.fade', type: 'number', default: 0.3 },
       { key: 'src', label: 'cmd.char.src', type: 'string', advanced: true },
+      // `trans=` swaps through a scene transition instead of a fade (engine 0.19).
+      { key: 'trans', label: 'cmd.bg.trans', type: 'enum', options: TRANSITION_OPTIONS, advanced: true },
+      { key: 'dir', label: 'cmd.trans.dir', type: 'enum', options: DIR_OPTIONS, advanced: true },
+      { key: 'duration', label: 'cmd.trans.duration', type: 'number', advanced: true },
     ],
   },
   {
@@ -150,6 +160,10 @@ export const BUILTIN_COMMANDS: CommandSchema[] = [
     params: [
       { key: 'id', label: 'cmd.hide.id', type: 'actor', required: true, positional: 0 },
       { key: 'fade', label: 'cmd.hide.fade', type: 'number', default: 0.3 },
+      // `trans=` swaps through a scene transition instead of a fade (engine 0.19).
+      { key: 'trans', label: 'cmd.bg.trans', type: 'enum', options: TRANSITION_OPTIONS, advanced: true },
+      { key: 'dir', label: 'cmd.trans.dir', type: 'enum', options: DIR_OPTIONS, advanced: true },
+      { key: 'duration', label: 'cmd.trans.duration', type: 'number', advanced: true },
     ],
   },
   {
@@ -158,7 +172,13 @@ export const BUILTIN_COMMANDS: CommandSchema[] = [
     category: 'stage',
     icon: '🧹',
     hint: 'cmd.clear.hint',
-    params: [{ key: 'fade', label: 'cmd.clear.fade', type: 'number', default: 0.3 }],
+    params: [
+      { key: 'fade', label: 'cmd.clear.fade', type: 'number', default: 0.3 },
+      // `trans=` swaps through a scene transition instead of a fade (engine 0.19).
+      { key: 'trans', label: 'cmd.bg.trans', type: 'enum', options: TRANSITION_OPTIONS, advanced: true },
+      { key: 'dir', label: 'cmd.trans.dir', type: 'enum', options: DIR_OPTIONS, advanced: true },
+      { key: 'duration', label: 'cmd.trans.duration', type: 'number', advanced: true },
+    ],
   },
   {
     name: 'wait',
@@ -225,8 +245,10 @@ export const BUILTIN_COMMANDS: CommandSchema[] = [
     icon: '🎨',
     hint: 'cmd.theme.hint',
     // The engine accepts ANY token the theme contract names (`--nilvn-<token>`);
-    // the form offers the everyday ones. `[theme reset]` clears the script layer.
+    // the form offers the everyday ones. `[theme reset]` clears the script layer:
+    // `op = 'reset'` is that first positional word (a node sets it alone).
     params: [
+      { key: 'op', label: 'cmd.theme.op', type: 'enum', positional: 0, options: [{ value: 'reset', label: 'cmd.theme.op.reset' }], advanced: true },
       { key: 'dialog-bg', label: 'cmd.theme.dialogBg', type: 'string' },
       { key: 'dialog-opacity', label: 'cmd.theme.dialogOpacity', type: 'number' },
       { key: 'text-color', label: 'cmd.theme.textColor', type: 'string' },
@@ -259,6 +281,8 @@ export const BUILTIN_COMMANDS: CommandSchema[] = [
       // ambience bed layered alongside (its own loop channel + master volume).
       { key: 'track', label: 'cmd.bgm.track', type: 'string', default: 'music', advanced: true },
       { key: 'fade', label: 'cmd.bgm.fade', type: 'number', default: 0, advanced: true },
+      // Engine 0.19: the same file keeps playing (only its volume follows) unless restarted.
+      { key: 'restart', label: 'cmd.bgm.restart', type: 'boolean', default: false, advanced: true },
     ],
   },
   {
@@ -307,6 +331,36 @@ export const BUILTIN_COMMANDS: CommandSchema[] = [
     icon: '🏠',
     hint: 'cmd.title.hint',
     params: [],
+  },
+  {
+    // Engine 0.20: the system menu's pages from a script or a panel button.
+    name: 'menu',
+    label: 'cmd.menu.label',
+    category: 'flow',
+    icon: '☰',
+    hint: 'cmd.menu.hint',
+    params: [
+      {
+        key: 'op',
+        label: 'cmd.menu.op',
+        type: 'enum',
+        required: true,
+        positional: 0,
+        default: 'open',
+        options: [
+          { value: 'open', label: 'cmd.menu.op.open' },
+          { value: 'close', label: 'cmd.menu.op.close' },
+        ],
+      },
+      {
+        key: 'page',
+        label: 'cmd.menu.page',
+        type: 'enum',
+        positional: 1,
+        default: 'saves',
+        options: ['saves', 'load', 'settings', 'backlog', 'replays'].map((value) => ({ value, label: `cmd.menu.page.${value}` })),
+      },
+    ],
   },
 ]
 

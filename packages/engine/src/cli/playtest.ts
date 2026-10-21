@@ -280,11 +280,15 @@ export async function playtest(opts: PlaytestOptions): Promise<number> {
             clicks++
           }
           else if (r.stop === 'screen') {
-            p.log(`closed a plugin screen with Escape at ${JSON.stringify(r.state.text)}`)
+            p.log(`closed a screen with Escape at ${JSON.stringify(r.state.text)}`)
             await p.press('Escape')
             await p.wait(600)
-            if ((await p.state()).screen) throw new RouteError(`a plugin screen at ${JSON.stringify(r.state.text)} does not close with Escape — explore cannot play it; write a route`)
-          } else if (r.stop === 'title') throw new RouteError('back on the title page without an ending')
+            if ((await p.state()).screen) throw new RouteError(`a screen at ${JSON.stringify(r.state.text)} does not close with Escape — explore cannot play it; write a route`)
+          } else if (r.stop === 'title') {
+            // The story itself went back (`[title]`, a "not now" option): the run is over, not broken.
+            p.log(`the story went back to the title page — ${choices} option${choices === 1 ? '' : 's'} taken, ${clicks} click${clicks === 1 ? '' : 's'} on the stage`)
+            return
+          }
           else throw new RouteError(`stalled at ${JSON.stringify(r.state.text)} (session ${r.state.session}): Space does nothing and nothing is clickable`)
         }
         throw new RouteError('no ending within 400 stops')

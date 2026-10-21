@@ -5,6 +5,10 @@
 import { describe, it, expect } from 'vitest'
 import { keyInfo, leastUsed } from '../src/cli/driver'
 import { chromeCandidates } from '../src/cli/chrome'
+import { staleSource } from '../src/cli/common'
+import { mkdtempSync, mkdirSync, writeFileSync, utimesSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { parsePlaytestArgs, targetKind } from '../src/cli/playtest'
 import { definePlaytest } from '../src/playtest'
 
@@ -16,6 +20,21 @@ describe('nilvn playtest', () => {
     expect(keyInfo('j')).toEqual({ key: 'j', code: 'KeyJ', keyCode: 74 })
     expect(keyInfo('7')).toEqual({ key: '7', code: 'Digit7', keyCode: 55 })
     expect(() => keyInfo('Hyper')).toThrow(/unknown key/)
+  })
+
+  it('an engine script older than a source beside it is stale; the command line does not count', async () => {
+    const pkg = mkdtempSync(join(tmpdir(), 'nilvn-stale-'))
+    mkdirSync(join(pkg, 'dist'))
+    mkdirSync(join(pkg, 'src', 'cli'), { recursive: true })
+    const script = join(pkg, 'dist', 'x.iife.js')
+    for (const f of [script, join(pkg, 'src', 'stage.ts'), join(pkg, 'src', 'cli', 'pack.ts')]) writeFileSync(f, '')
+    const at = (f: string, s: number): void => utimesSync(f, s, s)
+    at(script, 2000)
+    at(join(pkg, 'src', 'stage.ts'), 1000)
+    at(join(pkg, 'src', 'cli', 'pack.ts'), 3000)
+    expect(await staleSource(script)).toBeUndefined()
+    at(join(pkg, 'src', 'stage.ts'), 3000)
+    expect(await staleSource(script)).toBe(join(pkg, 'src', 'stage.ts'))
   })
 
   it('explore takes the least-taken option (the first on a tie)', () => {

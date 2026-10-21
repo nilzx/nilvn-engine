@@ -340,6 +340,19 @@ export interface StageState {
      *  whole-image stretch). Absent = default gradient + border. */
     skin?: string
   }[]
+  /** Declarative panels (`ui:<id>`, 0.20) with a non-default pose, as `windows`:
+   *  each channel omitted at its identity, the field omitted when every panel is
+   *  at rest; restore resets every panel first. */
+  panels?: {
+    /** The object id, `ui:<panel id>`. */
+    id: string
+    x?: Length
+    y?: Length
+    scale?: number
+    rotation?: number
+    opacity?: number
+    visible?: boolean
+  }[]
   /** Clickable regions on stage (`[hotspot]`); absent = none. */
   hotspots?: HotspotSpec[]
   /** Camera resting transform (pan offsets in px, zoom factor, rotation in deg) —
